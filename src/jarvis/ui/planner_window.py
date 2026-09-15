@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -20,6 +22,8 @@ from jarvis.config import AppConfig
 from jarvis.core.planner.contracts import Limits, Provider, Step
 from jarvis.core.planner.offline import OfflineProvider
 from jarvis.core.planner.openai_provider import OpenAIProvider
+from jarvis.mail.session import MailSession
+from jarvis.memory.store import MemoryFailure, MemoryStore
 from jarvis.observability.audit import AuditLog
 from jarvis.permissions.approvals import Action, ApprovalStore
 from jarvis.permissions.engine import PermissionEngine
@@ -28,8 +32,11 @@ from jarvis.platforms.windows.transport import ProcessBackend
 from jarvis.security.browser_policy import NetworkPolicy
 from jarvis.tools.browser import register_browser
 from jarvis.tools.local import local_registry
+from jarvis.tools.outlook import register_outlook
 from jarvis.tools.windows import WindowsBackend, register_windows
 from jarvis.ui.approval_dialog import ApprovalDialog
+from jarvis.ui.mail_panel import MailPanel
+from jarvis.ui.memory_panel import MemoryPanel
 from jarvis.ui.planner_worker import PlannerWorker, Prompt
 from jarvis.ui.voice_panel import VoicePanel
 
@@ -54,6 +61,7 @@ class PlannerWindow(QDialog):
         windows_backend: WindowsBackend | None = None,
         limits: Limits | None = None,
         voice_panel: VoicePanel | None = None,
+        mail_session: MailSession | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Jarvis — планировщик команд")
@@ -65,6 +73,8 @@ class PlannerWindow(QDialog):
         self.registry, self.outbox = local_registry()
         register_browser(self.registry, self.host, self.host.policy)
         register_windows(self.registry, windows_backend or ProcessBackend())
+        self.mail_session = mail_session or MailSession()
+        register_outlook(self.registry, self.mail_session)
         self.audit = AuditLog(config.data_dir / "audit.sqlite3")
         store = ApprovalStore()
         self.engine = PermissionEngine(self.registry, store, self.audit)
@@ -76,7 +86,23 @@ class PlannerWindow(QDialog):
         self.answer_button: QPushButton | None = None
         self._closing = False
         self._closed = False
-        layout = QVBoxLayout(self)
+        self._mail_active = False
+        root = QVBoxLayout(self)
+        self.tabs = QTabWidget()
+        root.addWidget(self.tabs)
+        task = QWidget()
+        self.tabs.addTab(task, "Команда")
+        self.memory = MemoryPanel(MemoryStore(config.data_dir / "memory.sqlite3"))
+        memory_scroll = QScrollArea()
+        memory_scroll.setWidgetResizable(True)
+        memory_scroll.setWidget(self.memory)
+        self.tabs.addTab(memory_scroll, "Память")
+        self.mail = MailPanel(self.mail_session, self.engine, self.authority, self.audit)
+        mail_scroll = QScrollArea()
+        mail_scroll.setWidgetResizable(True)
+        mail_scroll.setWidget(self.mail)
+        self.tabs.addTab(mail_scroll, "Outlook")
+        layout = QVBoxLayout(task)
         layout.addWidget(
             note(
                 "Команда → один предложенный шаг → проверка разрешений → наблюдение результата. "
@@ -144,6 +170,15 @@ class PlannerWindow(QDialog):
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         layout.addWidget(self.output, 1)
+        self.memory.busy_changed.connect(
+            lambda value: self._voice_busy(self.voice.worker is not None)
+        )
+        self.mail.busy_changed.connect(self._mail_busy)
+
+    def _mail_busy(self, value: bool) -> None:
+        self._mail_active = value
+        self.voice.set_planning(value)
+        self._voice_busy(self.voice.worker is not None)
 
     def _busy(self, value: bool) -> None:
         for widget in (
@@ -153,6 +188,8 @@ class PlannerWindow(QDialog):
             self.command,
             self.simulation,
             self.run_button,
+            self.memory,
+            self.mail,
         ):
             widget.setEnabled(not value)
         self.stop_button.setEnabled(value)
@@ -160,18 +197,40 @@ class PlannerWindow(QDialog):
         self._voice_busy(self.voice.worker is not None)
 
     def _voice_busy(self, value: bool) -> None:
-        busy = value or self.voice.planning
-        self.run_button.setEnabled(not busy)
+        busy = value or self.voice.planning or self.mail.busy
+        self.run_button.setEnabled(not busy and self.memory.worker is None)
         self.command.setEnabled(not busy)
         self.stop_button.setEnabled(busy)
+        self.mail.setEnabled(
+            not value and self.worker is None and (not self.voice.planning or self._mail_active)
+        )
 
     @Slot()
     def start(self) -> None:
-        if self.worker is not None or self.voice.worker is not None or self._closing:
+        if (
+            self.worker is not None
+            or self.voice.worker is not None
+            or self.mail.busy
+            or self._closing
+        ):
             return
         command = self.command.toPlainText()
         if not command.strip() or len(command) > 4000:
             self.status.setText("Введите команду от 1 до 4 000 символов.")
+            return
+        try:
+            memory = self.memory.snapshot()
+        except (ValueError, MemoryFailure):
+            self.status.setText("Проверьте вкладку «Память»: загрузка и лимит выбранных записей.")
+            return
+        if (
+            self.provider_choice.currentIndex() == 1
+            and not memory.empty
+            and not self.memory.cloud_consent.isChecked()
+        ):
+            self.status.setText(
+                "Во вкладке «Память» разрешите передачу выбранных меток или снимите выбор."
+            )
             return
         provider = self.override_provider
         if provider is None:
@@ -196,10 +255,12 @@ class PlannerWindow(QDialog):
             command,
             Mode.SIMULATION if self.simulation.isChecked() else Mode.EXECUTE,
             self.limits,
+            memory,
         )
         self.worker.progress_event.connect(self._event)
         self.worker.prompt.connect(self._prompt)
         self.worker.finished.connect(self._finished)
+        self.memory.consume_selection()
         self.worker.start()
 
     @Slot(str, object)
@@ -270,6 +331,7 @@ class PlannerWindow(QDialog):
     @Slot()
     def stop(self) -> None:
         self.voice.cancel()
+        self.mail.stop()
         if self.worker is not None:
             self.worker.cancel()
             self.stop_button.setEnabled(False)
@@ -299,6 +361,8 @@ class PlannerWindow(QDialog):
     def shutdown(self) -> None:
         self._closing = True
         self.voice.shutdown()
+        self.memory.shutdown()
+        self.mail.shutdown()
         if self.worker is not None:
             self.stop()
             self.worker.wait()

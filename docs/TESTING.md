@@ -380,3 +380,37 @@ Remove-Item Env:JARVIS_VOSK_MODEL
    Notepad, sounddevice, Vosk, pyttsx3, модель и системный голос.
 
 Результаты: [MILESTONE_6.md](MILESTONE_6.md). Голосовая приёмка не закрывает весь Windows MVP.
+
+## Этап 7 — память
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/unit/test_memory.py tests/integration/test_memory_ui.py -q
+```
+
+Новые тесты проверяют restart/edit/delete/clear, bounds/TTL, malformed storage, optimistic
+conflict, cancellation/rollback, selected context, cloud disclosure, отсутствие автоматического
+сохранения текста/речи, недоверенные инструкции и невозможность взять target из прошлой задачи.
+Точная ручная Windows-приёмка и её ограничения: [MILESTONE_7.md](MILESTONE_7.md).
+
+
+## Этап 8 — Outlook
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/unit/test_permissions.py tests/unit/test_outlook.py tests/integration/test_mail_ui.py -q
+```
+
+Обычные тесты используют синтетические MSAL, Graph и credential backend. Покрыты exact
+approval/replay/concurrency/expiry, account switching, attachments/read-back, uncertain POST,
+cancel, unavailable audit, untrusted email и Planner/Qt границы. Ручной live OAuth/mail
+сценарий с выбранными пользователем тестовыми аккаунтом и получателем, Windows-команды
+и фактические результаты: [MILESTONE_8.md](MILESTONE_8.md). Live email тест автоматически
+не запускается и не подтверждает отправку за пользователя.
+
+## Этап 9: установка и приёмка на целевой Windows
+
+Подготовлен `scripts/windows/Install-Jarvis.cmd`: runtime готовится автоматически.
+`scripts/windows/Test-Jarvis.ps1` создаёт отдельное acceptance-окружение, запускает полный
+набор и native Qt; switches `-NativeApps`, `-Voice`, `-LiveModel` включают соответствующие
+явные проверки. Точные команды, recovery cases и полный ручной сценарий:
+[WINDOWS_ACCEPTANCE.md](WINDOWS_ACCEPTANCE.md). Фактические результаты Mac:
+[MILESTONE_9.md](MILESTONE_9.md). Ни один native/live gate ещё не закрыт.

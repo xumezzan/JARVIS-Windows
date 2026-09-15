@@ -45,6 +45,11 @@ class ApprovalDialog(QDialog):
             if action.tool.startswith("browser.")
             else "Действие выполнится в выбранном приложении Windows."
             if action.tool.startswith("windows.")
+            else "Письмо будет отправлено через Outlook. Проверьте аккаунт, Кому/Копия/Скрытая "
+            "копия, полный текст и идентичности вложений. Доставка проверяется отдельно."
+            if action.tool == "outlook.send"
+            else "Полный черновик и вложения будут переданы в Outlook. Это внешняя запись."
+            if action.tool == "outlook.save_draft"
             else "Тестовый ящик локален. Сообщения никуда не отправляются."
         )
         self.notice = QLabel(notice)

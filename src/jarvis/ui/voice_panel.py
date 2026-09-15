@@ -1,5 +1,6 @@
 """Visible push-to-talk and transcript review; speech can cancel but never approve."""
 
+import os
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
@@ -104,6 +105,7 @@ class VoicePanel(QWidget):
         row = QHBoxLayout()
         self.model_path = QLineEdit()
         self.model_path.setMaxLength(2000)
+        self.model_path.setText(os.environ.get("JARVIS_VOSK_MODEL", ""))
         self.model_path.setPlaceholderText("Папка распакованной русской модели Vosk")
         self.browse = QPushButton("Выбрать модель…")
         self.browse.setAutoDefault(False)

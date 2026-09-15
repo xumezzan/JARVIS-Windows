@@ -153,23 +153,24 @@ def test_cloud_requires_disclosure_and_model(qtbot: QtBot, tmp_path: Path) -> No
         window.shutdown()
 
 
-def test_observed_notepad_then_literal_typing(qtbot: QtBot, tmp_path: Path) -> None:
+@pytest.mark.parametrize("text", ["«Точный текст»", "Jarvis test successful"])
+def test_observed_notepad_then_literal_typing(qtbot: QtBot, tmp_path: Path, text: str) -> None:
     probe = WindowsProbe()
     window = PlannerWindow(AppConfig(tmp_path), windows_backend=probe)
     qtbot.addWidget(window)
     window.show()
     try:
         window.simulation.setChecked(False)
-        window.command.setPlainText("открой блокнот и напиши «Точный текст»")
+        window.command.setPlainText("открой блокнот и напиши " + text)
         window.start()
         qtbot.waitUntil(lambda: window.approval_dialog is not None)
         dialog = window.approval_dialog
         assert dialog is not None and probe.text == ""
         preview = dialog.preview.toPlainText()
-        assert "selected_tabs" in preview and "Точный текст" in preview
+        assert "selected_tabs" in preview and text.strip("«»") in preview
         with qtbot.waitSignal(window.task_finished) as result:
             click_approval(window, qtbot)
-        assert result.args == ["finished"] and probe.text == "Точный текст"
+        assert result.args == ["finished"] and probe.text == text.strip("«»")
         assert "windows.type_text: SUCCESS" in window.output.toPlainText()
     finally:
         window.shutdown()

@@ -5,6 +5,7 @@ from typing import Literal, Protocol
 
 from pydantic import Field, model_validator
 
+from jarvis.memory.models import MemoryContext
 from jarvis.permissions.engine import Outcome
 from jarvis.permissions.policies import Mode
 from jarvis.tools.base import ToolModel
@@ -41,6 +42,7 @@ class PlannerInput:
     steps: tuple[Step, ...] = field(repr=False)
     mode: Mode
     catalog_json: str = field(repr=False)
+    memory: MemoryContext = field(default_factory=MemoryContext, repr=False)
 
 
 class ProviderError(Exception):

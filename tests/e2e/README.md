@@ -7,4 +7,7 @@ They never close or discard user documents. Save/close existing Notepad windows 
 restored nonempty documents are rejected. Opened apps and test text remain after tests.
 
 These tests are skipped on macOS/Linux and have not been run on Windows yet.
-They do not implement the full MVP scenario. See `docs/TESTING.md`.
+They do not implement the full MVP scenario. See `docs/WINDOWS_ACCEPTANCE.md` for the
+clean-machine installer, failure matrix and full guided scenario. `test_offline_scenario.py`
+checks the combined Chrome/search command through the real policy in simulation; it
+does not launch Windows or demonstrate live search results.

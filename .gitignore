@@ -28,3 +28,4 @@ recordings/
 .impeccable/
 node_modules/
 *.tsbuildinfo
+.venv-acceptance/

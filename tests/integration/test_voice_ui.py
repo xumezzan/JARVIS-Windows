@@ -33,6 +33,23 @@ def record(qtbot: QtBot, panel: VoicePanel, button: HoldButton | None = None) ->
     qtbot.waitUntil(lambda: panel.worker is None)
 
 
+def test_installed_model_path_is_prefilled_without_capture(
+    qtbot: QtBot,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = str(tmp_path / "Асаль voice model")
+    monkeypatch.setenv("JARVIS_VOSK_MODEL", model)
+    fixture = VoiceFixture("fixture")
+    window = make_window(qtbot, tmp_path, fixture)
+    try:
+        assert window.voice.model_path.text() == model
+        assert window.voice.worker is None and fixture.captures == 0
+        assert not fixture.spoken
+    finally:
+        window.shutdown()
+
+
 def test_review_edit_and_explicit_submission(qtbot: QtBot, tmp_path: Path) -> None:
     fixture = VoiceFixture("ошибочно распознанная команда", confidence=0.3)
     window = make_window(qtbot, tmp_path, fixture)

@@ -10,6 +10,7 @@ from PySide6.QtCore import QThread, Signal
 
 from jarvis.core.planner.contracts import Limits, PlanResult, Provider
 from jarvis.core.planner.runner import Runner
+from jarvis.memory.models import MemoryContext
 from jarvis.permissions.approvals import Action, ApprovalToken
 from jarvis.permissions.engine import PermissionEngine
 from jarvis.permissions.policies import Mode
@@ -35,6 +36,7 @@ class PlannerWorker(QThread):
         command: str,
         mode: Mode,
         limits: Limits,
+        memory: MemoryContext | None = None,
     ) -> None:
         super().__init__()
         self.command = command
@@ -46,6 +48,7 @@ class PlannerWorker(QThread):
             self._approve,
             self._clarify,
             limits=limits,
+            memory=memory,
             notify=self.progress_event.emit,
         )
         self.outcome = PlanResult("error", error="worker_failed")

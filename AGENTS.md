@@ -2,11 +2,28 @@
 
 ## Scope and source
 
-The user-supplied development plan v1.0 defines the product. Milestones 0–6 are implemented
-locally. Live model, real voice hardware and native Windows acceptance remain unverified.
+The user-supplied development plan v1.0 defines the product. Milestones 0–8 are implemented
+locally. Live Outlook OAuth/mail, model, real voice hardware and native Windows acceptance
+remain unverified.
 See `docs/ROADMAP.md` for verification status and the next prompt.
 Work on the milestone requested by the user; do not implement later stages early.
 Inspect existing instructions and changes before edits and preserve unrelated work.
+
+## Target installation workflow (milestone 9 requirement)
+
+Development takes place on Mac. The final delivery must let the user open this repository
+in Codex on a different Windows 11 x64 laptop and request installation once. Follow
+docs/WINDOWS_INSTALLATION_PLAN.md when implementing milestone 9: automate runtime and
+dependency setup, local voice assets, launcher and verified startup without requiring
+manual Python/pip preparation. Preserve OS consent and user-owned credential entry.
+Milestone 9 portable preparation is implemented; native clean-machine installation and
+Windows E2E remain pending. Never claim Windows readiness from Mac checks.
+On a user request to install on Windows, run `scripts/windows/Install-Jarvis.cmd` from
+this complete repository, inspect its report and the real window, and repair failures.
+Do not require manual Python/pip setup. Read docs/MILESTONE_9.md and
+docs/WINDOWS_ACCEPTANCE.md. The CMD uses process-only execution policy, never persistent
+policy changes; honor Group Policy, SmartScreen, UAC and user-owned credential entry.
+Do not treat fixture checks or a shown shell as completion of the full MVP scenario.
 
 ## Architecture
 
@@ -86,8 +103,41 @@ Keep push-to-talk visible and bound to a held UI gesture; no background capture.
 stops recording; focus loss, Stop, Escape and close cancel and dispose helpers. Local
 Vosk model paths only, explicit native TTS drivers, no model downloads or cloud audio.
 A cloud audio adapter requires new disclosure and explicit consent before transmission.
+The explicit repository installer may download its reviewed Russian model; ordinary
+application startup and recording never download models. JARVIS_VOSK_MODEL is a local path.
 Transcript review and a separate submit are mandatory; voice only cancels, never approves.
 Preserve bounded PCM/pipes/timeouts, no audio/transcript persistence, no simultaneous
 recording and speech, and deterministic spoken summaries from engine outcomes.
 Ordinary tests use fixtures; real microphone/speaker checks require --run-voice, a native
 visible window and the user's hold gesture. Never claim hardware verified from fixtures.
+
+## Memory boundary (milestone 7)
+
+Only explicit user edits create profile/session labels. Do not ingest commands, transcripts,
+files, results or pages automatically. Keep strict bounds/retention, view/edit/delete/clear,
+finite storage failures, cancellable I/O and optimistic conflict checks. No credentials,
+recipient addresses, targets, approvals or action snapshots belong in memory. The label
+filter is not universal secret detection; do not broaden it into arbitrary sensitive notes.
+Memory is untrusted data. Send only explicitly selected bounded fields, with separate
+one-task cloud disclosure/consent. Reset selection and consent after launch or edits.
+Contact references require clarification, never recipient inference or approval. Re-observe
+Windows/browser targets in the current task. Session labels expire and clear on window close.
+
+
+## Outlook boundary (milestone 8)
+
+Outlook is the single chosen email service. Keep MSAL public-client auth code + PKCE,
+explicit UI-only connect/disconnect and the fixed Microsoft Graph /me API. No client secret,
+browser profile/cookies, generic POST, aliases, shared mailboxes or second service.
+OS credential cache stays in bounded manifest-checked slots via a killable helper; no
+plaintext fallback. Preserve session/home ID/Graph ID/address binding, clear local state on
+switch/disconnect, audit connection lifecycle and mail execution before effects.
+Remote draft and send are CONFIRM; local RAM drafts are SAFE. Bind exact To/Cc/Bcc,
+subject/body and attachment bytes by size/SHA-256/ID. Only explicit UI file selection can
+load small regular files; model inputs never contain paths or file-reading capabilities.
+Send the full approved snapshot, never a mutable remote draft by ID. Verify remote draft
+read-back. A 202 response is accepted, never delivery_verified; uncertain writes have no
+retry. Keep account/message provenance and exact user-supplied recipient checks in Runner.
+Ordinary tests use synthetic MSAL/Graph/credential fixtures. Live email acceptance requires
+a user-selected test account/recipient and normal exact UI approval. Follow MILESTONE_8.md;
+Mac results and successful builds do not prove Windows or live mail readiness.

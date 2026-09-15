@@ -1,9 +1,9 @@
 # Roadmap
 
 Работа идёт по этапам из исходного плана v1.0. Новый этап запускается отдельной задачей.
-Текущий scope — этап 6. Локальный голос реализован; настоящий микрофон/STT/TTS, живой OpenAI API
-и native Windows-приёмка ожидаются.
-Результаты: `MILESTONE_0.md`, `MILESTONE_1.md`, `MILESTONE_2.md`, `MILESTONE_3.md`, `MILESTONE_4.md`, `MILESTONE_5.md`, `MILESTONE_6.md`.
+Текущий scope — этап 9. Установщик и переносимые проверки подготовлены; живой OAuth/почта,
+настоящий микрофон/STT/TTS, живой OpenAI API и native Windows-приёмка ожидаются.
+Результаты: `MILESTONE_0.md`, `MILESTONE_1.md`, `MILESTONE_2.md`, `MILESTONE_3.md`, `MILESTONE_4.md`, `MILESTONE_5.md`, `MILESTONE_6.md`, `MILESTONE_7.md`, `MILESTONE_8.md`, `MILESTONE_9.md`.
 
 | Этап | Результат и критерий выхода | Статус |
 | --- | --- | --- |
@@ -14,9 +14,20 @@
 | 4 Browser | open/navigate/search/click/type/read/tabs/close, Playwright, domain policy, timeouts | Реализован локально: статический анонимный Chromium; Windows не проверена |
 | 5 Planner | Strict calls, только registry, bounded plan, cancellation, уточнения, проверенные ответы | Реализован локально; offline/протокол/Qt/Chromium проверены, live API и Windows не проверены |
 | 6 Voice | Push-to-talk, transcript, STT/TTS, русские команды, voice/button cancel | Реализован локально; fixtures/Qt/helper tests, реальное оборудование и Windows не проверены |
-| 7 Memory | Профиль и короткий контекст, view/edit/delete, уточнение контактов, без secrets | Следующий; не начат |
-| 8 External service | Gmail или Outlook OAuth/API, drafts, полный preview, send через permissions | Не начат |
-| 9 E2E / packaging | Реальный Windows-сценарий, failure tests, PyInstaller, чистая установка | Не начат |
+| 7 Memory | Профиль и короткий контекст, view/edit/delete, уточнение контактов, без secrets | Реализован локально; Windows и live cloud не проверены |
+| 8 External service | Outlook OAuth/API, drafts, полный preview, send через permissions | Реализован локально; live OAuth/почта и Windows не проверены |
+| 9 E2E / packaging | Реальный Windows-сценарий, failure tests, упаковка и установка из репозитория по одному запросу | Переносимая подготовка реализована; чистая Windows и полный E2E pending |
+
+## Целевой сценарий установки
+
+Разработка ведётся на Mac. На другом Windows-ноутбуке пользователь открывает репозиторий
+в Codex и просит установить Jarvis. Этап 9 должен автоматизировать подготовку runtime,
+зависимостей, браузера и русской модели, создание ярлыка и проверку запуска; ручная
+подготовка Python не должна требоваться. Обязательные системные подтверждения и личный
+вход в сервисы остаются за пользователем.
+Подробные требования: [WINDOWS_INSTALLATION_PLAN.md](WINDOWS_INSTALLATION_PLAN.md).
+Установщик: `scripts/windows/Install-Jarvis.cmd`. Реальные результаты и ограничения —
+[MILESTONE_9.md](MILESTONE_9.md); финальная приёмка — [WINDOWS_ACCEPTANCE.md](WINDOWS_ACCEPTANCE.md).
 
 ## Обязательные ворота качества
 
@@ -39,36 +50,23 @@ installer, подписанные обновления, администрати
 ## Точный следующий prompt
 
 ```text
-Implement Milestone 7: Memory — user-managed profile and bounded short context.
+Continue Milestone 9 on the target Windows 11 x64 laptop: install Jarvis and complete native acceptance.
 
-Read AGENTS.md, the user-supplied development plan v1.0, docs/PRD.md, docs/SECURITY.md,
-docs/MILESTONE_6.md and the existing planner, voice lifecycle and PermissionEngine.
-Preserve all dashboard/manual tools, offline recipes, optional OpenAI and local voice.
-Real Windows, live LLM and real voice hardware remain unverified.
+Read AGENTS.md, docs/MILESTONE_9.md, docs/WINDOWS_ACCEPTANCE.md and
+scripts/windows/Install-Jarvis.ps1. Preserve all existing work. Run
+scripts/windows/Install-Jarvis.cmd from this complete repository; do not require manual
+Python/pip setup. Inspect installation-report.json and the real window, then launch from
+Start. Repair any native failures, test clean/repeated installation, offline repeat,
+spaces/Cyrillic paths, interrupted download, cancellation, permissions and missing hardware.
 
-Scope:
-- Add a local, strictly typed memory store within the existing application: profession,
-  preferred applications, project labels, contact roles and ordinary preferences.
-- Make saving explicit and provide visible view/edit/delete/clear controls. Do not
-  silently mine transcripts, tool output or files. Never store credentials/tokens/cookies,
-  approval tokens, audio, whole pages or raw sensitive content. Bound size and retention.
-- Keep a short bounded conversation context with explicit lifecycle and reset. Stored
-  labels/context are untrusted data, never system policy or approval authority.
-- Resolve ambiguity by clarification, especially names/contacts. Do not infer an exact
-  recipient or authorize writes from remembered preferences. No OAuth/email integration.
-- Re-observe all Windows/browser targets in the current task; never reuse stored HWND,
-  PID, DOM identities, approvals or an obsolete action snapshot as execution authority.
-- Keep provider, simulation, cloud disclosure and permission settings under UI control.
-  Disclose any remembered context sent to an opted-in cloud planner; send only necessary
-  bounded fields. Memory must not silently opt the user into cloud transmission.
-- Use cancellable operations, explicit failure handling and safe metadata-only logging.
-  Voice transcript review, no background recording and exact per-action approval remain.
-- Do not implement external service sending, installer or later milestones.
+Run scripts/windows/Test-Jarvis.ps1 and the full PRD acceptance matrix. Native apps are
+opt-in. Voice needs the user's actual hold gesture. For Outlook, let the user choose their
+own test account and recipient and approve the exact snapshot in the normal UI. Never
+bypass OAuth/MFA, microphone consent, Group Policy or approvals. 202 is not delivery proof.
+Public search needs actual search results; the owned Chromium is separate from Chrome.
 
-Test persistence/restart, editing/deletion/clear, bounds/retention, invalid or corrupted
-storage, ambiguous references, prompt injection in memory, cloud disclosure, no secrets,
-no stale targets/approvals and unchanged simulation/voice cancellation. Run focused/full
-tests, Ruff lint/format, mypy, GUI smoke, interactive GUI and build. Update docs with
-actual results and exact Windows acceptance commands; add the next prompt for Milestone 8.
-Whole MVP remains incomplete until real Windows E2E and packaging pass.
+Record Windows build, runtime and package versions and every passed/failed/pending gate.
+Only after real Windows compatibility checks, create a reproducible dependency lock and
+repeat clean setup with it. Do not call the MVP complete until mandatory Windows E2E and
+clean installation pass. If still on Mac, keep native gates pending; do not add post-MVP work.
 ```

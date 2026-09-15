@@ -138,3 +138,14 @@ fixtures, не живым OpenAI запросом. Доступность мод
 реальной Windows нужно подтвердить отдельной приёмкой. Версии не закреплялись.
 `.[dev]` не устанавливает голосовые библиотеки. `.[dev,voice]` включает их; модель и
 системные голоса в пакет не входят. На macOS pyttsx3 также устанавливает PyObjC.
+
+
+## Этап 9: кандидат установщика
+
+`scripts/windows/assets.json` содержит проверенные на 2026-09-15 байты официального
+Python 3.13.15 x64 installer и русской модели Vosk 0.22. Это кандидаты bootstrap-артефактов,
+не Windows compatibility lock. Проверка по-прежнему выполнялась на Mac / Python 3.12.7.
+Native runtime 3.13.15, SAPI5, pywinauto и полный dependency set нужно проверить на Windows
+до фиксации версий. Фактические runtime-пакеты запишет `installation-report.json`.
+PyPI зависимости пока unpinned; Chromium берётся под разрешённую версию Playwright.
+Источники, ограничения integrity и release gates — [MILESTONE_9.md](MILESTONE_9.md).

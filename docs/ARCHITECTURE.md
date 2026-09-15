@@ -7,7 +7,8 @@
 Текстовая команда остаётся fake demo этапа 1. Кнопка «Открыть инструменты» открывает
 ручное окно локальных, Windows и браузерных инструментов. Windows UIA изолирован в helper-процессе;
 Playwright имеет отдельный asyncio owner. Отдельное окно планировщика использует offline
-recipes или OpenAI Responses; voice adapter ещё отсутствует.
+recipes или OpenAI Responses; локальный голос и управляемая память реализованы.
+Outlook подключается явно через MSAL/Graph; настоящая почта ещё не проверена.
 
 ## Поток инструментов
 
@@ -26,7 +27,9 @@ Manual UI / bounded Planner Runner
 
 Реестр закрывается для регистрации при создании engine; дубликаты, неизвестные имена и
 невалидные схемы не выполняются. `discover()` возвращает metadata и схемы, не методы
-выдачи approval. Ни один production adapter не вызывается из UI напрямую.
+выдачи approval. Почтовые/Windows/browser tool adapters вызываются только через engine.
+OAuth connect/disconnect — отдельный UI-only setup через QThread и killable helper с audit;
+этот путь отсутствует в каталоге модели и не даёт permission authority.
 
 ## Модули
 
@@ -45,7 +48,8 @@ Manual UI / bounded Planner Runner
 | `core/planner` | Provider protocol, offline recipes, OpenAI strict calls, bounded Runner |
 | `ui/planner_window.py`, `ui/planner_worker.py` | Текстовая команда, отдельный QThread, prompts и stop |
 | `security/credentials.py`, `platforms/credentials.py` | Killable credential pipe и явный OS backend |
-| `voice`, `memory` | Границы следующих этапов; интеграций пока нет |
+| `voice`, `memory` | Локальный push-to-talk и явно управляемые метки |
+| `mail`, `tools/outlook.py`, `ui/mail_panel.py` | MSAL/helper, Graph, RAM drafts/attachments, typed mail tools и UI |
 
 ## Снимок и подтверждение
 
@@ -247,3 +251,32 @@ Transcript → редактируемая команда PlannerWindow → ру�
 → PermissionEngine. Voice не получает ApprovalAuthority. Голосовые кнопки в approval и
 clarification умеют только отменить задачу. После завершения Runner опционально озвучивает
 короткую сводку из engine outcomes. Dashboard microphone только открывает планировщик.
+
+## Память этапа 7
+
+`memory/models.py` — строгие Entry/Hint/MemoryContext; `memory/store.py` — SQLite profile,
+транзакции, конфликт редактирования, TTL и bounded failure; `memory/session.py` — явные
+временные метки, monotonic TTL и reset. `ui/memory_panel.py` отделяет UI edit/select от
+QThread I/O. Это пользовательские настройки, не model-callable tools. Планировщик не имеет
+API записи/удаления памяти. Задача получает immutable выбранный MemoryContext через Worker,
+Runner передаёт его провайдеру как данные и освобождает после завершения. Контактная
+неоднозначность проверяется до первого provider call; targets принимаются только из
+наблюдений этой задачи. Опциональный cloud использует отдельное согласие на метки.
+
+
+## Outlook
+
+Почтовая сессия принадлежит PlannerWindow. Один реестр содержит старые инструменты и
+шесть `outlook.*` инструментов. Ручная панель и Runner используют один PermissionEngine.
+MSAL/OS storage работают в killable helper; Graph HTTP — bounded asyncio в Qt worker.
+Профиль/адрес проверяются до POST; session identity инвалидируется при переключении.
+Черновики и байты вложений остаются RAM-состоянием окна. Подробнее: [MILESTONE_8.md](MILESTONE_8.md).
+
+## Установка (этап 9, native-приёмка pending)
+
+`installation/` — отдельно запускаемый stdlib bootstrap, без регистрации инструментов
+и без исполнения при обычном старте. PowerShell готовит runtime; Python готовит
+проверяемый неактивный слот с venv/assets и атомарно меняет указатель после native smoke
+и свежего visible-window receipt. Перезапуск восстанавливает компоненты, не касается
+профиля/SQLite/OS credentials. Stable launcher не зависит от пути репозитория.
+См. [MILESTONE_9.md](MILESTONE_9.md).

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from collections.abc import Awaitable, Callable
 from threading import Event
 
@@ -14,6 +15,7 @@ from jarvis.core.planner.contracts import (
     ProviderError,
     Step,
 )
+from jarvis.memory.models import MemoryContext
 from jarvis.permissions.approvals import Action, ApprovalToken
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Mode, Risk, Status
@@ -33,8 +35,10 @@ class Runner:
         clarify: Clarify,
         *,
         limits: Limits | None = None,
+        memory: MemoryContext | None = None,
         notify: Callable[[str, object], None] = lambda kind, value: None,
     ) -> None:
+        self.memory = MemoryContext.model_validate(memory or MemoryContext())
         self.registry = registry
         self.engine = engine
         self.provider = provider
@@ -90,12 +94,36 @@ class Runner:
             if self.active is not None:
                 self.engine.cancel(self.active)
                 self.active = None
+            self.memory = MemoryContext()
             job.cancel()
             watcher.cancel()
             await asyncio.gather(job, watcher, return_exceptions=True)
 
     async def _run(self, command: str, mode: Mode) -> PlanResult:
         answers: list[str] = []
+        contacts = [
+            hint for hint in (*self.memory.profile, *self.memory.session) if hint.kind == "contact"
+        ]
+        if contacts and (
+            re.search(r"напиши|отправь|письмо|свяжись", command, re.IGNORECASE)
+            or any(
+                text.casefold() in command.casefold()
+                for hint in contacts
+                for text in (hint.label, hint.value)
+            )
+        ):
+            if self.limits.max_questions == 0:
+                return PlanResult("limit")
+            answer = await self.clarify(
+                "В команде есть ссылка на контакт. Уточните полную команду и точного адресата. "
+                "Сохранённое имя или роль не определяют получателя и не разрешают отправку. "
+                "Для почты нужен точный email-адрес."
+            )
+            if answer is None:
+                return PlanResult("cancelled")
+            if not answer.strip() or len(answer) > 4000:
+                return PlanResult("error", error="invalid_answer")
+            answers.append(answer)
         catalog = json.dumps(self.registry.discover(), ensure_ascii=False)
         while True:
             if self.cancelled.is_set():
@@ -103,7 +131,9 @@ class Runner:
             self.notify("thinking", len(self.steps) + 1)
             async with asyncio.timeout(self.limits.provider_seconds):
                 raw = await self.provider.propose(
-                    PlannerInput(command, tuple(answers), tuple(self.steps), mode, catalog)
+                    PlannerInput(
+                        command, tuple(answers), tuple(self.steps), mode, catalog, self.memory
+                    )
                 )
             proposal = Proposal.model_validate(raw, strict=True)
             if self.cancelled.is_set():
@@ -130,6 +160,35 @@ class Runner:
             if len(self.steps) >= self.limits.max_steps:
                 return PlanResult("limit", tuple(self.steps))
             args = json.loads(proposal.arguments)
+            if proposal.tool in ("outlook.local_draft", "outlook.save_draft", "outlook.send"):
+                message = args.get("message", {}) if isinstance(args, dict) else {}
+                recipients = (
+                    [value for field in ("to", "cc", "bcc") for value in message.get(field, [])]
+                    if isinstance(message, dict)
+                    else []
+                )
+                supplied = set(
+                    re.findall(
+                        r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+",
+                        "\n".join([command, *answers]),
+                    )
+                )
+                if not recipients or any(
+                    not isinstance(r, str) or r not in supplied for r in recipients
+                ):
+                    if len(answers) >= self.limits.max_questions:
+                        return PlanResult("limit", tuple(self.steps))
+                    answer = await self.clarify(
+                        "Укажите точные email для Кому, Копия и Скрытая копия. "
+                        "Адрес из письма, памяти или предложения модели не определяет получателя. "
+                        "Ответ уточняет данные и не подтверждает отправку."
+                    )
+                    if answer is None:
+                        return PlanResult("cancelled", tuple(self.steps))
+                    if not answer.strip() or len(answer) > 4000:
+                        return PlanResult("error", tuple(self.steps), "invalid_answer")
+                    answers.append(answer)
+                    continue
             action = self.engine.prepare(proposal.tool, args, mode)
             if isinstance(action, Outcome):
                 self.steps.append(
@@ -166,6 +225,23 @@ class Runner:
 
     def _observed_target(self, action: Action) -> bool:
         args = json.loads(action.payload)
+        if action.tool.startswith("outlook.") and action.tool != "outlook.account":
+            observations = [
+                json.loads(step.outcome.result_json or "{}")
+                for step in self.steps
+                if step.tool.startswith("outlook.") and step.outcome.status is Status.SUCCESS
+            ]
+            if not any(value.get("account") == args.get("account") for value in observations):
+                return False
+            if action.tool == "outlook.read":
+                return any(
+                    row.get("id") == args.get("message_id")
+                    for value in observations
+                    if value.get("state") == "listed"
+                    for row in json.loads(value.get("data", "[]"))
+                    if isinstance(row, dict)
+                )
+            return True
         if "target" not in args or not action.tool.startswith(("browser.", "windows.")):
             return True
         for step in reversed(self.steps):

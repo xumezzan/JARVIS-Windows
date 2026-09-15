@@ -39,7 +39,7 @@ def test_notepad_open_focus_literal_text_and_readback(qtbot: QtBot, tmp_path: Pa
         run_tool(qtbot, window, "windows.focus_app")
         assert window.status_label.text().startswith("SUCCESS")
         window.tool_choice.setCurrentIndex(window.tool_choice.findData("windows.type_text"))
-        window.body.setPlainText("Jarvis integration test")
+        window.body.setPlainText("Jarvis test successful")
         QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
         dialog = window.approval_dialog
         assert dialog is not None and dialog.token is None and window.worker is None

@@ -1,9 +1,11 @@
 """Desktop entry point with CLI metadata and an explicit bounded GUI smoke mode."""
 
 import argparse
+import os
 import sys
 from collections.abc import Sequence
 from importlib.metadata import version
+from pathlib import Path
 
 from jarvis.config import load_config
 
@@ -19,6 +21,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument(
         "--smoke-test", action="store_true", help="Run one GUI demo, close, and report its result."
+    )
+    parser.add_argument(
+        "--startup-report", type=Path, help="Write a PID-bound visible-window receipt for setup."
     )
     args = parser.parse_args(argv)
     try:
@@ -60,6 +65,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         QTimer.singleShot(0, window.submit)
         QTimer.singleShot(config.task_timeout_ms + 2000, window.close)
     window.show()
+    if args.startup_report is not None:
+        from jarvis.installation.setup import atomic_json
+
+        def report_startup() -> None:
+            try:
+                atomic_json(
+                    args.startup_report,
+                    {
+                        "pid": os.getpid(),
+                        "platform": application.platformName(),
+                        "visible": window.isVisible(),
+                    },
+                )
+            except OSError:
+                print("Jarvis startup receipt could not be written.", file=sys.stderr)
+                window.close()
+
+        QTimer.singleShot(500, report_startup)
     try:
         result = application.exec()
     finally:

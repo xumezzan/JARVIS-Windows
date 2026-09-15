@@ -9,7 +9,7 @@ description = "Desktop shell for a local-first Windows AI assistant"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "PySide6-Essentials", "pydantic", "playwright", "aiohttp", "certifi", "keyring",
+    "PySide6-Essentials", "pydantic", "playwright", "aiohttp", "certifi", "keyring", "msal",
     "pywinauto; sys_platform == 'win32'",
     "psutil; sys_platform == 'win32'",
 ]
