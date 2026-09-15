@@ -18,6 +18,12 @@
 | 8 External service | Outlook OAuth/API, drafts, полный preview, send через permissions | Реализован локально; live OAuth/почта и Windows не проверены |
 | 9 E2E / packaging | Реальный Windows-сценарий, failure tests, упаковка и установка из репозитория по одному запросу | Переносимая подготовка реализована; чистая Windows и полный E2E pending |
 
+## Дополнение по запросу пользователя
+
+Добавлен опциональный [ElevenLabs Free TTS](ELEVENLABS.md): Free-only guard,
+системное хранилище ключа, выбор premade-голоса, проба и одноразовое согласие.
+Это не меняет Windows-статус этапов; живой ElevenLabs и реальное звучание pending.
+
 ## Целевой сценарий установки
 
 Разработка ведётся на Mac. На другом Windows-ноутбуке пользователь открывает репозиторий

@@ -8,7 +8,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from threading import Event
-from typing import Any
+from typing import Any, Literal
 
 from jarvis.voice.contracts import MAX_AUDIO_BYTES, AudioClip, Transcript, VoiceError
 
@@ -21,13 +21,18 @@ async def exchange(
     seconds: float,
     released: Event | None = None,
     ready: Callable[[], None] | None = None,
+    helper: Literal[
+        "jarvis.platforms.audio", "jarvis.platforms.elevenlabs"
+    ] = "jarvis.platforms.audio",
 ) -> dict[str, Any]:
+    if helper not in {"jarvis.platforms.audio", "jarvis.platforms.elevenlabs"}:
+        raise VoiceError("voice_failed")
     launch = asyncio.create_task(
         asyncio.create_subprocess_exec(
             sys.executable,
             "-I",
             "-m",
-            "jarvis.platforms.audio",
+            helper,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,

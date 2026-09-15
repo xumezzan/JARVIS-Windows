@@ -5,7 +5,7 @@ import base64
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 import pytest
@@ -55,9 +55,11 @@ def test_no_sensitive_repr_or_exception() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("scenario", ["cancel", "timeout", "oversized", "invalid", "launch_cancel"])
+@pytest.mark.parametrize("helper", ["jarvis.platforms.audio", "jarvis.platforms.elevenlabs"])
 async def test_real_helper_killed_and_reaped(
     monkeypatch: pytest.MonkeyPatch,
     scenario: str,
+    helper: Literal["jarvis.platforms.audio", "jarvis.platforms.elevenlabs"],
     tmp_path: Path,
 ) -> None:
     original = asyncio.create_subprocess_exec
@@ -84,7 +86,7 @@ async def test_real_helper_killed_and_reaped(
         return child
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", launch)
-    task = asyncio.create_task(exchange({"operation": "fixture"}, seconds=0.2))
+    task = asyncio.create_task(exchange({"operation": "fixture"}, seconds=0.2, helper=helper))
     await started.wait()
     if scenario in {"cancel", "launch_cancel"}:
         task.cancel()

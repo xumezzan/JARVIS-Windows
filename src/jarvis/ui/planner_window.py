@@ -210,6 +210,7 @@ class PlannerWindow(QDialog):
         if (
             self.worker is not None
             or self.voice.worker is not None
+            or self.voice.settings_dialog is not None
             or self.mail.busy
             or self._closing
         ):

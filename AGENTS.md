@@ -103,6 +103,9 @@ Keep push-to-talk visible and bound to a held UI gesture; no background capture.
 stops recording; focus loss, Stop, Escape and close cancel and dispose helpers. Local
 Vosk model paths only, explicit native TTS drivers, no model downloads or cloud audio.
 A cloud audio adapter requires new disclosure and explicit consent before transmission.
+The user-requested optional ElevenLabs Free TTS is documented in docs/ELEVENLABS.md.
+Preserve its one-use UI consent, Free/overage/quota checks, native credential helper,
+fixed endpoints and no retries. It accepts only preview/trusted summary text, never microphone audio.
 The explicit repository installer may download its reviewed Russian model; ordinary
 application startup and recording never download models. JARVIS_VOSK_MODEL is a local path.
 Transcript review and a separate submit are mandatory; voice only cancels, never approves.
