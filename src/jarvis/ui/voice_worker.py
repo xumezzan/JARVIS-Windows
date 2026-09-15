@@ -7,6 +7,7 @@ from threading import Event
 from PySide6.QtCore import QThread, Signal
 
 from jarvis.voice.contracts import Recognizer, Recorder, Speaker, Transcript, VoiceError
+from jarvis.voice.elevenlabs import ElevenLabsSpeaker
 
 
 class VoiceWorker(QThread):
@@ -21,7 +22,13 @@ class VoiceWorker(QThread):
         speech: str = "",
     ) -> None:
         super().__init__()
-        if not recognizer.local_only or not speaker.local_only:
+        authorized_cloud = (
+            isinstance(speaker, ElevenLabsSpeaker)
+            and bool(speech)
+            and speaker.authorized_text == speech
+            and not speaker.used
+        )
+        if not recognizer.local_only or (not speaker.local_only and not authorized_cloud):
             raise ValueError("Cloud audio requires a separate consent implementation.")
         self.recorder, self.recognizer, self.speaker = recorder, recognizer, speaker
         self.speech = speech

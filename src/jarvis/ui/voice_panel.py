@@ -17,8 +17,10 @@ from PySide6.QtWidgets import (
 )
 
 from jarvis.core.planner.contracts import PlanResult
+from jarvis.ui.elevenlabs_dialog import ElevenLabsDialog
 from jarvis.ui.voice_worker import VoiceWorker
 from jarvis.voice.contracts import ERROR_TEXT, Recognizer, Recorder, Speaker, spoken_result
+from jarvis.voice.elevenlabs import ElevenLabsSpeaker
 from jarvis.voice.local import LocalRecorder, LocalSpeaker, VoskRecognizer
 
 
@@ -89,6 +91,8 @@ class VoicePanel(QWidget):
         self.recorder = recorder or LocalRecorder()
         self.recognizer = recognizer
         self.speaker = speaker or LocalSpeaker()
+        self.cloud_selection: tuple[str, str] | None = None
+        self.settings_dialog: ElevenLabsDialog | None = None
         self.worker: VoiceWorker | None = None
         self.planning = False
         self.cancel_only = False
@@ -113,6 +117,10 @@ class VoicePanel(QWidget):
         row.addWidget(self.model_path, 1)
         row.addWidget(self.browse)
         body.addLayout(row)
+        self.cloud_settings = QPushButton("Настроить голос ElevenLabs Free…")
+        self.cloud_settings.setAutoDefault(False)
+        self.cloud_settings.clicked.connect(self._cloud_settings)
+        body.addWidget(self.cloud_settings)
         row = QHBoxLayout()
         self.hold = self._button("Удерживайте для записи команды")
         row.addWidget(self.hold)
@@ -121,6 +129,9 @@ class VoicePanel(QWidget):
         self.stop_button.clicked.connect(self.cancel_requested.emit)
         row.addWidget(self.stop_button)
         self.speech_enabled = QCheckBox("Озвучивать итог системным голосом")
+        self.speech_enabled.toggled.connect(
+            lambda enabled: None if enabled else self._clear_cloud()
+        )
         row.addWidget(self.speech_enabled)
         body.addLayout(row)
         hint = QLabel(
@@ -136,6 +147,31 @@ class VoicePanel(QWidget):
         self.status.setAccessibleName("Состояние микрофона и речи")
         body.addWidget(self.status)
         self.message.connect(self.status.setText)
+
+    def _cloud_settings(self) -> None:
+        if self.worker is not None or self.planning or self.closed:
+            return
+        self.cloud_selection = None
+        self.speech_enabled.setText("Озвучивать итог системным голосом")
+        dialog = ElevenLabsDialog(self)
+        self.settings_dialog = dialog
+        dialog.selected.connect(self._select_cloud)
+        self.busy_changed.emit(True)
+        try:
+            dialog.exec()
+        finally:
+            self.settings_dialog = None
+            self.busy_changed.emit(False)
+            dialog.deleteLater()
+
+    def _select_cloud(self, voice_id: str, account: str) -> None:
+        self.cloud_selection = (voice_id, account)
+        self.speech_enabled.setChecked(True)
+        self.speech_enabled.setText("Следующий итог: ElevenLabs; далее — системный голос")
+
+    def _clear_cloud(self) -> None:
+        self.cloud_selection = None
+        self.speech_enabled.setText("Озвучивать итог системным голосом")
 
     def _browse(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Выберите локальную русскую модель Vosk")
@@ -177,7 +213,12 @@ class VoicePanel(QWidget):
         return super().eventFilter(watched, event)
 
     def _record(self, button: HoldButton) -> None:
-        if self.closed or self.worker is not None or not button.holding:
+        if (
+            self.closed
+            or self.settings_dialog is not None
+            or self.worker is not None
+            or not button.holding
+        ):
             return
         if self.recognizer is None and not self.model_path.text().strip():
             self.message.emit(ERROR_TEXT["model"])
@@ -192,11 +233,16 @@ class VoicePanel(QWidget):
         self._launch("")
 
     def _launch(self, speech: str) -> None:
+        speaker = self.speaker
+        if speech and self.cloud_selection is not None:
+            voice_id, account = self.cloud_selection
+            self._clear_cloud()
+            speaker = ElevenLabsSpeaker(voice_id, account, speech)
         try:
             worker = VoiceWorker(
                 self.recorder,
                 self.recognizer or VoskRecognizer(Path(self.model_path.text())),
-                self.speaker,
+                speaker,
                 speech=speech,
             )
         except ValueError:
@@ -206,6 +252,7 @@ class VoicePanel(QWidget):
         self.model_path.setEnabled(False)
         self.browse.setEnabled(False)
         self.speech_enabled.setEnabled(False)
+        self.cloud_settings.setEnabled(False)
         self.busy_changed.emit(True)
         worker.phase.connect(self._phase)
         worker.finished.connect(self._finished)
@@ -228,6 +275,9 @@ class VoicePanel(QWidget):
             self.message.emit("Завершение записи; микрофон выключается…")
 
     def cancel(self) -> None:
+        self._clear_cloud()
+        if self.settings_dialog is not None:
+            self.settings_dialog.reject()
         if self.voice_task and not self.planning:
             self.transcript_ready.emit("")
         self.was_cancelled = True
@@ -254,6 +304,7 @@ class VoicePanel(QWidget):
         self.model_path.setEnabled(not self.planning)
         self.browse.setEnabled(not self.planning)
         self.speech_enabled.setEnabled(not self.planning)
+        self.cloud_settings.setEnabled(not self.planning)
         self.busy_changed.emit(False)
         transcript = worker.transcript
         worker.transcript = None
@@ -290,6 +341,7 @@ class VoicePanel(QWidget):
         self.model_path.setEnabled(idle)
         self.browse.setEnabled(idle)
         self.speech_enabled.setEnabled(idle)
+        self.cloud_settings.setEnabled(idle)
 
     def finish_plan(self, result: PlanResult) -> None:
         self.set_planning(False)
