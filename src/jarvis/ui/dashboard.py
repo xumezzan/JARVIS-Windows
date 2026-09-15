@@ -32,6 +32,22 @@ def line_icon(name: str, color: str = "#a5afbe", size: int = 24) -> QIcon:
     painter.setPen(QPen(QColor(color), 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
     painter.setBrush(Qt.BrushStyle.NoBrush)
     paths: dict[str, list[list[tuple[float, float]]]] = {
+        "globe": [
+            [(3, 12), (21, 12)],
+            [(12, 3), (8, 8), (8, 16), (12, 21), (16, 16), (16, 8), (12, 3)],
+        ],
+        "document": [
+            [(5, 3), (14, 3), (19, 8), (19, 21), (5, 21), (5, 3)],
+            [(14, 3), (14, 8), (19, 8)],
+            [(8, 12), (16, 12)],
+            [(8, 16), (14, 16)],
+        ],
+        "code": [[(8, 6), (2, 12), (8, 18)], [(16, 6), (22, 12), (16, 18)], [(14, 3), (10, 21)]],
+        "command": [
+            [(5, 5), (19, 5), (19, 19), (5, 19), (5, 5)],
+            [(8, 2), (8, 22)],
+            [(16, 2), (16, 22)],
+        ],
         "home": [
             [(3, 11), (12, 3), (21, 11)],
             [(5, 10), (5, 21), (10, 21), (10, 14), (14, 14), (14, 21), (19, 21), (19, 10)],
@@ -70,8 +86,11 @@ def line_icon(name: str, color: str = "#a5afbe", size: int = 24) -> QIcon:
         for point in points[1:]:
             path.lineTo(QPointF(*point))
         painter.drawPath(path)
-    if name in {"clock", "settings"}:
+    if name in {"clock", "settings", "globe", "orb"}:
         painter.drawEllipse(QRectF(3, 3, 18, 18))
+    if name == "orb":
+        painter.setBrush(QColor(color))
+        painter.drawEllipse(QRectF(10, 10, 4, 4))
     if name == "settings":
         painter.drawEllipse(QRectF(8, 8, 8, 8))
         for angle in range(0, 360, 45):
@@ -107,6 +126,7 @@ class OrbWidget(QWidget):
         self.setMinimumSize(300, 330)
         self.setAccessibleName("Световая сфера состояния Jarvis")
         self._phase = 0.0
+        self._motion_enabled = True
         self._state = UiState.IDLE
         self._artwork: QImage | None = self._render_orb()
         self._timer = QTimer(self)
@@ -122,13 +142,22 @@ class OrbWidget(QWidget):
         self._state = state
         self.update()
 
+    def set_motion_enabled(self, enabled: bool) -> None:
+        self._motion_enabled = enabled
+        if enabled and self.isVisible():
+            self._timer.start()
+        else:
+            self._timer.stop()
+        self.update()
+
     def _advance(self) -> None:
         self._phase += 0.035 if self._state in {UiState.THINKING, UiState.EXECUTING} else 0.008
         self.update()
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
-        self._timer.start()
+        if self._motion_enabled:
+            self._timer.start()
 
     def hideEvent(self, event: QHideEvent) -> None:
         self._timer.stop()

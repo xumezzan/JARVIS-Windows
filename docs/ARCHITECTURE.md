@@ -2,16 +2,17 @@
 
 ## Текущее состояние
 
-Один Python-пакет, запускаемый через `python -m jarvis` или `jarvis`. Этапы 0–4
+Один Python-пакет, запускаемый через `python -m jarvis` или `jarvis`. Этапы 0–5
 реализовали desktop shell, локальные typed tools, PermissionEngine, approvals и audit.
 Текстовая команда остаётся fake demo этапа 1. Кнопка «Открыть инструменты» открывает
 ручное окно локальных, Windows и браузерных инструментов. Windows UIA изолирован в helper-процессе;
-Playwright имеет отдельный asyncio owner; LLM и voice adapters отсутствуют.
+Playwright имеет отдельный asyncio owner. Отдельное окно планировщика использует offline
+recipes или OpenAI Responses; voice adapter ещё отсутствует.
 
 ## Поток инструментов
 
 ```text
-Manual UI (future: planner)
+Manual UI / bounded Planner Runner
   -> ToolRegistry + strict Pydantic arguments
   -> PermissionEngine.prepare
   -> immutable Action snapshot
@@ -41,7 +42,10 @@ Manual UI (future: planner)
 | `ui/approval_dialog.py` | Read-only полный preview; token только из обработчика кнопки |
 | `ui/permission_workbench.py` | Ручная проверка, режим, outcome, local outbox count, audit view |
 | `ui/tool_worker.py` | Один `asyncio.run(engine.execute(...))` внутри QThread |
-| `core`, `voice`, `memory`, `security` | Границы следующих этапов; реальных интеграций пока нет |
+| `core/planner` | Provider protocol, offline recipes, OpenAI strict calls, bounded Runner |
+| `ui/planner_window.py`, `ui/planner_worker.py` | Текстовая команда, отдельный QThread, prompts и stop |
+| `security/credentials.py`, `platforms/credentials.py` | Killable credential pipe и явный OS backend |
+| `voice`, `memory` | Границы следующих этапов; интеграций пока нет |
 
 ## Снимок и подтверждение
 
@@ -105,8 +109,8 @@ payload с исходным снимком. При закрытии окна с�
 контракте — только metadata name/SHA-256; настоящие файлы не читаются и не отправляются.
 Будущему внешнему adapter понадобится замороженное содержимое файлов и повторная проверка.
 
-SQLite memory, OAuth и keyring credentials ещё не реализованы. Долговременные секреты
-не относятся к памяти модели. Retrieved content никогда не меняет policy или tool registry.
+SQLite memory и OAuth ещё не реализованы. Ключ OpenAI хранится в OS credential store,
+не в памяти модели. Retrieved content никогда не меняет policy или tool registry.
 
 ## Решения
 
@@ -194,3 +198,52 @@ browser binary и не rollback уже отправленного запроса
 явно помеченный как сообщение Jarvis, а не текст сайта. Navigation tool всё равно
 завершается ERROR. Это сохраняет возможность получить свежий target, прочитать сообщение,
 выполнить новый переход или подтвердить закрытие; ошибку нельзя превратить в SUCCESS.
+
+## LLM Planner и Orchestrator, этап 5
+
+`Provider.propose(PlannerInput)` возвращает ровно один strict `Proposal`: зарегистрированный
+вызов, вопрос или finish без текста об успехе. `Runner` последовательно вызывает
+`PermissionEngine.prepare/execute`; provider получает только JSON metadata каталога,
+текст команды, ответы пользователя и неизменяемые outcomes прошлых шагов. Исполняемые
+callbacks реестра, engine, authority и токены ему не передаются.
+
+Runner ограничен 8 действиями, 3 уточнениями, 30 секундами на провайдера и 180 на задачу.
+Общий deadline включает approval/clarification; собственные тайм-ауты инструментов сохраняются.
+Нет автоматических retries: ошибка/denial/verification failure останавливают задачу.
+Windows/browser target обязан присутствовать в SUCCESS observation этой задачи; элемент —
+в той же странице. Adapter повторно проверяет актуальность identity/DOM перед действием.
+В симуляции нет таких наблюдений, и зависимые цели не синтезируются.
+
+`PlannerWorker` владеет asyncio loop внутри QThread. Prompts содержат случайный request ID;
+UI отвечает через thread-safe callback, совпадение ID защищает от запоздалого ответа.
+Worker получает opaque ApprovalToken, но не issuer. Stop/close отменяют Runner, pending
+approval и adapter; завершение собирает результаты до уничтожения worker и BrowserHost.
+У каждого окна свой временный browser context и outbox, общий файл минимального audit.
+
+OpenAI adapter использует фиксированный Responses HTTPS endpoint через aiohttp. Каждый
+шаг — самостоятельный запрос с bounded context; без server-side conversation/response ID,
+`store=false`, без hosted tools и parallel tool calls. Строгие схемы получены из Pydantic
+metadata реестра. Ответ разбирается как данные и повторно проходит локальную валидацию.
+OfflineProvider — отдельный набор учебных рецептов, позволяющий проверить UI без LLM.
+
+OS credentials вынесены в platform adapter: конкретные WinVaultKeyring/macOS Keyring,
+без динамического выбора backend. Короткоживущий subprocess передаёт ключ в приватный
+pipe за срок до 8 секунд; cancellation завершает и собирает процесс. Setup CLI читает
+ключ через getpass в TTY. Адаптер не читает OPENAI_API_KEY и не пишет ключ в файлы/SQLite.
+
+## Этап 6: Voice
+
+`voice/contracts.py` задаёт bounded AudioClip/Transcript, Recorder/Recognizer/Speaker и
+детерминированный spoken_result. `voice/local.py` реализует локальный subprocess transport.
+`platforms/audio.py` изолирует PortAudio/sounddevice, Vosk и системные TTS drivers.
+Необязательные библиотеки импортируются внутри helper; текстовый режим работает без них.
+
+`ui/voice_panel.py` владеет видимым push-to-talk, выбором локальной модели, состоянием,
+отменой и пятиминутным deadline. `ui/voice_worker.py` выполняет async adapters в QThread,
+отменяет/собирает дочерние процессы и подавляет устаревшие результаты. Все voice workers
+исключают одновременные capture/STT/TTS. Аудио не сохраняется и не отправляется по сети.
+
+Transcript → редактируемая команда PlannerWindow → ручной запуск → существующий Runner
+→ PermissionEngine. Voice не получает ApprovalAuthority. Голосовые кнопки в approval и
+clarification умеют только отменить задачу. После завершения Runner опционально озвучивает
+короткую сводку из engine outcomes. Dashboard microphone только открывает планировщик.

@@ -2,8 +2,9 @@
 
 ## Scope and source
 
-The user-supplied development plan v1.0 defines the product. Milestones 0, 1, 2, 3, and 4 are
-implemented locally. See `docs/ROADMAP.md` for verification status and the next prompt.
+The user-supplied development plan v1.0 defines the product. Milestones 0–6 are implemented
+locally. Live model, real voice hardware and native Windows acceptance remain unverified.
+See `docs/ROADMAP.md` for verification status and the next prompt.
 Work on the milestone requested by the user; do not implement later stages early.
 Inspect existing instructions and changes before edits and preserve unrelated work.
 
@@ -12,7 +13,7 @@ Inspect existing instructions and changes before edits and preserve unrelated wo
 - Python 3.12+, `src` layout, one local application, no unnecessary services.
 - Keep `core`, `tools`, `permissions`, `voice`, `memory`, `security`, `ui`, and
   `observability` boundaries. Platform imports belong in platform adapters.
-- Future planner calls must use registered tools with strict input/output schemas.
+- Planner calls must use registered tools with strict input/output schemas.
 - Route every tool invocation through a deterministic PermissionEngine.
 - No arbitrary model-generated code, unrestricted shell, or fixed-coordinate primary automation.
 - Prefer official APIs, OAuth adapters, Playwright, then Windows UI Automation.
@@ -36,7 +37,7 @@ Run focused tests, fix failures, then full `python -m pytest`, `python -m ruff c
 `python -m ruff format --check .`, and `python -m mypy`.
 Run `python -m jarvis --smoke-test` and build with `python -m build`.
 Use `python -m jarvis` for interactive GUI verification. The command shell remains a demo;
-the permissions window runs local, Windows, and browser tools through PermissionEngine.
+the permissions and planner windows run local, Windows, and browser tools through PermissionEngine.
 Windows calls belong in the killable helper, never directly in the UI/event loop.
 Typing is CONFIRM, only into an observed empty Notepad editor; preserve exact process,
 window, editor and selected-tab identity. Do not add global keys or clipboard fallbacks.
@@ -64,3 +65,29 @@ blocks, checked DNS addresses, no retry and durable audit. Preserve other owned 
 failed new-tab operation. Closing the workbench disposes its explicitly ephemeral session.
 Browser tests require `python -m playwright install chromium`; local Chromium success is
 not Windows acceptance or proof that a public search engine returned actual search results.
+
+## Planner boundary (milestone 5)
+
+Keep one proposed tool per step, bounded steps/questions/provider and total time, no retries
+of issued effects, and factual results generated from engine outcomes. Reject unobserved
+Windows/browser targets. Clarification is user input, never approval. Only the existing
+verified approval button owns authority; providers receive no approval capability.
+Default to offline recipes and simulation. Cloud use requires explicit UI disclosure;
+it sends commands and observations even when tools are simulated. Model output and page
+content cannot change policy, mode or provider settings. OpenAI uses a fixed HTTPS endpoint,
+strict function schemas, store=false and no hosted tools, cookies, proxies or redirects.
+Keys use only the explicit OS credential backend and a bounded, killable helper pipe;
+never OPENAI_API_KEY/.env. Ordinary tests must not contact OpenAI or access live credentials.
+Real model checks require --run-model and JARVIS_PLANNER_MODEL; do not claim verified from fixtures.
+
+## Voice boundary (milestone 6)
+
+Keep push-to-talk visible and bound to a held UI gesture; no background capture. Release
+stops recording; focus loss, Stop, Escape and close cancel and dispose helpers. Local
+Vosk model paths only, explicit native TTS drivers, no model downloads or cloud audio.
+A cloud audio adapter requires new disclosure and explicit consent before transmission.
+Transcript review and a separate submit are mandatory; voice only cancels, never approves.
+Preserve bounded PCM/pipes/timeouts, no audio/transcript persistence, no simultaneous
+recording and speech, and deterministic spoken summaries from engine outcomes.
+Ordinary tests use fixtures; real microphone/speaker checks require --run-voice, a native
+visible window and the user's hold gesture. Never claim hardware verified from fixtures.

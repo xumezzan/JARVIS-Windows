@@ -22,3 +22,9 @@ Thumbs.db
 .vscode/
 browser-state/
 recordings/
+
+# Local design tools and browser preview dependencies
+.agents/
+.impeccable/
+node_modules/
+*.tsbuildinfo

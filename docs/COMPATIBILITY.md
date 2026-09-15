@@ -97,3 +97,44 @@ TLS fallback: certifi 2026.7.22 ([официальный пакет](https://pyp
 Прямое создание context не включает побочный `SSLKEYLOGFILE` механизм
 `create_default_context`. TLS validation не отключается. Это исправляет обнаруженный
 на локальном python.org macOS Python пустой CA store без изменения системной установки.
+
+## Planner — проверка документации 2026-09-15
+
+Добавлен keyring без pin (локально 25.7.0); OpenAI SDK не добавлен. Адаптер использует уже
+имеющийся aiohttp и фиксированный Responses API. Проверены официальные источники:
+
+- [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling):
+  strict functions, additionalProperties=false, все поля required, parallel_tool_calls=false.
+- [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs):
+  JSON schema для control output; локальный код отдельно проверяет refusal/incomplete output.
+- [OpenAI data controls](https://developers.openai.com/api/docs/guides/your-data):
+  store=false не равнозначен отсутствию хранения/abuse monitoring у провайдера.
+- [keyring](https://keyring.readthedocs.io/en/latest/): системные Windows/macOS backends.
+  Код выбирает конкретный backend явно; плагины/default backend не используются.
+
+Модель не закреплена и не выбирается автоматически: пользователь вводит доступный своему
+аккаунту Responses model ID с поддержкой strict function calling. Протокол проверен
+fixtures, не живым OpenAI запросом. Доступность модели, совместимость всех function schemas,
+ключ/OS backend и account limits ещё требуют opt-in проверки. Windows 11 не проверена;
+версии до этого не закрепляются. Наличие dependency не доказывает работу OS credential store.
+
+## Этап 6: локальный голос
+
+Проверены официальные интерфейсы до добавления необязательной группы `.[voice]`:
+
+- [sounddevice RawInputStream](https://python-sounddevice.readthedocs.io/en/latest/api/raw-streams.html):
+  PCM buffer без NumPy; callback, завершение и закрытие потока. Вход: 16 kHz, int16, mono.
+- [Vosk installation](https://alphacephei.com/vosk/install) и
+  [список моделей](https://alphacephei.com/vosk/models): используется вручную выбранная
+  локальная русская модель, например `vosk-model-small-ru-0.22` (45 MB, Apache 2.0).
+  `Model(model_path=...)` исключает автоматическую загрузку по языку/имени.
+- [pyttsx3 engine](https://pyttsx3.readthedocs.io/en/latest/engine.html): явные локальные
+  драйверы `sapi5` (Windows), `nsss` (macOS), `espeak` (Linux), выбор русского голоса,
+  callback завершения и stop. Наличие системного русского голоса проверяется при озвучивании.
+
+На macOS / Python 3.12.7 установлены sounddevice 0.5.6, vosk 0.3.44 и pyttsx3 2.99.
+Это установка зависимостей, не проверка записи/качества распознавания/звука.
+Документация Vosk содержит старый диапазон Python; совместимость с Python 3.12 на
+реальной Windows нужно подтвердить отдельной приёмкой. Версии не закреплялись.
+`.[dev]` не устанавливает голосовые библиотеки. `.[dev,voice]` включает их; модель и
+системные голоса в пакет не входят. На macOS pyttsx3 также устанавливает PyObjC.

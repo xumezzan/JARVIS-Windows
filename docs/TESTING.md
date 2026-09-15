@@ -1,4 +1,4 @@
-# Проверки этапов 1–4
+# Проверки этапов 1–6
 
 ## Windows 11 / PowerShell
 
@@ -35,7 +35,7 @@ Remove-Item Env:QT_QPA_PLATFORM
 
 ## Ручная проверка окна
 
-1. Запустить без `--smoke-test`. Проверить idle, доступный ввод и отключённый микрофон; permissions открывает тестовое окно.
+1. Запустить без `--smoke-test`. Проверить idle, доступный ввод и отсутствие записи до удержания кнопки в планировщике; permissions открывает тестовое окно.
 2. Ввести русскую команду, нажать «Запустить демо» или Ctrl+Enter.
 3. Убедиться, что принятый текст отображается буквально, UI остаётся отзывчивым,
    а thinking → executing → success относятся только к демонстрации.
@@ -77,13 +77,13 @@ QT_QPA_PLATFORM=cocoa .venv/bin/python -m pytest tests/integration/test_shell.py
   Qt startup, text submission, responsiveness, success, failure/retry, cancel во время
   thinking/executing, timeout, close/quit cleanup, duplicate submission, input limits,
   literal transcript, отсутствие raw input в журнале, bounded activity.
-- `pytest-qt` запускает настоящий Qt event loop и реальные QThread workers. I/O adapters
-  здесь отсутствуют; тесты не притворяются проверкой будущих автоматизаций.
+- `pytest-qt` запускает настоящий Qt event loop и реальные QThread workers. Browser tests
+  используют локальный HTTP fixture и настоящий Chromium; Windows UI tests — portable probe.
 - `tests/e2e` пока не содержит полного Windows MVP сценария.
 
-Будущие Windows/adapters тесты должны требовать явного opt-in и marker `windows`.
-Один marker сам по себе не отключает тест: при добавлении реализовать opt-in fixture/option
-и пропуск на неподдерживаемой ОС. Никаких внешних записей по умолчанию.
+Native Windows tests требуют marker `windows` и `--run-windows`; live model — marker `model`
+и `--run-model`. `tests/conftest.py` применяет пропуски до запуска тестов.
+Никаких внешних записей или запросов OpenAI по умолчанию.
 
 ## Сборка
 
@@ -288,3 +288,95 @@ py -3.12 -m venv .wheel-check
 Не использовать editable install в этом окружении. Локально отдельный Qt harness с `-I`
 также проверил через UI sim/open/type/GET/close/shutdown установленного wheel; только
 контролируемый HTTP fixture был прочитан из `tests/browser_support.py` рабочей копии.
+
+## Этап 5: планировщик и реальный провайдер
+
+Обычная suite использует offline recipes/scripted proposals/HTTP protocol fixtures;
+реальный Chromium работает только с локальным fixture. Блокнот проверяется portable probe.
+Результаты текущей проверки и setup: [MILESTONE_5.md](MILESTONE_5.md).
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/unit/test_planner.py tests/unit/test_openai_provider.py tests/integration/test_planner_ui.py
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m ruff format --check .
+.\.venv\Scripts\python.exe -m mypy
+.\.venv\Scripts\python.exe -m jarvis --smoke-test
+.\.venv\Scripts\python.exe -m jarvis
+```
+
+В открытом приложении: «Планировщик команд» → `проверь систему дважды` → два SIMULATED;
+снять Simulation Mode → два SUCCESS. Неизвестная офлайн-команда вызывает уточнение.
+На Windows подготовить пустой Notepad и выполнить `открой блокнот и напиши «Привет»`:
+до approval текста нет, preview включает точный process/window/editor/tab и текст,
+после approval read-back совпадает. Stop во время уточнения/approval не даёт позднему
+ответу выполнить следующий шаг. Проверить также закрытие/повторное открытие окна.
+
+Live provider проверяется **отдельно**, отправляет синтетическую команду в OpenAI и расходует
+API usage. Модель задаётся доступным ID; ключ вводится скрыто через setup CLI, не через env:
+
+```powershell
+.\.venv\Scripts\python.exe -m jarvis.security.credentials set
+$env:JARVIS_PLANNER_MODEL = Read-Host "Responses API model ID"
+.\.venv\Scripts\python.exe -m pytest tests/e2e/test_model_acceptance.py --run-model -q
+```
+
+На macOS используйте `.venv/bin/python` и задайте несекретный `JARVIS_PLANNER_MODEL` перед
+командой. Тест отправляет полный каталог схем и проверяет один local.check proposal;
+не исполняет инструменты и не является полной живой многошаговой приёмкой. Затем в GUI
+выбрать OpenAI, указать модель, разрешить передачу данных и проверить ту же команду в
+симуляции/реальном локальном режиме. Не вводить реальные секреты/личные страницы в тест.
+
+Windows acceptance предыдущих adapters (на реальной Windows, после сохранения документов):
+`python -m pytest tests/e2e/test_windows_acceptance.py --run-windows -q`.
+Без соответствующих флагов три Windows test cases и один live model case пропускаются.
+
+## Этап 6: локальный голос
+
+Обычные тесты не записывают микрофон, не озвучивают звук, не читают ключи и не обращаются
+к внешним провайдерам. Native capture callback проверяется с подменённым устройством;
+транспорт проверяется настоящими тестовыми процессами. Это не аппаратная приёмка.
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[dev,voice]"
+.\.venv\Scripts\python.exe -m playwright install chromium
+.\.venv\Scripts\python.exe -m pytest tests/unit/test_voice.py tests/integration/test_voice_ui.py -q
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m ruff format --check .
+.\.venv\Scripts\python.exe -m mypy
+.\.venv\Scripts\python.exe -m jarvis --smoke-test
+.\.venv\Scripts\python.exe -m build
+$env:QT_QPA_PLATFORM = "windows"
+$env:JARVIS_VOSK_MODEL = Read-Host "Папка распакованной русской модели Vosk"
+.\.venv\Scripts\python.exe -m pytest tests/e2e/test_voice_acceptance.py --run-voice -v -s
+Remove-Item Env:QT_QPA_PLATFORM
+Remove-Item Env:JARVIS_VOSK_MODEL
+```
+
+Последний тест открывает настоящее окно и ждёт 90 секунд: пользователь удерживает кнопку,
+говорит «проверь систему дважды», отпускает, проверяет текст и нажимает запуск. Тест сам
+не нажимает микрофон. Он ожидает два SIMULATED и завершение системной русской речи.
+При недоступных зависимостях/устройстве/голосе он падает, а не сообщает фиктивный успех.
+`JARVIS_VOSK_MODEL` используется только этим тестом; в обычном UI папка выбирается вручную.
+На macOS используется `QT_QPA_PLATFORM=cocoa` и `.venv/bin/python`.
+
+Ручная приёмка:
+
+1. Запуск/открытие окна без удержания не включает микрофон. Проверить разрешение ОС,
+   отсутствие устройства, тишину, короткое нажатие и предел 30 секунд.
+2. Произнести русскую команду, проверить расшифровку, исправить её. До отдельного запуска
+   нет вызова Runner. Неуверенное распознавание отмечено явно.
+3. В реальном режиме выполнить ввод в пустой Блокнот. До UI approval текста нет; после
+   подтверждения read-back совпадает. «Подтверждаю» голосом не выдаёт разрешения.
+4. Проверить «стоп» и «отмена» во время ожидания провайдера, уточнения и approval с явным
+   удержанием кнопки. Другие фразы во время задачи не заменяют выполняемую команду.
+5. Stop/Escape/закрытие/потеря фокуса во время записи и распознавания не оставляют
+   поздней расшифровки. Escape в modal prompt отменяет всю задачу.
+6. Остановить TTS; микрофон не работает одновременно с речью. Проверить отключённый звук,
+   отсутствующий русский голос, отсутствие записи/аудиофайлов и содержимого в журналах.
+7. Проверить читаемость интерфейса и approval при Windows DPI 100/150/200%, повторное
+   открытие окна и отсутствие helper после закрытия. Зафиксировать версии ОС, Python,
+   Notepad, sounddevice, Vosk, pyttsx3, модель и системный голос.
+
+Результаты: [MILESTONE_6.md](MILESTONE_6.md). Голосовая приёмка не закрывает весь Windows MVP.

@@ -1,8 +1,9 @@
 # Roadmap
 
 Работа идёт по этапам из исходного плана v1.0. Новый этап запускается отдельной задачей.
-Текущий scope — этап 4. Browser adapter реализован локально; native Windows-приёмка ожидается.
-Результаты: `MILESTONE_0.md`, `MILESTONE_1.md`, `MILESTONE_2.md`, `MILESTONE_3.md`, `MILESTONE_4.md`.
+Текущий scope — этап 6. Локальный голос реализован; настоящий микрофон/STT/TTS, живой OpenAI API
+и native Windows-приёмка ожидаются.
+Результаты: `MILESTONE_0.md`, `MILESTONE_1.md`, `MILESTONE_2.md`, `MILESTONE_3.md`, `MILESTONE_4.md`, `MILESTONE_5.md`, `MILESTONE_6.md`.
 
 | Этап | Результат и критерий выхода | Статус |
 | --- | --- | --- |
@@ -11,9 +12,9 @@
 | 2 Tools / permissions | Typed registry, risk, exact expiring single-use approvals, simulation, audit | Реализован локально; native Windows не проверен |
 | 3 Windows | open/focus/list/type, Notepad read-back, Chrome/VS Code, UIA без координат | Реализован; portable tests пройдены, native Windows не проверен |
 | 4 Browser | open/navigate/search/click/type/read/tabs/close, Playwright, domain policy, timeouts | Реализован локально: статический анонимный Chromium; Windows не проверена |
-| 5 Planner | Strict calls, только registry, bounded plan, cancellation, уточнения, проверенные ответы | Следующий; не начат |
-| 6 Voice | Push-to-talk, transcript, STT/TTS, русские команды, voice/button cancel | Не начат |
-| 7 Memory | Профиль и короткий контекст, view/edit/delete, уточнение контактов, без secrets | Не начат |
+| 5 Planner | Strict calls, только registry, bounded plan, cancellation, уточнения, проверенные ответы | Реализован локально; offline/протокол/Qt/Chromium проверены, live API и Windows не проверены |
+| 6 Voice | Push-to-talk, transcript, STT/TTS, русские команды, voice/button cancel | Реализован локально; fixtures/Qt/helper tests, реальное оборудование и Windows не проверены |
+| 7 Memory | Профиль и короткий контекст, view/edit/delete, уточнение контактов, без secrets | Следующий; не начат |
 | 8 External service | Gmail или Outlook OAuth/API, drafts, полный preview, send через permissions | Не начат |
 | 9 E2E / packaging | Реальный Windows-сценарий, failure tests, PyInstaller, чистая установка | Не начат |
 
@@ -38,42 +39,36 @@ installer, подписанные обновления, администрати
 ## Точный следующий prompt
 
 ```text
-Implement Milestone 5: LLM Planner and Orchestrator.
+Implement Milestone 7: Memory — user-managed profile and bounded short context.
 
-Read AGENTS.md, the user-supplied development plan v1.0, docs/SECURITY.md,
-docs/MILESTONE_4.md and the current registry, PermissionEngine, approval UI and workers.
-Preserve existing work, including the dashboard changes. Milestones 3–4 native Windows
-acceptance remains unverified; do not mark it complete from portable tests.
+Read AGENTS.md, the user-supplied development plan v1.0, docs/PRD.md, docs/SECURITY.md,
+docs/MILESTONE_6.md and the existing planner, voice lifecycle and PermissionEngine.
+Preserve all dashboard/manual tools, offline recipes, optional OpenAI and local voice.
+Real Windows, live LLM and real voice hardware remain unverified.
 
 Scope:
-- Add a replaceable model provider and a bounded multi-step orchestrator for text commands.
-  Start with deterministic offline provider fixtures; connect a real provider through
-  documented strict structured tool calls. Check official provider docs before adding SDKs.
-- Expose only ToolRegistry discovery and strict Pydantic inputs/results. No generated code,
-  shell, JS, arbitrary selectors, private backend access, direct adapter calls or approval tool.
-- Route every tool through PermissionEngine, including reads and discovery actions.
-  Model output, plans, page text and tool results are untrusted data, never permission.
-- Enforce maximum steps, per-call/overall timeout, cancellation and bounded provider output.
-  Do not retry issued effects; distinguish pre-execution failures from possible effects.
-- Ask for missing/ambiguous targets or content. Show exact proposed actions in the existing
-  UI and pause CONFIRM execution for its verified button event. Never auto-approve a plan.
-  Bind approval to the immutable exact action; reject changes, expiry and reuse.
-- Keep simulation as the default and invoke no real tool adapter hooks in simulation.
-  Present plans and simulated results honestly; do not invent observed targets or success.
-- Keep browser restrictions: dedicated anonymous script-disabled context, exact-origin/DNS
-  checks, no redirects/popups/production POST/profile credentials, one-use document requests.
-  No general-purpose external write tool; CRITICAL disabled and BLOCKED never executes.
-- Add a manual text-command path with progress, pending approval, stop and factual final
-  outcome. Keep the existing shell demo clearly identifiable and preserve manual tools.
-- Secrets must use the OS credential store. Never use .env, logs, SQLite, fixtures or model
-  messages for raw credentials. Real-provider tests opt in; ordinary tests are offline.
-- Do not implement voice, memory, Gmail/Outlook or packaging from later milestones.
+- Add a local, strictly typed memory store within the existing application: profession,
+  preferred applications, project labels, contact roles and ordinary preferences.
+- Make saving explicit and provide visible view/edit/delete/clear controls. Do not
+  silently mine transcripts, tool output or files. Never store credentials/tokens/cookies,
+  approval tokens, audio, whole pages or raw sensitive content. Bound size and retention.
+- Keep a short bounded conversation context with explicit lifecycle and reset. Stored
+  labels/context are untrusted data, never system policy or approval authority.
+- Resolve ambiguity by clarification, especially names/contacts. Do not infer an exact
+  recipient or authorize writes from remembered preferences. No OAuth/email integration.
+- Re-observe all Windows/browser targets in the current task; never reuse stored HWND,
+  PID, DOM identities, approvals or an obsolete action snapshot as execution authority.
+- Keep provider, simulation, cloud disclosure and permission settings under UI control.
+  Disclose any remembered context sent to an opted-in cloud planner; send only necessary
+  bounded fields. Memory must not silently opt the user into cloud transmission.
+- Use cancellable operations, explicit failure handling and safe metadata-only logging.
+  Voice transcript review, no background recording and exact per-action approval remain.
+- Do not implement external service sending, installer or later milestones.
 
-Test multi-step success, clarification, unknown tool/invalid args, injection in observations,
-no approval/changed approval/replay, provider failure/timeout, stop during planning/tool/
-approval, failed verification, no success from plan alone, bounded loops and zero adapter
-calls in simulation. Use controlled browser fixtures, not public sites, in the default suite.
-Run focused/full tests, Ruff lint/format, mypy, native GUI smoke and build. Update commands,
-actual results, limitations and the exact next prompt for Milestone 6. Whole MVP remains
-incomplete until real Windows acceptance and packaging pass.
+Test persistence/restart, editing/deletion/clear, bounds/retention, invalid or corrupted
+storage, ambiguous references, prompt injection in memory, cloud disclosure, no secrets,
+no stale targets/approvals and unchanged simulation/voice cancellation. Run focused/full
+tests, Ruff lint/format, mypy, GUI smoke, interactive GUI and build. Update docs with
+actual results and exact Windows acceptance commands; add the next prompt for Milestone 8.
+Whole MVP remains incomplete until real Windows E2E and packaging pass.
 ```
