@@ -26,7 +26,7 @@ snapshot независимо от того, что frozen-модель може
 Кооперативные timeout/cancellation сверены с
 [Python asyncio tasks](https://docs.python.org/3.12/library/asyncio-task.html).
 
-OpenAI SDK, Playwright, pywinauto, keyring, voice providers и PyInstaller
+OpenAI SDK, keyring, voice providers и PyInstaller
 добавляются в соответствующих этапах после отдельной проверки официальных docs и
 Windows. Их совместимость здесь ещё не подтверждена. Не устанавливать весь будущий стек
 ради каркаса. pywinauto должен быть ограничен Windows dependency marker и lazy import.
@@ -43,3 +43,57 @@ Windows. Их совместимость здесь ещё не подтверж
 архитектуру, Python и вывод `python -m pip list`. После успешной проверки создать
 воспроизводимый constraints/lock с разрешёнными версиями, затем повторить чистую установку
 с этим lock и те же проверки. Для PySide6 дополнительно проверить настоящее окно.
+
+## Windows Automation — проверка документации 2026-09-15
+
+Pywinauto и psutil добавлены только для Windows, без pin. На текущем Mac они не
+устанавливаются и их native-совместимость с Python 3.12/Windows 11 не проверена.
+Статический `mypy --platform win32` не считается запуском Windows.
+
+- [Pywinauto Getting Started](https://pywinauto.readthedocs.io/en/latest/getting_started.html):
+  UIA backend, семантический выбор элементов.
+- [UIAElementInfo](https://pywinauto.readthedocs.io/en/latest/code/pywinauto.uia_element_info.html):
+  process/handle/runtime ID/automation ID/role; идентичность повторно проверяется.
+- [Microsoft EM_REPLACESEL](https://learn.microsoft.com/en-us/windows/win32/controls/em-replacesel):
+  буквальное изменение edit/rich edit с undo, без глобальных клавиш.
+- [SendMessageTimeoutW](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendmessagetimeoutw):
+  адресация HWND и ограничение ожидания; не обещает откат операции.
+- [Python subprocess API](https://docs.python.org/3/library/asyncio-subprocess.html):
+  asyncio-процесс, kill/wait и pipe lifecycle; на Windows используется стандартный Proactor loop.
+- [psutil](https://psutil.readthedocs.io/en/latest/): executable и время создания процесса.
+
+Проверить на Windows: реальные версии Notepad (включая Store-вариант), UIA role/class,
+наличие editor HWND, текстовый read-back, выбранные вкладки, права доступа и ограничения
+foreground focus. Неподдерживаемый editor отклоняется без keyboard fallback. Chrome/VS Code
+должны быть установлены в стандартные каталоги; нестандартная установка не угадывается.
+
+## Browser Automation — проверка документации 2026-09-15
+
+Playwright и aiohttp добавлены без pin. Локально установлены Playwright 1.62.0,
+Chromium 151.0.7922.34 (build 1234) и aiohttp 3.14.3; Windows 11 ещё не проверена.
+Chromium устанавливается отдельно: `python -m playwright install chromium`.
+
+- [Playwright installation](https://playwright.dev/python/docs/intro): Python API, browser binaries,
+  поддерживаемые ОС; целевой Windows 11 нужно проверить отдельно.
+- [Browser contexts](https://playwright.dev/python/docs/api/class-browsercontext): отдельный
+  непостоянный context, offline и блокировка service workers.
+- [Routing](https://playwright.dev/python/docs/api/class-route): перехват и fulfil/abort;
+  код не передаёт запросы обратно встроенному транспорту Chromium.
+- [Locators](https://playwright.dev/python/docs/locators): role + exact accessible name,
+  неоднозначный результат отклоняется.
+- [aiohttp client](https://docs.aiohttp.org/en/stable/client_advanced.html): custom resolver,
+  middleware, DummyCookieJar; проверенные DNS addresses передаются самому connector.
+- [CDPSession](https://playwright.dev/python/docs/api/class-cdpsession) и
+  [Page.stopLoading](https://chromedevtools.github.io/devtools-protocol/tot/Page/#method-stopLoading):
+  остановка текущей загрузки в принадлежащем Jarvis Chromium, без кода из страницы.
+
+Текущий adapter предназначен только для Chromium. Firefox/WebKit, пользовательский Chrome
+и динамические сайты не проверены и не являются поддерживаемыми fallback.
+
+TLS fallback: certifi 2026.7.22 ([официальный пакет](https://pypi.org/project/certifi/))
+предоставляет Mozilla CA только если системный набор Python пуст. Существующие OS roots
+сохраняются. `SSLContext(PROTOCOL_TLS_CLIENT)` требует цепочку и hostname, затем
+`load_default_certs`/`load_verify_locations`; см. [Python ssl](https://docs.python.org/3.12/library/ssl.html).
+Прямое создание context не включает побочный `SSLKEYLOGFILE` механизм
+`create_default_context`. TLS validation не отключается. Это исправляет обнаруженный
+на локальном python.org macOS Python пустой CA store без изменения системной установки.

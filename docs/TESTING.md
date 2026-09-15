@@ -1,4 +1,4 @@
-# Проверки этапов 1–2
+# Проверки этапов 1–4
 
 ## Windows 11 / PowerShell
 
@@ -7,6 +7,7 @@
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m playwright install chromium
 .\.venv\Scripts\python.exe -m pytest tests/integration/test_shell.py tests/unit/test_config.py tests/unit/test_shell_log.py
 .\.venv\Scripts\python.exe -m pytest
 .\.venv\Scripts\python.exe -m ruff check .
@@ -103,7 +104,7 @@ Chrome search и title → Notepad UIA ввод/чтение без потери
 однократная отправка → stop/timeout/network loss/missing application/prompt injection →
 SIMULATED без real effects → factual audit → чистая Windows установка.
 
-Этот сценарий не реализован в этапе 1. Не считать hosted CI или offscreen shell tests
+Полный сценарий MVP ещё не реализован. Не считать hosted CI или offscreen shell tests
 доказательством desktop E2E.
 
 ## Troubleshooting
@@ -119,7 +120,7 @@ SIMULATED без real effects → factual audit → чистая Windows уст�
   cache с сохранением `.venv` как symlink; его абсолютные entry points продолжают работать.
   Для нового окружения при таком симптоме создавайте venv вне workspace. Это локальная
   macOS-проблема, не Windows workaround и не изменение приложения.
-- Команда не открыла приложение: это ожидаемо, текущий этап демонстрирует только интерфейс.
+- Текстовая команда не открыла приложение: это демо; Windows-инструменты находятся в окне разрешений.
 - Зависимость перестала поддерживать окружение: свериться с официальными docs, подобрать
   совместимую версию и проверить Windows перед фиксацией.
 
@@ -162,3 +163,128 @@ Native macOS команда использует `QT_QPA_PLATFORM=cocoa` вме�
 Audit инструментов: `<JARVIS_DATA_DIR>/audit.sqlite3`, таблица `events`, JSON в колонке record.
 Если каталог/commit недоступен, запуск adapter запрещён. После старта adapter ошибка или
 отмена не гарантирует отсутствие эффекта — UI показывает соответствующее предупреждение.
+
+## Этап 3: Windows Automation
+
+Обычный full suite: 133 passed, 3 Windows acceptance tests skipped на macOS.
+Portable focused suite: 42 passed; GUI suite с native Cocoa: 29 passed.
+Это проверки контрактов, fake UIA objects и subprocess cleanup, не доказательство UIA.
+Три настоящих Windows-сценария требуют флаг `--run-windows`; одного marker недостаточно.
+
+В Windows 11 x64 с интерактивным рабочим столом, обычными правами пользователя:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -m pytest tests/unit/test_windows.py tests/unit/test_windows_native.py tests/integration/test_windows_ui.py
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m ruff format --check .
+.\.venv\Scripts\python.exe -m mypy
+$env:QT_QPA_PLATFORM = "windows"
+.\.venv\Scripts\python.exe -m pytest tests/integration
+.\.venv\Scripts\python.exe -m jarvis --smoke-test
+.\.venv\Scripts\python.exe -m jarvis
+# Сохранить и закрыть существующие окна Notepad вручную перед следующей командой.
+.\.venv\Scripts\python.exe -m pytest tests/e2e/test_windows_acceptance.py --run-windows -v
+Remove-Item Env:QT_QPA_PLATFORM
+.\.venv\Scripts\python.exe -m build
+.\.venv\Scripts\python.exe -m pip list
+```
+
+Native-тесты открывают приложения и оставляют текст `Jarvis integration test` в Блокноте.
+Они не закрывают приложения и не удаляют/сохраняют документы. Если Notepad восстановил
+непустую вкладку, тест не пишет в неё; подготовьте пустое состояние вручную и повторите.
+Chrome/VS Code должны быть установлены для проверки открытия/фокуса; отсутствие даёт
+skip с объяснением, а не доказательство успешного запуска. Фиксируйте причины всех skips.
+
+Ручная Windows-приёмка дополнительно:
+
+1. Выбрать каждое приложение, открыть, обновить список, выбрать окно и проверить фокус.
+   Уже запущенное приложение используется повторно; нестандартные пути не угадываются.
+2. Ввести русский текст, перенос строки и буквальное `{ENTER}` в пустой Notepad через
+   CONFIRM. До approval ввод отсутствует; после approval read-back совпадает. `{ENTER}`
+   не интерпретируется как клавиша. Диалог показывает HWND/PID/process time/editor/tab/text.
+3. Между подготовкой и approval изменить вкладку/окно/текст вручную, затем подтвердить:
+   старый target отклоняется. Подготовить новое действие после обновления списка.
+4. Попытаться выбрать непустой документ: INVALID, содержимое сохранено. Не редактировать
+   целевую вкладку параллельно во время реального ввода: compare-and-write не атомарен.
+5. Отменить preview/Stop/закрыть Jarvis во время ожидания. Helper не должен оставаться;
+   запущенные приложения и уже выполненные эффекты могут остаться.
+6. Проверить неподдерживаемый редактор, недоступные приложения/права и отказ focus:
+   явный failure без ложного SUCCESS и без keyboard fallback.
+7. Включить simulation: не создаётся helper, не запускаются приложения и не читаются окна.
+   Для focus/type GUI требует ранее наблюдённый target, без фиктивных окон.
+8. Проверить 100%/150%/200% DPI, прокрутку, полный approval и shutdown. Зафиксировать
+   Windows build, Python/Qt/pywinauto/psutil и версии Notepad/Chrome/VS Code.
+
+Переносимые негативные тесты покрывают exact target/approval, process reuse, runtime ID,
+выбранную вкладку, непустой редактор, неверный read-back, schema extras/coercion, отсутствующее
+приложение, stop и неподдерживаемую ОС. Transport-тесты запускают реальные временные Python
+процессы: hang, cancel при создании и после запуска, oversized/invalid reply, kill/reap.
+Текст payload не передаётся в argv. Windows process termination всё ещё требует native проверки.
+
+Helper сообщает только конечные категории: unsupported_platform, application_missing,
+target_changed, control_unsupported, native_timeout, native_failure. Повторный успех после
+ошибки требует нового request; автоматического повторения действия нет.
+
+## Этап 4: браузерные проверки
+
+Установите Chromium **до** full suite; отсутствие binary — ошибка setup, а не skip.
+Обычные тесты используют только свой loopback fixture с явно переданной конструктору
+test policy. Ни production config, ни tool args не разрешают loopback. Проверка POST
+выполняется только на локальном `/submit`, никакой реальной отправки сообщений нет.
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m playwright install chromium
+.\.venv\Scripts\python.exe -m pytest tests/unit/test_browser.py tests/integration/test_browser.py tests/integration/test_browser_ui.py
+.\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m ruff format --check .
+.\.venv\Scripts\python.exe -m mypy
+$env:QT_QPA_PLATFORM = "windows"
+.\.venv\Scripts\python.exe -m pytest tests/integration/test_browser_ui.py
+.\.venv\Scripts\python.exe -m jarvis --smoke-test
+.\.venv\Scripts\python.exe -m jarvis
+Remove-Item Env:QT_QPA_PLATFORM
+.\.venv\Scripts\python.exe -m build
+```
+
+Ручной сценарий: открыть инструменты → проверить simulation без браузера → снять simulation
+→ открыть `https://example.com/` с approval → прочитать заголовок/текст → список вкладок.
+Поиск: выбрать DuckDuckGo, запрос `OpenAI`, проверить URL и подтвердить. Прочитать title
+и убедиться, что это именно поисковые результаты, а не challenge/ошибка. Отказ сайта не
+обходить включением JS, cookie/profile reuse или отключением TLS. Результаты локального
+поискового fixture не считаются проверкой публичного DuckDuckGo.
+
+На поддерживаемой GET-форме: прочитать → выбрать textbox → ввести буквальный текст
+с approval → выбрать наблюдённую submit кнопку → проверить все поля и полный URL →
+отменить/подготовить заново/подтвердить. После изменения страницы старое действие должно
+отклоняться. Попытки POST, unsafe URL, private DNS, popup и redirect должны отклоняться.
+Закрыть выбранную вкладку с approval; закрыть окно инструментов и проверить завершение
+его временного browser context/driver. Введённые данные этого сеанса не сохраняются.
+
+Покрытие: реальные Chromium/HTTP/Qt, GET/POST fixture и отсутствие запроса до approval,
+отсутствие cookies/background requests, обрыв без повтора, timeout/stop, сохранение соседней
+вкладки, actual DOM mutation перед verifier, popup, strict schemas, подмена подтверждения,
+policy в simulation, private/mixed DNS и checked-address connector, TLS verification без
+session key logs. `browser.search` в default suite использует замену transport destination
+на fixture; настоящий Chromium и exact search URL/verification остаются включены.
+
+Фактические результаты и публичная проверка — в [MILESTONE_4.md](MILESTONE_4.md).
+Windows UIA и Chromium на Windows нужно принять отдельно; три Windows skips остаются открыты.
+
+Проверка wheel в отдельном окружении на Windows (после build):
+
+```powershell
+py -3.12 -m venv .wheel-check
+.\.wheel-check\Scripts\python.exe -m pip install dist/jarvis_windows-0.0.1-py3-none-any.whl
+.\.wheel-check\Scripts\python.exe -m playwright install chromium
+.\.wheel-check\Scripts\python.exe -I -m jarvis --smoke-test
+.\.wheel-check\Scripts\python.exe -m pip check
+```
+
+Не использовать editable install в этом окружении. Локально отдельный Qt harness с `-I`
+также проверил через UI sim/open/type/GET/close/shutdown установленного wheel; только
+контролируемый HTTP fixture был прочитан из `tests/browser_support.py` рабочей копии.

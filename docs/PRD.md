@@ -63,7 +63,10 @@ MVP целиком считается готовым только после Win
 
 ## Граница текущего этапа
 
-Этапы 0–2 создали документацию, desktop shell и проверенный шлюз локальных инструментов. Текст демонстрирует
-цикл thinking → executing → success/error/cancelled без исполнения команды. Окно локальных инструментов
-показывает approvals, Simulation Mode и audit. Windows/browser/внешние автоматизации пока
-не реализованы.
+Этапы 0–4 создали desktop shell, проверенный PermissionEngine и Windows-адаптер.
+Текстовая команда остаётся демо. Ручное окно инструментов предоставляет open/focus/list
+для Notepad, Chrome, VS Code и CONFIRM-ввод в пустой Notepad с read-back.
+Native Windows-приёмка не выполнена; локальные probe-тесты не доказывают работу UIA.
+Добавлен ручной Playwright browser: статическое анонимное чтение, поиск, ввод и GET-формы
+с exact approvals. JavaScript, произвольный POST и существующие профили не поддерживаются.
+Planner, голос и внешние сервисы ещё не реализованы.

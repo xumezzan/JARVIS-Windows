@@ -32,6 +32,18 @@ class ErrorCode(StrEnum):
     EXECUTION = "execution_failed"
     VERIFICATION = "verification_failed"
     AUDIT = "audit_unavailable"
+    UNSUPPORTED_PLATFORM = "unsupported_platform"
+    APPLICATION_MISSING = "application_missing"
+    TARGET_CHANGED = "target_changed"
+    CONTROL_UNSUPPORTED = "control_unsupported"
+    NATIVE_TIMEOUT = "native_timeout"
+    NATIVE_FAILURE = "native_failure"
+    NETWORK_DENIED = "network_denied"
+    PAGE_CHANGED = "page_changed"
+    BROWSER_UNAVAILABLE = "browser_unavailable"
+    BROWSER_TIMEOUT = "browser_timeout"
+    BROWSER_FAILURE = "browser_failure"
+    BROWSER_CLEANUP = "browser_cleanup"
 
 
 @dataclass(frozen=True)

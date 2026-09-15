@@ -2,7 +2,7 @@
 
 ## Scope and source
 
-The user-supplied development plan v1.0 defines the product. Milestones 0, 1, and 2 are
+The user-supplied development plan v1.0 defines the product. Milestones 0, 1, 2, 3, and 4 are
 implemented locally. See `docs/ROADMAP.md` for verification status and the next prompt.
 Work on the milestone requested by the user; do not implement later stages early.
 Inspect existing instructions and changes before edits and preserve unrelated work.
@@ -36,7 +36,10 @@ Run focused tests, fix failures, then full `python -m pytest`, `python -m ruff c
 `python -m ruff format --check .`, and `python -m mypy`.
 Run `python -m jarvis --smoke-test` and build with `python -m build`.
 Use `python -m jarvis` for interactive GUI verification. The command shell remains a demo;
-the permissions window runs local test tools through PermissionEngine.
+the permissions window runs local, Windows, and browser tools through PermissionEngine.
+Windows calls belong in the killable helper, never directly in the UI/event loop.
+Typing is CONFIRM, only into an observed empty Notepad editor; preserve exact process,
+window, editor and selected-tab identity. Do not add global keys or clipboard fallbacks.
 Preserve exact immutable action snapshots, UI-only approval authority, atomic token consumption,
 and fail-closed durable audit before adapter calls. Simulation must never call adapter hooks.
 Update documentation with commands, actual results, decisions, and limitations.
@@ -46,3 +49,18 @@ before its real Windows acceptance scenario passes.
 
 Before pinning dependencies, check official documentation and the real Windows target.
 Dependency versions are intentionally unpinned until that verification.
+
+## Browser boundary (milestone 4)
+
+Keep browser policy pure and synchronous at registry normalization, including simulation.
+DNS/network/page observations belong only to real execution. Use the owned anonymous
+Chromium context, script-disabled and offline; only exact one-use document grants reach
+validated aiohttp transport. Never use route.continue/fetch, user profiles or cookie storage.
+Production POST is disabled; only the constructor-injected local /submit fixture can test
+submission. External writes require service-specific risk classification in a later stage.
+Bind tab/document/main-frame/origin/DOM/element/full form content. Never expose arbitrary
+selectors, JS, keys or transport overrides as tool inputs. Keep popup/redirect/private-network
+blocks, checked DNS addresses, no retry and durable audit. Preserve other owned tabs on a
+failed new-tab operation. Closing the workbench disposes its explicitly ephemeral session.
+Browser tests require `python -m playwright install chromium`; local Chromium success is
+not Windows acceptance or proof that a public search engine returned actual search results.

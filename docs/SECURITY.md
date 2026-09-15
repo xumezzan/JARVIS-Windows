@@ -1,8 +1,7 @@
 # Модель безопасности
 
-На этапе 2 реализованы PermissionEngine, exact approvals и SQLite audit для локальных
-тестовых tools. Текстовые команды не интерпретируются моделью. Windows/browser adapters,
-credentials adapter, OAuth и внешняя отправка отсутствуют.
+Этапы 2–4 реализуют PermissionEngine, exact approvals, SQLite audit и Windows-адаптер
+в отдельном процессе. Текстовые команды не интерпретируются моделью. Credential adapters, OAuth и внешняя отправка отсутствуют. Native Windows-приёмка ещё не выполнена.
 
 Shell log и tool audit исключают raw arguments, recipient/content, result payload,
 exception text и approval tokens. Это ограничение текущего интерфейса журналирования,
@@ -90,3 +89,55 @@ Authority — capability trusted UI composition, недоступный чере
 Preconditions обязаны быть side-effect-free. Для настоящих файлов, UIA и сетевых операций
 нужны дополнительные adapter-specific invariants; тестовый in-memory outbox их не доказывает.
 Attachment signature сейчас связывает metadata, а не выполняет чтение/проверку настоящего файла.
+
+## Windows-граница этапа 3
+
+- Все четыре Windows-инструмента регистрируются до seal и проходят PermissionEngine.
+  Simulation не создаёт helper и не вызывает UIA даже для discovery/preconditions.
+- Выполнение допускает только известные пути Notepad/Chrome/VS Code; подмена имени файла
+  в другом каталоге не добавляет приложение в allowlist. Установка со своими путями
+  сейчас не поддерживается. Защита от замены бинарника доверенным локальным пользователем
+  или от скомпрометированного приложения не заявляется.
+- Ввод только CONFIRM в наблюдённый пустой Notepad. Снимок связывает process identity,
+  окно, редактор, выбранную вкладку, service/action_type и буквальный текст. Нет global
+  keys, shell, clipboard, Enter/submit и ввода в Chrome/VS Code.
+- UIA/native calls живут в killable helper. При отмене ожидается завершение helper,
+  но запущенное приложение и уже выданное сообщение ОС не откатываются. Retry отсутствует.
+- Нет автоматического закрытия, сохранения, очистки или замены существующего документа.
+  Непустой/изменённый target отклоняется. Между проверкой пустоты и доставкой сообщения
+  нет атомарной транзакции: одновременное ручное редактирование остаётся ограничением.
+- Заголовки окон — недоверенный текст, отображаемый буквально. Payload передаётся в
+  UTF-8 по stdin и не попадает в argv, файлы или audit; raw native exceptions подавляются.
+- Запуск разрешённого приложения может вызвать его собственную сеть, расширения или
+  восстановление сессии. Helper не является sandbox для этого приложения.
+
+## Браузерная граница этапа 4
+
+- Любой сетевой переход, поиск, ввод, клик и закрытие вкладки — CONFIRM. SAFE чтение
+  не делает HTTP requests. Симуляция проверяет static URL/risk/schema policy без DNS,
+  browser hooks или запуска процесса. Проверка DNS/доступности возможна только реально.
+- Разрешаются точные HTTPS origins. Нет wildcard/subdomain inheritance. Userinfo,
+  небезопасные schemes, fragments, malformed authority, локальные/private/link-local/
+  multicast/reserved адреса запрещены. Все DNS answers проверяются перед передачей
+  connector; mixed public/private набор отклоняется целиком, второго unchecked lookup нет.
+- Конструкторная test capability разрешает один loopback origin; POST только `/submit`.
+  Она отсутствует в tool schema, переменных окружения и production UI. Production POST
+  запрещён независимо от подписи кнопки и approval: семантика внешних изменений неизвестна.
+  Добавление реальной отправки требует отдельного adapter и deterministic risk policy.
+- Контекст анонимный, offline и без page JavaScript. Фиксированный repo-owned DOM inspector
+  не принимает код/selector из страницы или будущей модели. Page content — untrusted data.
+  CSP, запрет служебных workers, frames, subresources, popup и downloads исключают обход
+  подтверждения через обычный page script. Это ограничивает поддержку динамических сайтов.
+- HTTP разрешён лишь для exact main-document grant, потребляемого перед сетью. URL/method/body
+  сравниваются буквально после нормализации; поля формы дополнительно показаны читаемо.
+  Полный DOM/form snapshot проверяется до действия и после него. Изменение требует нового
+  чтения и нового approval. Никаких глобальных клавиш, Enter, clipboard или JS execution tools.
+- HTTP redirects не следуются, cookies не сохраняются и не отправляются, auth/proxy из
+  окружения не подхватываются; response headers фильтруются, HTML ограничен размером.
+  Повторный GET после обрыва тоже не разрешён. Timeout/stop не отзывают уже выданный запрос.
+- Сеанс принадлежит окну Jarvis; об эфемерности явно сказано до ввода. При закрытии этого
+  окна вкладки и набранный текст удаляются. Пользовательский профиль браузера не подключается.
+  Не вводить credentials в поля/URL; будущие OAuth adapters используют OS credential store.
+- Audit исключает URL, page text, DOM, form contents, raw exceptions и tokens целиком.
+  SUCCESS означает проверенное наблюдение, а не обещание бизнес-результата внешнего сервиса.
+  Ответ поискового сайта с challenge не является доказательством найденных результатов.

@@ -5,11 +5,35 @@ import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from threading import Event
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 
 from jarvis.permissions.policies import Risk
+
+
+class ToolError(Exception):
+    """Finite adapter failures; never transport native exception text to UI or audit."""
+
+    def __init__(
+        self,
+        code: Literal[
+            "unsupported_platform",
+            "application_missing",
+            "target_changed",
+            "control_unsupported",
+            "native_timeout",
+            "native_failure",
+            "network_denied",
+            "page_changed",
+            "browser_unavailable",
+            "browser_timeout",
+            "browser_failure",
+            "browser_cleanup",
+        ],
+    ) -> None:
+        self.code = code
+        super().__init__(code)
 
 
 class ToolModel(BaseModel):
@@ -55,3 +79,4 @@ class ToolSpec[Params: ToolModel, Result: ToolModel]:
     timeout_seconds: float = 5.0
     cancellation: str = "Cooperative asyncio cancellation; no rollback claim."
     idempotency: str = "No automatic retry; one execution per prepared request."
+    policy: Callable[[Params], None] | None = None  # Pure, synchronous; also runs in simulation.

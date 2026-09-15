@@ -2,10 +2,11 @@
 
 ## Текущее состояние
 
-Один Python-пакет, запускаемый через `python -m jarvis` или `jarvis`. Этапы 0–2
+Один Python-пакет, запускаемый через `python -m jarvis` или `jarvis`. Этапы 0–4
 реализовали desktop shell, локальные typed tools, PermissionEngine, approvals и audit.
-Текстовая команда остаётся fake demo этапа 1. Кнопка «Проверить разрешения» открывает
-отдельную ручную проверку локальных инструментов. LLM/Windows/browser/voice adapters отсутствуют.
+Текстовая команда остаётся fake demo этапа 1. Кнопка «Открыть инструменты» открывает
+ручное окно локальных, Windows и браузерных инструментов. Windows UIA изолирован в helper-процессе;
+Playwright имеет отдельный asyncio owner; LLM и voice adapters отсутствуют.
 
 ## Поток инструментов
 
@@ -86,7 +87,7 @@ execute и verify общим timeout инструмента. Watcher прове�
 
 Контракт отмены кооперативный: trusted adapters обязаны отдавать управление event loop.
 CPU-blocking code, native calls и подавление CancelledError не изолируются Python-классами.
-Перед Windows adapters необходимо определить отдельные bounded native-call boundaries.
+Windows adapter использует описанную ниже границу отдельного процесса.
 Pending requests ограничены 256; неисполняемые запросы старше 5 минут удаляются при prepare;
 approval store очищает истёкшие grants при обращении. Cancellation cache также ограничен 256.
 
@@ -110,6 +111,86 @@ SQLite memory, OAuth и keyring credentials ещё не реализованы. 
 ## Решения
 
 Python >=3.12, `src` layout, Hatchling; PySide6-Essentials и Pydantic. Версии не закреплены
-до реальной Windows-проверки. Один локальный процесс, без микросервисов. Настройки читаются
+до реальной Windows-проверки. Одно локальное приложение с короткоживущим native helper, без микросервисов. Настройки читаются
 из process environment, `.env` автоматически не загружается. Windows-цель — Windows 11 x64.
 Точная установка и границы проверок описаны в `TESTING.md` и `COMPATIBILITY.md`.
+
+## Windows Automation, этап 3
+
+`tools/windows.py` содержит portable strict schemas и четыре ToolSpec. `get_open_windows`,
+`open_app`, `focus_app` — SAFE; `type_text` — CONFIRM. Регистрация не импортирует pywinauto.
+`platforms/windows/transport.py` запускает фиксированный модуль helper через Python `-I`,
+без shell. `worker.py` лениво импортирует `native.py` только на Windows. Pywinauto/psutil
+ограничены dependency marker `sys_platform == 'win32'`.
+
+Каждый вызов helper ограничен 8 секундами, полный tool — 30 секундами. Startup shield
+позволяет забрать и завершить процесс даже при отмене во время создания. При timeout/stop
+helper убивается, его pipes осушаются и процесс ожидается; отмена не оставляет фоновый
+native thread. ОС или целевое приложение могут завершить уже выданное действие.
+Запущенные пользовательские приложения не уничтожаются и документы не закрываются.
+
+Payload идёт только через stdin; stdout — одна ограниченная UTF-8 JSON-строка, stderr
+отбрасывается. Это внутренний протокол доверенного приложения, не security sandbox.
+Вызовы check_open/check_target в preconditions только читают. Изменяющие вызовы идут
+после token consumption и durable started audit. Ошибки передаются конечными кодами.
+
+Окна фильтруются по полным allowlisted путям процесса: System32 Notepad и пакет Microsoft
+WindowsNotepad; стандартные Chrome/VS Code в Program Files или LocalAppData. Нет выбора
+произвольного executable/argv, PATH поиска, shell, URL аргументов или auto-install.
+Open возвращает существующее подходящее окно либо запускает приложение и наблюдает окно.
+Focus сравнивает foreground HWND после вызова Windows API и повторно в verifier.
+
+Target содержит app, PID + process creation time, executable, HWND, UIA runtime ID и title.
+Для Notepad добавляются runtime ID, role, class, automation ID, native HWND редактора
+и выбранные TabItem runtime IDs. UIA ищет видимый enabled Edit/Document с разрешённым
+классом Edit/RichEdit; неоднозначный/виртуальный редактор без native HWND отклоняется.
+Перед вводом проверяются identity, вкладка и пустое содержимое. `EM_REPLACESEL` с undo и
+`SendMessageTimeoutW` адресуется конкретному редактору; клавиатура и clipboard не используются.
+Текст читается через UIA, сравнивается SHA-256 с нормализацией CRLF, затем читается ещё раз
+в verifier. Полный текст прочитанного документа не попадает в результат или audit.
+
+UI показывает только наблюдённые targets и блокирует выбор во время approval/execution.
+После ввода пустой snapshot удаляется. Смена/закрытие окна, вкладки или появление текста
+отклоняют устаревший snapshot. Между последней проверкой и обработкой Windows-сообщения
+остаётся короткая гонка с действиями пользователя; OS API не предоставляет атомарного
+compare-and-write. Во время подтверждённого ввода не редактируйте целевую вкладку параллельно.
+
+## Browser Automation, этап 4
+
+`tools/browser.py` регистрирует восемь strict tools. `read`/`get_tabs` — SAFE;
+`open`/`navigate`/`search`/`click`/`type`/`close` — CONFIRM. Названия `read` и `close`
+соответствуют текущему roadmap; в исходном плане это `read_page` и `close_tab`.
+`ToolSpec.policy` — чистая синхронная проверка во время normalize, до snapshot;
+она работает и в simulation. Она не вызывает browser/DNS/adapters. Prepared snapshots
+неизменяемы, а реальная precondition повторно наблюдает цель после проверки approval.
+
+`BrowserHost` лениво создаёт поток с постоянным asyncio loop. Он сериализует команды,
+получаемые от короткоживущих Qt workers. `BrowserSession` владеет Playwright и единственным
+непостоянным Chromium context. UI хранит только наблюдения и вызывает PermissionEngine;
+DOM операции выполняются вне UI thread. Конструктор и simulation браузер не запускают.
+
+`browser/network.py` — единственный HTTP transport документов: aiohttp resolver передаёт
+connector только проверенные публичные addresses. Browser context остаётся offline;
+route handler сравнивает URL/method/body с точным однократным grant главного документа.
+Любые subresources/frames/popups/неожиданные requests блокируются. JS отключён, CSP
+дополнительно блокирует скрипты/frames/objects/base. Cookies, proxy environment, auth,
+redirects, downloads и automatic retries не используются. Возвращается только HTML до 1 MB.
+
+`browser/inspection.py` содержит фиксированное read-only DOM inspection. Доступные цели
+имеют semantic role + exact name (ровно одно совпадение); snapshot включает tab/document
+UUID, главный frame, URL/origin, DOM hash, element hash, значение и полное содержимое формы.
+После ввода/навигации выполняется новое наблюдение, затем независимая verification.
+Текст страницы отображается буквально и не может выдать approval или запустить следующий tool.
+
+Границы: 8 вкладок, 50 элементов, до 12 000 символов текста страницы, 4 000 символов ввода,
+64 KB action snapshot, HTTP 8 секунд, browser phase 15 секунд, tool 45 секунд. Stop отменяет
+HTTP и Playwright operation; незавершённая загрузка останавливается фиксированным CDP
+Page.stopLoading. Новая неоткрывшаяся вкладка удаляется, соседние сохраняются. Shutdown
+закрывает принадлежащий окну временный context и driver с ограниченными ожиданиями.
+Ошибки очистки сообщаются отдельно; это не hard-kill sandbox против зависшего/скомпрометированного
+browser binary и не rollback уже отправленного запроса.
+
+После сетевого отказа существующая вкладка получает локальный error document (502),
+явно помеченный как сообщение Jarvis, а не текст сайта. Navigation tool всё равно
+завершается ERROR. Это сохраняет возможность получить свежий target, прочитать сообщение,
+выполнить новый переход или подтвердить закрытие; ошибку нельзя превратить в SUCCESS.
