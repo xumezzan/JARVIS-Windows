@@ -1,0 +1,49 @@
+"""Validated non-secret settings; environment files are not loaded implicitly."""
+
+import os
+import sys
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class AppConfig:
+    data_dir: Path
+    demo_duration_ms: int = 2400
+    task_timeout_ms: int = 10000
+    activity_limit: int = 200
+
+    def __post_init__(self) -> None:
+        for name, value, minimum, maximum in (
+            ("demo_duration_ms", self.demo_duration_ms, 100, 30000),
+            ("task_timeout_ms", self.task_timeout_ms, 100, 60000),
+            ("activity_limit", self.activity_limit, 10, 1000),
+        ):
+            if not minimum <= value <= maximum:
+                raise ValueError(f"{name} must be between {minimum} and {maximum}.")
+
+
+def load_config(environ: Mapping[str, str] | None = None) -> AppConfig:
+    """Read only explicitly supported settings; do not echo invalid values."""
+    env = os.environ if environ is None else environ
+    if sys.platform == "win32":
+        base = Path(env.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(env.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
+    directory = Path(env.get("JARVIS_DATA_DIR", str(base / "Jarvis"))).expanduser()
+
+    def integer(key: str, default: int) -> int:
+        try:
+            return int(env.get(key, str(default)))
+        except ValueError:
+            raise ValueError(f"{key} must be an integer.") from None
+
+    return AppConfig(
+        data_dir=directory,
+        demo_duration_ms=integer("JARVIS_DEMO_DURATION_MS", 2400),
+        task_timeout_ms=integer("JARVIS_TASK_TIMEOUT_MS", 10000),
+        activity_limit=integer("JARVIS_ACTIVITY_LIMIT", 200),
+    )

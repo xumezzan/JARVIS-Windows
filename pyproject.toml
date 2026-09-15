@@ -1,0 +1,55 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jarvis-windows"
+version = "0.0.1"
+description = "Desktop shell for a local-first Windows AI assistant"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["PySide6-Essentials", "pydantic"]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Typing :: Typed",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "pytest-qt", "ruff", "mypy", "build"]
+
+[project.scripts]
+jarvis = "jarvis.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jarvis"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-config --strict-markers --import-mode=importlib -ra"
+asyncio_mode = "strict"
+qt_api = "pyside6"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["error"]
+markers = [
+    "windows: requires a real Windows session and explicit execution",
+    "integration: crosses a package or adapter boundary",
+    "e2e: tests an end-to-end user scenario",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "tests"]
+strict = true
+warn_unreachable = true
+pretty = true
