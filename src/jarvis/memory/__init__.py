@@ -1,1 +1,1 @@
-"""Future user-editable local state; credentials are excluded."""
+"""User-managed local profile and explicitly bounded in-memory session labels."""

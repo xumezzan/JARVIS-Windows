@@ -2,15 +2,18 @@
 
 ## Текущее состояние
 
-Один Python-пакет, запускаемый через `python -m jarvis` или `jarvis`. Этапы 0–2
+Один Python-пакет, запускаемый через `python -m jarvis` или `jarvis`. Этапы 0–5
 реализовали desktop shell, локальные typed tools, PermissionEngine, approvals и audit.
-Текстовая команда остаётся fake demo этапа 1. Кнопка «Проверить разрешения» открывает
-отдельную ручную проверку локальных инструментов. LLM/Windows/browser/voice adapters отсутствуют.
+Текстовая команда остаётся fake demo этапа 1. Кнопка «Открыть инструменты» открывает
+ручное окно локальных, Windows и браузерных инструментов. Windows UIA изолирован в helper-процессе;
+Playwright имеет отдельный asyncio owner. Отдельное окно планировщика использует offline
+recipes или OpenAI Responses; локальный голос и управляемая память реализованы.
+Outlook подключается явно через MSAL/Graph; настоящая почта ещё не проверена.
 
 ## Поток инструментов
 
 ```text
-Manual UI (future: planner)
+Manual UI / bounded Planner Runner
   -> ToolRegistry + strict Pydantic arguments
   -> PermissionEngine.prepare
   -> immutable Action snapshot
@@ -24,7 +27,9 @@ Manual UI (future: planner)
 
 Реестр закрывается для регистрации при создании engine; дубликаты, неизвестные имена и
 невалидные схемы не выполняются. `discover()` возвращает metadata и схемы, не методы
-выдачи approval. Ни один production adapter не вызывается из UI напрямую.
+выдачи approval. Почтовые/Windows/browser tool adapters вызываются только через engine.
+OAuth connect/disconnect — отдельный UI-only setup через QThread и killable helper с audit;
+этот путь отсутствует в каталоге модели и не даёт permission authority.
 
 ## Модули
 
@@ -40,7 +45,11 @@ Manual UI (future: planner)
 | `ui/approval_dialog.py` | Read-only полный preview; token только из обработчика кнопки |
 | `ui/permission_workbench.py` | Ручная проверка, режим, outcome, local outbox count, audit view |
 | `ui/tool_worker.py` | Один `asyncio.run(engine.execute(...))` внутри QThread |
-| `core`, `voice`, `memory`, `security` | Границы следующих этапов; реальных интеграций пока нет |
+| `core/planner` | Provider protocol, offline recipes, OpenAI strict calls, bounded Runner |
+| `ui/planner_window.py`, `ui/planner_worker.py` | Текстовая команда, отдельный QThread, prompts и stop |
+| `security/credentials.py`, `platforms/credentials.py` | Killable credential pipe и явный OS backend |
+| `voice`, `memory` | Локальный push-to-talk и явно управляемые метки |
+| `mail`, `tools/outlook.py`, `ui/mail_panel.py` | MSAL/helper, Graph, RAM drafts/attachments, typed mail tools и UI |
 
 ## Снимок и подтверждение
 
@@ -86,7 +95,7 @@ execute и verify общим timeout инструмента. Watcher прове�
 
 Контракт отмены кооперативный: trusted adapters обязаны отдавать управление event loop.
 CPU-blocking code, native calls и подавление CancelledError не изолируются Python-классами.
-Перед Windows adapters необходимо определить отдельные bounded native-call boundaries.
+Windows adapter использует описанную ниже границу отдельного процесса.
 Pending requests ограничены 256; неисполняемые запросы старше 5 минут удаляются при prepare;
 approval store очищает истёкшие grants при обращении. Cancellation cache также ограничен 256.
 
@@ -104,12 +113,170 @@ payload с исходным снимком. При закрытии окна с�
 контракте — только metadata name/SHA-256; настоящие файлы не читаются и не отправляются.
 Будущему внешнему adapter понадобится замороженное содержимое файлов и повторная проверка.
 
-SQLite memory, OAuth и keyring credentials ещё не реализованы. Долговременные секреты
-не относятся к памяти модели. Retrieved content никогда не меняет policy или tool registry.
+SQLite memory и OAuth ещё не реализованы. Ключ OpenAI хранится в OS credential store,
+не в памяти модели. Retrieved content никогда не меняет policy или tool registry.
 
 ## Решения
 
 Python >=3.12, `src` layout, Hatchling; PySide6-Essentials и Pydantic. Версии не закреплены
-до реальной Windows-проверки. Один локальный процесс, без микросервисов. Настройки читаются
+до реальной Windows-проверки. Одно локальное приложение с короткоживущим native helper, без микросервисов. Настройки читаются
 из process environment, `.env` автоматически не загружается. Windows-цель — Windows 11 x64.
 Точная установка и границы проверок описаны в `TESTING.md` и `COMPATIBILITY.md`.
+
+## Windows Automation, этап 3
+
+`tools/windows.py` содержит portable strict schemas и четыре ToolSpec. `get_open_windows`,
+`open_app`, `focus_app` — SAFE; `type_text` — CONFIRM. Регистрация не импортирует pywinauto.
+`platforms/windows/transport.py` запускает фиксированный модуль helper через Python `-I`,
+без shell. `worker.py` лениво импортирует `native.py` только на Windows. Pywinauto/psutil
+ограничены dependency marker `sys_platform == 'win32'`.
+
+Каждый вызов helper ограничен 8 секундами, полный tool — 30 секундами. Startup shield
+позволяет забрать и завершить процесс даже при отмене во время создания. При timeout/stop
+helper убивается, его pipes осушаются и процесс ожидается; отмена не оставляет фоновый
+native thread. ОС или целевое приложение могут завершить уже выданное действие.
+Запущенные пользовательские приложения не уничтожаются и документы не закрываются.
+
+Payload идёт только через stdin; stdout — одна ограниченная UTF-8 JSON-строка, stderr
+отбрасывается. Это внутренний протокол доверенного приложения, не security sandbox.
+Вызовы check_open/check_target в preconditions только читают. Изменяющие вызовы идут
+после token consumption и durable started audit. Ошибки передаются конечными кодами.
+
+Окна фильтруются по полным allowlisted путям процесса: System32 Notepad и пакет Microsoft
+WindowsNotepad; стандартные Chrome/VS Code в Program Files или LocalAppData. Нет выбора
+произвольного executable/argv, PATH поиска, shell, URL аргументов или auto-install.
+Open возвращает существующее подходящее окно либо запускает приложение и наблюдает окно.
+Focus сравнивает foreground HWND после вызова Windows API и повторно в verifier.
+
+Target содержит app, PID + process creation time, executable, HWND, UIA runtime ID и title.
+Для Notepad добавляются runtime ID, role, class, automation ID, native HWND редактора
+и выбранные TabItem runtime IDs. UIA ищет видимый enabled Edit/Document с разрешённым
+классом Edit/RichEdit; неоднозначный/виртуальный редактор без native HWND отклоняется.
+Перед вводом проверяются identity, вкладка и пустое содержимое. `EM_REPLACESEL` с undo и
+`SendMessageTimeoutW` адресуется конкретному редактору; клавиатура и clipboard не используются.
+Текст читается через UIA, сравнивается SHA-256 с нормализацией CRLF, затем читается ещё раз
+в verifier. Полный текст прочитанного документа не попадает в результат или audit.
+
+UI показывает только наблюдённые targets и блокирует выбор во время approval/execution.
+После ввода пустой snapshot удаляется. Смена/закрытие окна, вкладки или появление текста
+отклоняют устаревший snapshot. Между последней проверкой и обработкой Windows-сообщения
+остаётся короткая гонка с действиями пользователя; OS API не предоставляет атомарного
+compare-and-write. Во время подтверждённого ввода не редактируйте целевую вкладку параллельно.
+
+## Browser Automation, этап 4
+
+`tools/browser.py` регистрирует восемь strict tools. `read`/`get_tabs` — SAFE;
+`open`/`navigate`/`search`/`click`/`type`/`close` — CONFIRM. Названия `read` и `close`
+соответствуют текущему roadmap; в исходном плане это `read_page` и `close_tab`.
+`ToolSpec.policy` — чистая синхронная проверка во время normalize, до snapshot;
+она работает и в simulation. Она не вызывает browser/DNS/adapters. Prepared snapshots
+неизменяемы, а реальная precondition повторно наблюдает цель после проверки approval.
+
+`BrowserHost` лениво создаёт поток с постоянным asyncio loop. Он сериализует команды,
+получаемые от короткоживущих Qt workers. `BrowserSession` владеет Playwright и единственным
+непостоянным Chromium context. UI хранит только наблюдения и вызывает PermissionEngine;
+DOM операции выполняются вне UI thread. Конструктор и simulation браузер не запускают.
+
+`browser/network.py` — единственный HTTP transport документов: aiohttp resolver передаёт
+connector только проверенные публичные addresses. Browser context остаётся offline;
+route handler сравнивает URL/method/body с точным однократным grant главного документа.
+Любые subresources/frames/popups/неожиданные requests блокируются. JS отключён, CSP
+дополнительно блокирует скрипты/frames/objects/base. Cookies, proxy environment, auth,
+redirects, downloads и automatic retries не используются. Возвращается только HTML до 1 MB.
+
+`browser/inspection.py` содержит фиксированное read-only DOM inspection. Доступные цели
+имеют semantic role + exact name (ровно одно совпадение); snapshot включает tab/document
+UUID, главный frame, URL/origin, DOM hash, element hash, значение и полное содержимое формы.
+После ввода/навигации выполняется новое наблюдение, затем независимая verification.
+Текст страницы отображается буквально и не может выдать approval или запустить следующий tool.
+
+Границы: 8 вкладок, 50 элементов, до 12 000 символов текста страницы, 4 000 символов ввода,
+64 KB action snapshot, HTTP 8 секунд, browser phase 15 секунд, tool 45 секунд. Stop отменяет
+HTTP и Playwright operation; незавершённая загрузка останавливается фиксированным CDP
+Page.stopLoading. Новая неоткрывшаяся вкладка удаляется, соседние сохраняются. Shutdown
+закрывает принадлежащий окну временный context и driver с ограниченными ожиданиями.
+Ошибки очистки сообщаются отдельно; это не hard-kill sandbox против зависшего/скомпрометированного
+browser binary и не rollback уже отправленного запроса.
+
+После сетевого отказа существующая вкладка получает локальный error document (502),
+явно помеченный как сообщение Jarvis, а не текст сайта. Navigation tool всё равно
+завершается ERROR. Это сохраняет возможность получить свежий target, прочитать сообщение,
+выполнить новый переход или подтвердить закрытие; ошибку нельзя превратить в SUCCESS.
+
+## LLM Planner и Orchestrator, этап 5
+
+`Provider.propose(PlannerInput)` возвращает ровно один strict `Proposal`: зарегистрированный
+вызов, вопрос или finish без текста об успехе. `Runner` последовательно вызывает
+`PermissionEngine.prepare/execute`; provider получает только JSON metadata каталога,
+текст команды, ответы пользователя и неизменяемые outcomes прошлых шагов. Исполняемые
+callbacks реестра, engine, authority и токены ему не передаются.
+
+Runner ограничен 8 действиями, 3 уточнениями, 30 секундами на провайдера и 180 на задачу.
+Общий deadline включает approval/clarification; собственные тайм-ауты инструментов сохраняются.
+Нет автоматических retries: ошибка/denial/verification failure останавливают задачу.
+Windows/browser target обязан присутствовать в SUCCESS observation этой задачи; элемент —
+в той же странице. Adapter повторно проверяет актуальность identity/DOM перед действием.
+В симуляции нет таких наблюдений, и зависимые цели не синтезируются.
+
+`PlannerWorker` владеет asyncio loop внутри QThread. Prompts содержат случайный request ID;
+UI отвечает через thread-safe callback, совпадение ID защищает от запоздалого ответа.
+Worker получает opaque ApprovalToken, но не issuer. Stop/close отменяют Runner, pending
+approval и adapter; завершение собирает результаты до уничтожения worker и BrowserHost.
+У каждого окна свой временный browser context и outbox, общий файл минимального audit.
+
+OpenAI adapter использует фиксированный Responses HTTPS endpoint через aiohttp. Каждый
+шаг — самостоятельный запрос с bounded context; без server-side conversation/response ID,
+`store=false`, без hosted tools и parallel tool calls. Строгие схемы получены из Pydantic
+metadata реестра. Ответ разбирается как данные и повторно проходит локальную валидацию.
+OfflineProvider — отдельный набор учебных рецептов, позволяющий проверить UI без LLM.
+
+OS credentials вынесены в platform adapter: конкретные WinVaultKeyring/macOS Keyring,
+без динамического выбора backend. Короткоживущий subprocess передаёт ключ в приватный
+pipe за срок до 8 секунд; cancellation завершает и собирает процесс. Setup CLI читает
+ключ через getpass в TTY. Адаптер не читает OPENAI_API_KEY и не пишет ключ в файлы/SQLite.
+
+## Этап 6: Voice
+
+`voice/contracts.py` задаёт bounded AudioClip/Transcript, Recorder/Recognizer/Speaker и
+детерминированный spoken_result. `voice/local.py` реализует локальный subprocess transport.
+`platforms/audio.py` изолирует PortAudio/sounddevice, Vosk и системные TTS drivers.
+Необязательные библиотеки импортируются внутри helper; текстовый режим работает без них.
+
+`ui/voice_panel.py` владеет видимым push-to-talk, выбором локальной модели, состоянием,
+отменой и пятиминутным deadline. `ui/voice_worker.py` выполняет async adapters в QThread,
+отменяет/собирает дочерние процессы и подавляет устаревшие результаты. Все voice workers
+исключают одновременные capture/STT/TTS. Аудио не сохраняется и не отправляется по сети.
+
+Transcript → редактируемая команда PlannerWindow → ручной запуск → существующий Runner
+→ PermissionEngine. Voice не получает ApprovalAuthority. Голосовые кнопки в approval и
+clarification умеют только отменить задачу. После завершения Runner опционально озвучивает
+короткую сводку из engine outcomes. Dashboard microphone только открывает планировщик.
+
+## Память этапа 7
+
+`memory/models.py` — строгие Entry/Hint/MemoryContext; `memory/store.py` — SQLite profile,
+транзакции, конфликт редактирования, TTL и bounded failure; `memory/session.py` — явные
+временные метки, monotonic TTL и reset. `ui/memory_panel.py` отделяет UI edit/select от
+QThread I/O. Это пользовательские настройки, не model-callable tools. Планировщик не имеет
+API записи/удаления памяти. Задача получает immutable выбранный MemoryContext через Worker,
+Runner передаёт его провайдеру как данные и освобождает после завершения. Контактная
+неоднозначность проверяется до первого provider call; targets принимаются только из
+наблюдений этой задачи. Опциональный cloud использует отдельное согласие на метки.
+
+
+## Outlook
+
+Почтовая сессия принадлежит PlannerWindow. Один реестр содержит старые инструменты и
+шесть `outlook.*` инструментов. Ручная панель и Runner используют один PermissionEngine.
+MSAL/OS storage работают в killable helper; Graph HTTP — bounded asyncio в Qt worker.
+Профиль/адрес проверяются до POST; session identity инвалидируется при переключении.
+Черновики и байты вложений остаются RAM-состоянием окна. Подробнее: [MILESTONE_8.md](MILESTONE_8.md).
+
+## Установка (этап 9, native-приёмка pending)
+
+`installation/` — отдельно запускаемый stdlib bootstrap, без регистрации инструментов
+и без исполнения при обычном старте. PowerShell готовит runtime; Python готовит
+проверяемый неактивный слот с venv/assets и атомарно меняет указатель после native smoke
+и свежего visible-window receipt. Перезапуск восстанавливает компоненты, не касается
+профиля/SQLite/OS credentials. Stable launcher не зависит от пути репозитория.
+См. [MILESTONE_9.md](MILESTONE_9.md).

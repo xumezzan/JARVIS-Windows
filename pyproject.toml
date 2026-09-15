@@ -8,7 +8,11 @@ version = "0.0.1"
 description = "Desktop shell for a local-first Windows AI assistant"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["PySide6-Essentials", "pydantic"]
+dependencies = [
+    "PySide6-Essentials", "pydantic", "playwright", "aiohttp", "certifi", "keyring", "msal",
+    "pywinauto; sys_platform == 'win32'",
+    "psutil; sys_platform == 'win32'",
+]
 classifiers = [
     "Development Status :: 1 - Planning",
     "Operating System :: Microsoft :: Windows :: Windows 11",
@@ -19,6 +23,7 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "pytest-qt", "ruff", "mypy", "build"]
+voice = ["sounddevice", "vosk", "pyttsx3"]
 
 [project.scripts]
 jarvis = "jarvis.app:main"
@@ -34,12 +39,15 @@ qt_api = "pyside6"
 asyncio_default_fixture_loop_scope = "function"
 filterwarnings = ["error"]
 markers = [
+    "voice: opt-in real local microphone, recognition model and speaker acceptance",
+    "model: opt-in live provider, sends a command and incurs API usage",
     "windows: requires a real Windows session and explicit execution",
     "integration: crosses a package or adapter boundary",
     "e2e: tests an end-to-end user scenario",
 ]
 
 [tool.ruff]
+extend-exclude = [".agents"]
 target-version = "py312"
 line-length = 100
 src = ["src", "tests"]

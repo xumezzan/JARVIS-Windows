@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 from jarvis.observability.audit import AuditEvent, AuditKind, AuditLog, ErrorCode
 from jarvis.permissions.approvals import Action, ApprovalStore, ApprovalToken
 from jarvis.permissions.policies import Decision, Mode, Risk, Status, decide
-from jarvis.tools.base import ExecutionContext, canonical
+from jarvis.tools.base import ExecutionContext, ToolError, canonical
 from jarvis.tools.registry import ToolRegistry
 
 
@@ -253,6 +253,16 @@ class PermissionEngine:
             pending.cancelled.set()
             return self._finish(
                 action, Status.CANCELLED, ErrorCode.CANCELLED, started, may_have_effects
+            )
+        except ToolError as error:
+            return self._finish(
+                action,
+                Status.TIMEOUT
+                if error.code in ("native_timeout", "browser_timeout")
+                else Status.ERROR,
+                ErrorCode(error.code),
+                started,
+                may_have_effects,
             )
         except Exception:
             return self._finish(

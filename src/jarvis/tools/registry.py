@@ -22,10 +22,13 @@ class RegisteredTool:
     check: Callable[[str, ExecutionContext], Awaitable[bool]]
     run: Callable[[str, ExecutionContext], Awaitable[ToolModel]]
     verify: Callable[[str, ToolModel, ExecutionContext], Awaitable[bool]]
+    policy: Callable[[ToolModel], None]
 
     def normalize(self, arguments: object) -> str:
         # Validate Python input before JSON serialization to reject coercion and extra fields.
-        return canonical(self.parameters.model_validate(arguments, strict=True))
+        parameters = self.parameters.model_validate(arguments, strict=True)
+        self.policy(parameters)
+        return canonical(parameters)
 
 
 class ToolRegistry:
@@ -59,6 +62,10 @@ class ToolRegistry:
                 context,
             )
 
+        def policy(parameters: ToolModel) -> None:
+            if spec.policy is not None:
+                spec.policy(spec.parameters.model_validate(parameters, strict=True))
+
         self._tools[spec.name] = RegisteredTool(
             spec.name,
             spec.description,
@@ -71,6 +78,7 @@ class ToolRegistry:
             check,
             run,
             verify,
+            policy,
         )
 
     def seal(self) -> None:

@@ -36,7 +36,8 @@ def start(qtbot: QtBot, window: MainWindow, text: str = "Проверь инте
 def test_startup_and_unavailable_capabilities(window: MainWindow) -> None:
     assert window.isVisible()
     assert window.state == UiState.IDLE
-    assert not window.microphone_button.isEnabled()
+    assert window.microphone_button.isEnabled()
+    assert window.planner_window is None  # Opening the app never starts microphone capture.
     assert window.permissions_button.isEnabled()
     assert not window.stop_button.isEnabled()
 
@@ -47,6 +48,15 @@ def test_small_window_scrolls_instead_of_clipping(qtbot: QtBot, window: MainWind
     content = window.scroll_area.widget()
     assert content is not None
     assert content.height() >= 800
+    qtbot.waitUntil(lambda: window.scroll_area.horizontalScrollBar().maximum() == 0)
+    assert window.dashboard_grid.getItemPosition(
+        window.dashboard_grid.indexOf(window.center_column)
+    ) == (0, 0, 1, 2)
+    window.resize(1480, 940)
+    qtbot.waitUntil(lambda: not window._compact_layout)
+    assert window.dashboard_grid.getItemPosition(
+        window.dashboard_grid.indexOf(window.center_column)
+    ) == (0, 1, 1, 1)
 
 
 def test_text_success_and_ui_responsiveness(qtbot: QtBot, window: MainWindow) -> None:
@@ -155,3 +165,40 @@ def test_activity_is_bounded(window: MainWindow) -> None:
     for _ in range(window.config.activity_limit + 20):
         window.activity.append_event(ShellEvent.SUBMITTED)
     assert window.activity.count() == window.config.activity_limit
+
+
+def test_planner_entrypoint_and_close_allows_reopen(qtbot: QtBot, window: MainWindow) -> None:
+    window.command_input.setPlainText("проверь систему дважды")
+    QTest.mouseClick(window.planner_button, Qt.MouseButton.LeftButton)
+    planner = window.planner_window
+    assert planner is not None and planner.command.toPlainText() == "проверь систему дважды"
+    with qtbot.waitSignal(planner.task_finished):
+        QTest.mouseClick(planner.run_button, Qt.MouseButton.LeftButton)
+    planner.close()
+    qtbot.waitUntil(lambda: window.planner_window is None)
+    window.open_planner()
+    assert window.planner_window is not None
+    window.shutdown()
+    assert window.planner_window._closed
+
+
+def test_theme_and_motion_controls_preserve_task(window: MainWindow, qtbot: QtBot) -> None:
+    window.command_input.setPlainText("Сохранить мою команду")
+    window.theme_picker.setCurrentText("Graphite")
+    assert "#111214" in window.styleSheet()
+    window.open_planner()
+    assert window.planner_window is not None
+    assert window.planner_window.styleSheet() == window.styleSheet()
+    window.theme_picker.setCurrentText("Midnight")
+    assert window.planner_window.styleSheet() == window.styleSheet()
+    window.planner_window.close()
+    assert window.command_input.toPlainText() == "Сохранить мою команду"
+    QTest.mouseClick(window.motion_button, Qt.MouseButton.LeftButton)
+    assert not window.orb._timer.isActive()
+    phase = window.orb._phase
+    qtbot.wait(100)
+    assert window.orb._phase == phase
+    QTest.mouseClick(window.motion_button, Qt.MouseButton.LeftButton)
+    assert window.orb._timer.isActive()
+    window.hide()
+    assert not window.orb._timer.isActive()
