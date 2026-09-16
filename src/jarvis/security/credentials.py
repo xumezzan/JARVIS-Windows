@@ -55,19 +55,50 @@ def valid_key(key: str) -> bool:
     return 1 <= len(key) <= 4096 and all(33 <= ord(char) <= 126 for char in key)
 
 
+def console(stream: object, standard_input: bool) -> bool:
+    """True only for a real interactive console, never for a redirected or null stream.
+
+    Windows reports the null device as a character device, so isatty() alone answers True
+    for the helper's own stdin=DEVNULL and would refuse every legitimate pipe. Anything
+    that cannot be identified is treated as a console, so the key is never written out.
+    """
+    reader = getattr(stream, "isatty", None)
+    if reader is None or not reader():
+        return False
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetStdHandle.restype = wintypes.HANDLE
+        kernel32.GetStdHandle.argtypes = [wintypes.DWORD]
+        kernel32.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        mode = wintypes.DWORD()
+        handle = kernel32.GetStdHandle(wintypes.DWORD(-10 if standard_input else -11))
+        return bool(kernel32.GetConsoleMode(handle, ctypes.byref(mode)))
+    except Exception:
+        return True
+
+
 def main() -> int:
     try:
         from jarvis.platforms.credentials import native_store
 
         store = native_store()
-        if sys.argv[1:] == ["set"] and sys.stdin.isatty():
+        if sys.argv[1:] == ["set"] and console(sys.stdin, True):
             key = getpass.getpass("OpenAI API key (скрытый ввод): ")
             if not valid_key(key):
                 raise ValueError
             store.set_password(SERVICE, ACCOUNT, key)
             print("Ключ сохранён в системном хранилище.")
             return 0
-        if sys.argv[1:] == ["--pipe"] and not sys.stdin.isatty() and not sys.stdout.isatty():
+        if (
+            sys.argv[1:] == ["--pipe"]
+            and not console(sys.stdin, True)
+            and not console(sys.stdout, False)
+        ):
             key = store.get_password(SERVICE, ACCOUNT) or ""
             if not valid_key(key):
                 return 1
