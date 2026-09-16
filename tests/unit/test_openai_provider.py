@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -192,3 +193,53 @@ async def test_credentials_never_fall_back_to_environment(monkeypatch: pytest.Mo
     monkeypatch.setattr(asyncio, "create_subprocess_exec", launch)
     with pytest.raises(ProviderError, match="credentials"):
         await load_api_key()
+
+
+@pytest.mark.asyncio
+async def test_stored_key_reaches_the_provider_through_the_helper_pipe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The helper is started with stdin=DEVNULL, which Windows reports as a tty."""
+    import sys
+
+    from jarvis.security import credentials
+
+    secret = "test-key-" + "z" * 32
+    store = SimpleNamespace(get_password=lambda service, account: secret)
+    monkeypatch.setattr("jarvis.platforms.credentials.native_store", lambda: store)
+    monkeypatch.setattr(sys, "argv", ["credentials", "--pipe"])
+
+    original = asyncio.create_subprocess_exec
+
+    async def launch(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+        # Run the real entry point in the same interpreter, with the fake store injected.
+        script = (
+            "import sys;"
+            "from types import SimpleNamespace;"
+            "import jarvis.platforms.credentials as native;"
+            f"native.native_store=lambda: SimpleNamespace(get_password=lambda s, a: {secret!r});"
+            "from jarvis.security.credentials import main;"
+            "raise SystemExit(main())"
+        )
+        return await original(sys.executable, "-c", script, "--pipe", **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", launch)
+    assert await credentials.load_api_key() == secret
+
+
+@pytest.mark.parametrize("stream", ["stdin", "stdout"])
+def test_a_real_console_never_receives_the_key(
+    monkeypatch: pytest.MonkeyPatch, stream: str
+) -> None:
+    import sys
+
+    from jarvis.security import credentials
+
+    monkeypatch.setattr(sys, "argv", ["credentials", "--pipe"])
+    monkeypatch.setattr(
+        credentials, "console", lambda value, standard_input: standard_input == (stream == "stdin")
+    )
+    written: list[str] = []
+    monkeypatch.setattr(sys.stdout, "write", written.append)
+    assert credentials.main() == 1
+    assert not written
