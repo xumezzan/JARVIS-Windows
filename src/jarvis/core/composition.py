@@ -15,6 +15,7 @@ from pathlib import Path
 from jarvis.browser.host import BrowserHost
 from jarvis.config import AppConfig
 from jarvis.connectors.base import ConnectorRegistry
+from jarvis.core.workflow.store import WorkflowStore
 from jarvis.files.policy import FilePolicy
 from jarvis.knowledge.store import KnowledgeStore
 from jarvis.mail.session import MailSession
@@ -46,6 +47,7 @@ class Workbench:
     matrix: PermissionMatrix
     connectors: ConnectorRegistry
     knowledge: KnowledgeStore
+    workflows: WorkflowStore
     browser_host: BrowserHost
     files: FilePolicy
     mail_session: MailSession
@@ -70,6 +72,7 @@ def build(
     matrix = load_matrix(Path(config.data_dir) / MATRIX_FILE)
     connectors = ConnectorRegistry()
     knowledge = KnowledgeStore(config.data_dir / "knowledge.sqlite3")
+    workflows = WorkflowStore(config.data_dir / "workflows.sqlite3")
     host = browser_host or BrowserHost(NetworkPolicy(config.browser_origins))
     registry, outbox = local_registry()
     register_browser(registry, host, host.policy)
@@ -89,6 +92,7 @@ def build(
         matrix=matrix,
         connectors=connectors,
         knowledge=knowledge,
+        workflows=workflows,
         browser_host=host,
         files=files,
         mail_session=session,
