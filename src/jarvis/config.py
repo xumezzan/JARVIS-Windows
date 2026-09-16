@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from jarvis.files.policy import FilePolicy, default_roots
 from jarvis.security.browser_policy import DEFAULT_ORIGINS, NetworkPolicy
 from jarvis.tools.base import ToolError
 
@@ -17,6 +18,7 @@ class AppConfig:
     task_timeout_ms: int = 10000
     activity_limit: int = 200
     browser_origins: tuple[str, ...] = DEFAULT_ORIGINS
+    file_roots: tuple[str, ...] = ()
     planner_model: str = ""
 
     def __post_init__(self) -> None:
@@ -28,6 +30,10 @@ class AppConfig:
             NetworkPolicy(self.browser_origins)
         except ToolError:
             raise ValueError("Invalid browser origin policy.") from None
+        try:
+            FilePolicy(self.file_roots)
+        except ToolError:
+            raise ValueError("Invalid file folder policy.") from None
         for name, value, minimum, maximum in (
             ("task_timeout_ms", self.task_timeout_ms, 100, 60000),
             ("activity_limit", self.activity_limit, 10, 1000),
@@ -61,6 +67,12 @@ def load_config(environ: Mapping[str, str] | None = None) -> AppConfig:
         browser_origins=tuple(
             part.strip()
             for part in env.get("JARVIS_BROWSER_ORIGINS", ",".join(DEFAULT_ORIGINS)).split(",")
+            if part.strip()
+        ),
+        # Folders the assistant may touch. Unset means the user's own document folders.
+        file_roots=tuple(
+            part.strip()
+            for part in env.get("JARVIS_FILE_ROOTS", ",".join(default_roots())).split(",")
             if part.strip()
         ),
     )

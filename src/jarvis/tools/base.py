@@ -31,6 +31,12 @@ class ToolError(Exception):
             "browser_timeout",
             "browser_failure",
             "browser_cleanup",
+            "path_denied",
+            "file_missing",
+            "file_conflict",
+            "file_unsupported",
+            "file_too_large",
+            "file_failure",
         ],
     ) -> None:
         self.code = code

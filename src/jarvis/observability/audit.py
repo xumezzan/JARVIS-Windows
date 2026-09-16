@@ -45,6 +45,12 @@ class ErrorCode(StrEnum):
     BROWSER_TIMEOUT = "browser_timeout"
     BROWSER_FAILURE = "browser_failure"
     BROWSER_CLEANUP = "browser_cleanup"
+    PATH_DENIED = "path_denied"
+    FILE_MISSING = "file_missing"
+    FILE_CONFLICT = "file_conflict"
+    FILE_UNSUPPORTED = "file_unsupported"
+    FILE_TOO_LARGE = "file_too_large"
+    FILE_FAILURE = "file_failure"
 
 
 @dataclass(frozen=True)
