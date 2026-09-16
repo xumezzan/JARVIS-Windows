@@ -24,6 +24,20 @@ from jarvis.voice.elevenlabs import ElevenLabsSpeaker
 from jarvis.voice.local import LocalRecorder, LocalSpeaker, VoskRecognizer
 
 
+def installed_model() -> str:
+    """The Russian model the repository installer unpacks next to the application, if present.
+
+    Only a local directory that really holds a model is offered; nothing is downloaded here.
+    """
+    base = os.environ.get("LOCALAPPDATA")
+    if not base:
+        return ""
+    for candidate in sorted(Path(base).glob("JarvisInstall/slots/*/models/*")):
+        if (candidate / "am" / "final.mdl").is_file():
+            return str(candidate)
+    return ""
+
+
 class HoldButton(QPushButton):
     """Only a mouse/key press starts capture; click()/signal emission do not start it."""
 
@@ -35,6 +49,7 @@ class HoldButton(QPushButton):
         super().__init__(text)
         self.setAutoDefault(False)
         self.holding = False
+        self.wired = False
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton and self.isEnabled():
@@ -109,7 +124,7 @@ class VoicePanel(QWidget):
         row = QHBoxLayout()
         self.model_path = QLineEdit()
         self.model_path.setMaxLength(2000)
-        self.model_path.setText(os.environ.get("JARVIS_VOSK_MODEL", ""))
+        self.model_path.setText(os.environ.get("JARVIS_VOSK_MODEL", "") or installed_model())
         self.model_path.setPlaceholderText("Папка распакованной русской модели Vosk")
         self.browse = QPushButton("Выбрать модель…")
         self.browse.setAutoDefault(False)
@@ -180,10 +195,34 @@ class VoicePanel(QWidget):
 
     def _button(self, text: str) -> HoldButton:
         button = HoldButton(text)
+        self.attach(button)
+        return button
+
+    def attach(self, button: HoldButton) -> None:
+        """Wire a hold control placed by another window; capture still needs a real press.
+
+        A reused control is detached from any previous panel first, so one press can never
+        start two captures.
+        """
+        if button.wired:
+            for signal in (button.held, button.released_hold, button.interrupted):
+                signal.disconnect()
+        button.wired = True
         button.held.connect(lambda: self._record(button))
         button.released_hold.connect(lambda: self.release(button))
         button.interrupted.connect(lambda: self.cancel() if self.capture_button is button else None)
-        return button
+
+    def announce(self, text: str) -> None:
+        """Speak one short prompt of the application's own words, with the local voice.
+
+        Never used for tool output, page text or message content, and it never consumes a
+        one-use cloud voice consent, which belongs to the spoken task result.
+        """
+        if not self.speech_enabled.isChecked() or self.worker is not None or self.closed:
+            return
+        spoken = " ".join(text.split())[:300]
+        if spoken:
+            self._launch(spoken, cloud=False)
 
     def stop_controls(self, dialog: QWidget) -> QWidget:
         """Keep a visible microphone indicator and Stop accessible in modal prompts."""
@@ -232,9 +271,9 @@ class VoicePanel(QWidget):
         self.message.emit("Микрофон запускается… Дождитесь надписи «Идёт запись».")
         self._launch("")
 
-    def _launch(self, speech: str) -> None:
+    def _launch(self, speech: str, cloud: bool = True) -> None:
         speaker = self.speaker
-        if speech and self.cloud_selection is not None:
+        if speech and cloud and self.cloud_selection is not None:
             voice_id, account = self.cloud_selection
             self._clear_cloud()
             speaker = ElevenLabsSpeaker(voice_id, account, speech)
@@ -324,7 +363,8 @@ class VoicePanel(QWidget):
                 self.message.emit(
                     "Микрофон выключен. "
                     + ("Распознавание неуверенное. " if transcript.uncertain else "")
-                    + "Проверьте и исправьте текст ниже, затем нажмите «Запустить планировщик»."
+                    + "Распознано: "
+                    + transcript.text[:120]
                 )
         else:
             self.deadline.stop()

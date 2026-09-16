@@ -14,13 +14,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Launch the shell; help and version remain usable without initializing Qt."""
     parser = argparse.ArgumentParser(
         prog="jarvis",
-        description="Jarvis Desktop Preview: local demonstration, no command execution.",
+        description="Jarvis: локальный ассистент с типизированными инструментами.",
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {version('jarvis-windows')}"
     )
     parser.add_argument(
-        "--smoke-test", action="store_true", help="Run one GUI demo, close, and report its result."
+        "--smoke-test",
+        action="store_true",
+        help="Run one simulated offline command, close, and report its result.",
     )
     parser.add_argument(
         "--startup-report", type=Path, help="Write a PID-bound visible-window receipt for setup."
@@ -52,16 +54,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     window = MainWindow(config, log)
     application.aboutToQuit.connect(window.shutdown)
     smoke_result = 1
+    # A real command finishes in well under a second, so the smoke run must not close the
+    # window before the startup receipt has been written.
+    receipt_pending = args.startup_report is not None
+    smoke_done = False
 
     def finish_smoke(outcome: str) -> None:
-        nonlocal smoke_result
-        smoke_result = 0 if outcome == "success" else 1
-        print(f"Jarvis GUI smoke: {outcome}")
-        window.close()
+        nonlocal smoke_result, smoke_done
+        smoke_result = 0 if outcome in ("finished", "simulated") else 1
+        verdict = "success" if smoke_result == 0 else "failed"
+        print(f"Jarvis GUI smoke: {verdict} ({outcome})")
+        smoke_done = True
+        if not receipt_pending:
+            window.close()
 
     if args.smoke_test:
         window.task_finished.connect(finish_smoke)
-        window.command_input.setPlainText("Проверка интерфейса Jarvis")
+        # Simulation and the offline provider: the smoke run never touches a real adapter.
+        window.run_mode.setCurrentIndex(1)
+        window.provider_mode.setCurrentIndex(0)
+        window.command_input.setPlainText("проверь систему")
         QTimer.singleShot(0, window.submit)
         QTimer.singleShot(config.task_timeout_ms + 2000, window.close)
     window.show()
@@ -69,6 +81,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         from jarvis.installation.setup import atomic_json
 
         def report_startup() -> None:
+            nonlocal receipt_pending
             try:
                 atomic_json(
                     args.startup_report,
@@ -81,6 +94,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             except OSError:
                 print("Jarvis startup receipt could not be written.", file=sys.stderr)
+                window.close()
+                return
+            receipt_pending = False
+            if smoke_done:
                 window.close()
 
         QTimer.singleShot(500, report_startup)

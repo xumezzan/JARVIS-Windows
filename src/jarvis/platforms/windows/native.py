@@ -7,9 +7,12 @@ exact native edit HWND, never global keys, clipboard, coordinates or shell text.
 import ctypes
 import importlib
 import os
+import string
 import subprocess
 import time
+import winreg
 from ctypes import wintypes
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -25,7 +28,88 @@ from jarvis.tools.windows import (
 )
 
 EDIT_CLASSES = {"edit", "richedit20w", "richedit50w", "richeditd2dpt"}
-APP_NAMES: tuple[AppId, ...] = ("notepad", "chrome", "vscode")
+KEY_CHARACTERS = set(string.ascii_lowercase + string.digits + " ._+-")
+
+# Script hosts and interpreters are not launched by name: starting one would turn a spoken
+# word into an arbitrary code execution surface, which no tool in this application exposes.
+SCRIPT_HOSTS = {
+    "cmd",
+    "command prompt",
+    "cscript",
+    "developer command prompt",
+    "developer powershell",
+    "mshta",
+    "powershell",
+    "pwsh",
+    "python",
+    "pythonw",
+    "regedit",
+    "regsvr32",
+    "rundll32",
+    "windows powershell",
+    "windows terminal",
+    "wscript",
+    "wt",
+    "командная строка",
+    "терминал",
+}
+
+# Spoken shorthands that do not appear as Start menu names on every installation.
+ALIASES = {
+    "блокнот": "notepad",
+    "браузер": "chrome",
+    "хром": "chrome",
+    "гугл хром": "chrome",
+    "вс код": "code",
+    "vs code": "code",
+    "vscode": "code",
+    "код": "code",
+    "проводник": "explorer",
+    "paint": "mspaint",
+    "пейнт": "mspaint",
+}
+
+# Always-present Windows applications, so a bare installation still answers common requests.
+SYSTEM_APPS = ("notepad", "mspaint", "calc", "explorer", "charmap", "magnify")
+
+
+def normalize(name: str) -> str:
+    """Compare spoken words, file stems and window titles on the same footing."""
+    folded = "".join(character if character.isalnum() else " " for character in name.casefold())
+    return " ".join(folded.split())
+
+
+def blocked(name: str) -> bool:
+    """Match a script host as a whole word, so "Windows PowerShell (x86)" is caught too."""
+    words = normalize(name)
+    return any(
+        words == host or words.startswith(f"{host} ") or f" {host} " in f" {words} "
+        for host in SCRIPT_HOSTS
+    )
+
+
+def app_key(executable: str) -> str:
+    """The stable identity of an observed window: its own executable stem."""
+    stem = Path(executable).stem.lower()
+    cleaned = "".join(
+        character if character in KEY_CHARACTERS or "\u0400" <= character <= "\u04ff" else "-"
+        for character in stem
+    ).strip(" ._+-")
+    return cleaned[:100] or "unknown"
+
+
+@dataclass(frozen=True)
+class LaunchEntry:
+    """One launchable catalog item: a human name, what to start, and the expected key.
+
+    A Store application has no executable a user may run directly; it is started by its
+    application user model id through the system launcher instead.
+    """
+
+    name: str
+    path: Path
+    key: str
+    aumid: str = ""
 
 
 class NativeDesktop:
@@ -54,48 +138,149 @@ class NativeDesktop:
         ]
         self.user32.SendMessageTimeoutW.restype = ctypes.c_ssize_t
 
-    def paths(self, app: AppId) -> list[Path]:
-        if app == "notepad":
-            return [Path(os.environ["SYSTEMROOT"]) / "System32" / "notepad.exe"]
-        roots = [
-            Path(os.environ[name])
-            for name in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA")
-            if name in os.environ
-        ]
-        if app == "chrome":
-            return [root / "Google/Chrome/Application/chrome.exe" for root in roots]
-        return [root / "Microsoft VS Code/Code.exe" for root in roots] + [
-            Path(os.environ["LOCALAPPDATA"]) / "Programs/Microsoft VS Code/Code.exe"
-        ]
+    def catalog(self) -> list[LaunchEntry]:
+        """Applications this user can actually start: the Windows apps folder first, then
+        the Start menu, registered App Paths and the always-present system tools."""
+        cached = getattr(self, "_catalog", None)
+        if cached is not None:
+            return cast("list[LaunchEntry]", cached)
+        entries: list[LaunchEntry] = []
+        seen: set[str] = set()
 
-    def executable(self, app: AppId) -> Path:
-        for path in self.paths(app):
-            if path.is_file():
-                return path
+        def add(name: str, path: Path, key: str, aumid: str = "") -> None:
+            token = aumid.casefold() or os.path.normcase(str(path))
+            if token in seen or blocked(name) or (not aumid and blocked(path.stem)):
+                return
+            seen.add(token)
+            entries.append(LaunchEntry(name, path, key, aumid))
+
+        for name, identifier in self.installed_apps():
+            add(name, self.launcher, "", identifier)
+
+        for variable in ("APPDATA", "PROGRAMDATA"):
+            base = os.environ.get(variable)
+            if base is None:
+                continue
+            programs = Path(base) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+            if not programs.is_dir():
+                continue
+            try:
+                links = sorted(programs.rglob("*.lnk"))[:2000]
+            except OSError:
+                continue
+            for link in links:
+                add(link.stem, link, "")
+
+        for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            try:
+                with winreg.OpenKey(
+                    root, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"
+                ) as handle:
+                    count = winreg.QueryInfoKey(handle)[0]
+                    for index in range(min(count, 500)):
+                        name = winreg.EnumKey(handle, index)
+                        with winreg.OpenKey(handle, name) as item:
+                            value = str(winreg.QueryValueEx(item, "")[0]).strip('"')
+                        executable = Path(value)
+                        if executable.is_file():
+                            add(executable.stem, executable, app_key(str(executable)))
+            except OSError:
+                continue
+
+        system32 = Path(os.environ.get("SYSTEMROOT", "C:/Windows")) / "System32"
+        for name in SYSTEM_APPS:
+            executable = system32 / f"{name}.exe"
+            if executable.is_file():
+                add(name, executable, name)
+        self._catalog = entries
+        return entries
+
+    @property
+    def launcher(self) -> Path:
+        return Path(os.environ.get("SYSTEMROOT", "C:/Windows")) / "explorer.exe"
+
+    def installed_apps(self) -> list[tuple[str, str]]:
+        """Names and ids from the Windows apps folder: desktop and Store apps alike.
+
+        Read-only enumeration. The id is produced by Windows, never by a command, model
+        or page, and it is the only thing later handed to the system launcher.
+        """
+        try:
+            client = importlib.import_module("comtypes.client")
+            # Late binding: pywinauto has already initialised COM without this type library.
+            shell = client.CreateObject("Shell.Application", dynamic=True)
+            items = shell.NameSpace("shell:AppsFolder").Items()
+            total = min(int(items.Count), 1000)
+        except Exception:
+            return []
+        found: list[tuple[str, str]] = []
+        for index in range(total):
+            try:
+                item = items.Item(index)
+                name, identifier = str(item.Name), str(item.Path)
+            except Exception:
+                continue
+            # Desktop entries repeat the Start menu shortcut; only ids are new information.
+            if name and identifier and "!" in identifier and not Path(identifier).exists():
+                found.append((name, identifier))
+        return found
+
+    def resolve_app(self, app: AppId) -> LaunchEntry:
+        """One spoken name to one launchable item, or an explicit finite failure."""
+        entries = self.catalog()
+        for wanted in [normalize(app), normalize(ALIASES.get(normalize(app), ""))]:
+            if not wanted:
+                continue
+            if wanted in SCRIPT_HOSTS:
+                raise ToolError("application_missing")
+            for select in (
+                lambda entry, want=wanted: normalize(entry.name) == want or entry.key == want,
+                lambda entry, want=wanted: normalize(entry.name).startswith(want),
+                lambda entry, want=wanted: want in normalize(entry.name),
+            ):
+                matches = [entry for entry in entries if select(entry)]
+                if not matches:
+                    continue
+                if len({normalize(entry.name) for entry in matches}) > 1:
+                    raise ToolError("application_ambiguous")
+                return matches[0]
         raise ToolError("application_missing")
 
-    def app_for(self, executable: str) -> AppId | None:
-        path = Path(executable)
-        for app in APP_NAMES:
-            if any(
-                os.path.normcase(str(candidate)) == os.path.normcase(executable)
-                for candidate in self.paths(app)
-            ):
-                return app
-        # Windows 11's packaged Notepad is launched through the System32 redirector.
-        package_root = Path(os.environ["PROGRAMFILES"]) / "WindowsApps"
-        try:
-            relative = path.relative_to(package_root)
-        except ValueError:
-            return None
-        if (
-            len(relative.parts) == 3
-            and relative.parts[0].startswith("Microsoft.WindowsNotepad_")
-            and relative.parts[0].endswith("__8wekyb3d8bbwe")
-            and [part.lower() for part in relative.parts[1:]] == ["notepad", "notepad.exe"]
+    def candidates(self, app: AppId, entry: LaunchEntry, titles: bool) -> list[WindowTarget]:
+        wanted = normalize(app)
+        alias = normalize(ALIASES.get(wanted, ""))
+        found = self.windows()
+        for select in (
+            lambda item: bool(entry.key) and item.app == entry.key,
+            lambda item: normalize(item.app) in {wanted, alias} - {""},
+            lambda item: titles and wanted in normalize(item.title),
         ):
-            return "notepad"
-        return None
+            matches = [item for item in found if select(item)]
+            if matches:
+                return matches
+        return []
+
+    def launch(self, entry: LaunchEntry) -> None:
+        """Start the resolved item itself. No user arguments, URLs, PATH lookup or shell."""
+        if entry.aumid:
+            subprocess.Popen(
+                [str(self.launcher), "shell:AppsFolder\\" + entry.aumid],
+                shell=False,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return
+        if entry.path.suffix.lower() == ".lnk":
+            os.startfile(str(entry.path))  # noqa: S606 - resolved shortcut, no parsed command line
+            return
+        subprocess.Popen(
+            [str(entry.path)],
+            shell=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
     @staticmethod
     def runtime(control: Any) -> list[int]:
@@ -155,9 +340,7 @@ class NativeDesktop:
     def snapshot(self, window: Any, include_editor: bool = True) -> WindowTarget:
         process = self.psutil.Process(window.process_id())
         executable = str(process.exe())
-        app = self.app_for(executable)
-        if app is None:
-            raise ToolError("target_changed")
+        app = app_key(executable)
         editor_target = None
         empty = False
         if include_editor and app == "notepad":
@@ -222,28 +405,33 @@ class NativeDesktop:
             case "check_open":
                 if request.app is None:
                     raise ToolError("native_failure")
-                self.executable(request.app)
+                self.resolve_app(request.app)
                 return WindowsResult()
             case "open":
                 if request.app is None:
                     raise ToolError("native_failure")
-                existing = self.windows(request.app)
+                entry = self.resolve_app(request.app)
+                existing = self.candidates(request.app, entry, titles=False)
                 if existing:
                     return WindowsResult(target=existing[0])
-                # Fixed executable path only: no user args, URLs, PATH lookup or shell.
-                subprocess.Popen(
-                    [str(self.executable(request.app))],
-                    shell=False,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+                known = {item.handle for item in self.windows()}
+                opened = time.time() - 1
+                self.launch(entry)
                 deadline = time.monotonic() + 6
                 while time.monotonic() < deadline:
-                    windows = self.windows(request.app)
-                    if windows:
-                        return WindowsResult(target=windows[0])
-                    time.sleep(0.1)
+                    fresh = [
+                        item
+                        for item in self.windows()
+                        if item.handle not in known and item.process_started >= opened
+                    ]
+                    matched = [item for item in fresh if entry.key and item.app == entry.key]
+                    if matched or fresh:
+                        return WindowsResult(target=(matched or fresh)[0])
+                    time.sleep(0.2)
+                # A running instance may simply have taken focus without a new window.
+                existing = self.candidates(request.app, entry, titles=True)
+                if existing:
+                    return WindowsResult(target=existing[0])
                 raise ToolError("native_timeout")
             case "check_target":
                 if request.target is None:

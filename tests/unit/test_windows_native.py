@@ -1,11 +1,13 @@
 """Native adapter decision logic with fake UIA objects; not native Windows acceptance."""
 
+import winreg
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 from tests.windows_support import target
 
+from jarvis.platforms.windows import native
 from jarvis.platforms.windows.native import NativeDesktop
 from jarvis.tools.base import ToolError
 from jarvis.tools.windows import NativeRequest, text_digest
@@ -84,21 +86,66 @@ def test_literal_directed_message_and_readback(
     desktop.user32.SetForegroundWindow.assert_not_called()
 
 
-def test_executable_allowlist_no_path_search(
-    desktop: NativeDesktop,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *names: str) -> Path:
+    """A throwaway Start menu plus System32, with the real registry kept out of the catalog."""
+    programs = tmp_path / "APPDATA/Microsoft/Windows/Start Menu/Programs"
+    programs.mkdir(parents=True, exist_ok=True)
+    for variable in ("APPDATA", "PROGRAMDATA"):
+        root = tmp_path / variable
+        (root / "Microsoft/Windows/Start Menu/Programs").mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv(variable, str(root))
+    system32 = tmp_path / "SYSTEMROOT/System32"
+    system32.mkdir(parents=True, exist_ok=True)
+    (system32 / "notepad.exe").touch()
+    monkeypatch.setenv("SYSTEMROOT", str(tmp_path / "SYSTEMROOT"))
+    for name in names:
+        (programs / f"{name}.lnk").touch()
+
+    def unavailable(*args: object, **kwargs: object) -> None:
+        raise OSError
+
+    monkeypatch.setattr(winreg, "OpenKey", unavailable)
+    return programs
+
+
+def test_any_installed_application_resolves_by_its_own_name(
+    desktop: NativeDesktop, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    for name in ("SYSTEMROOT", "PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
-        monkeypatch.setenv(name, str(tmp_path / name))
-    path = tmp_path / "SYSTEMROOT/System32/notepad.exe"
-    path.parent.mkdir(parents=True)
-    path.touch()
-    assert desktop.executable("notepad") == path
-    assert desktop.app_for(str(path)) == "notepad"
-    assert desktop.app_for(str(tmp_path / "untrusted/notepad.exe")) is None
+    programs = installed(tmp_path, monkeypatch, "Калькулятор", "Telegram Desktop")
+    assert desktop.resolve_app("калькулятор").path == programs / "Калькулятор.lnk"
+    assert desktop.resolve_app("telegram").name == "Telegram Desktop"
+    # A spoken shorthand still reaches the system application when no shortcut matches.
+    assert desktop.resolve_app("блокнот").path.name == "notepad.exe"
     with pytest.raises(ToolError, match="application_missing"):
-        desktop.executable("chrome")
+        desktop.resolve_app("такого приложения нет")
+
+
+def test_script_hosts_are_never_launchable_by_name(
+    desktop: NativeDesktop, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installed(tmp_path, monkeypatch, "Windows PowerShell", "Командная строка", "cmd")
+    for name in ("powershell", "windows powershell", "командная строка", "cmd"):
+        with pytest.raises(ToolError, match="application_missing"):
+            desktop.resolve_app(name)
+
+
+def test_ambiguous_application_name_fails_closed(
+    desktop: NativeDesktop, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installed(tmp_path, monkeypatch, "Photo Editor", "Photo Viewer")
+    with pytest.raises(ToolError, match="application_ambiguous"):
+        desktop.resolve_app("photo")
+    assert desktop.resolve_app("photo editor").name == "Photo Editor"
+
+
+def test_observed_window_identity_comes_from_its_executable() -> None:
+    assert native.app_key("C:\\Windows\\System32\\notepad.exe") == "notepad"
+    assert native.app_key("C:\\untrusted\\Notepad.exe") == "notepad"
+    assert native.app_key("C:\\Program Files\\WindowsApps\\x\\CalculatorApp.exe") == (
+        "calculatorapp"
+    )
+    # The key alone is never proof of identity: resolve() also compares the full path.
+    assert target().executable.endswith("notepad.exe")
 
 
 def test_ambiguous_editor_fails_closed(desktop: NativeDesktop) -> None:

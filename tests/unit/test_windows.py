@@ -131,7 +131,8 @@ async def test_readback_failure_or_stale_target_never_succeeds(
 @pytest.mark.parametrize(
     "name,args",
     [
-        ("open_app", {"app": "powershell"}),
+        # A path, argument or shell fragment is not an application name.
+        ("open_app", {"app": "C:/Windows/System32/cmd.exe"}),
         ("open_app", {"app": "notepad", "args": ["secret.txt"]}),
         ("type_text", {"target": target().model_dump() | {"app": "chrome"}, "text": "test"}),
         ("type_text", {"target": target().model_dump() | {"empty": False}, "text": "test"}),

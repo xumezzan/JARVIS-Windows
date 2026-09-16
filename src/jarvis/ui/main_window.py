@@ -1,13 +1,16 @@
-"""Desktop demo shell with separate permission and bounded text-planner windows."""
+"""Desktop command shell: the command bar runs the real planner through PermissionEngine."""
 
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from PySide6.QtCore import QEvent, QObject, QSize, Qt, Signal, Slot
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QCloseEvent, QKeySequence, QResizeEvent, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -23,17 +26,44 @@ from PySide6.QtWidgets import (
 
 from jarvis.browser.host import BrowserHost
 from jarvis.config import AppConfig
+from jarvis.core.planner.contracts import Step
 from jarvis.observability.events import EVENT_TEXT, ShellEvent
 from jarvis.observability.logging import ShellLog
 from jarvis.security.browser_policy import NetworkPolicy
 from jarvis.ui.activity_log import ActivityLog
 from jarvis.ui.components import IconButton, MonthCalendar, Panel
 from jarvis.ui.dashboard import OrbWidget, line_icon
-from jarvis.ui.demo_worker import DemoOutcome, DemoWorker
 from jarvis.ui.permission_workbench import PermissionWorkbench
 from jarvis.ui.planner_window import PlannerWindow
 from jarvis.ui.states import STATE_LABELS, UiState
 from jarvis.ui.theme import PALETTES, STYLESHEET, build_stylesheet, load_fonts
+from jarvis.ui.voice_panel import HoldButton, VoicePanel
+
+# Finite planner error categories rendered as advice; never arbitrary text from a tool.
+ERROR_ADVICE: dict[str, str] = {
+    "credentials": (
+        "Ключ OpenAI не найден. В терминале выполните: python -m jarvis.security.credentials set"
+    ),
+    "provider_failed": "Модель не ответила. Проверьте ключ, идентификатор модели и сеть.",
+    "provider_output": "Ответ модели не соответствует схеме планировщика.",
+    "context_limit": "Запрос к модели превысил допустимый размер.",
+    "unsupported_platform": "Этот инструмент доступен только в Windows.",
+    "application_missing": "Приложение не найдено на этом компьютере.",
+    "unobserved_target": "Цель не наблюдалась в этой задаче; начните команду заново.",
+    "approval": "Подтверждение не выдано или уже использовано.",
+    "precondition": "Предусловие инструмента не выполнено; проверьте состояние окна.",
+    "policy": "Действие запрещено политикой разрешений.",
+}
+
+PLAN_STATES: dict[str, tuple[UiState, ShellEvent]] = {
+    "finished": (UiState.SUCCESS, ShellEvent.SUCCEEDED),
+    "simulated": (UiState.SUCCESS, ShellEvent.SUCCEEDED),
+    "no_action": (UiState.ERROR, ShellEvent.FAILED),
+    "error": (UiState.ERROR, ShellEvent.FAILED),
+    "limit": (UiState.ERROR, ShellEvent.FAILED),
+    "cancelled": (UiState.CANCELLED, ShellEvent.CANCELLED),
+    "timeout": (UiState.ERROR, ShellEvent.TIMED_OUT),
+}
 
 
 def label(text: str, name: str = "") -> QLabel:
@@ -53,11 +83,14 @@ class MainWindow(QMainWindow):
         self.config = config
         self.log = log
         self.state = UiState.IDLE
-        self.worker: DemoWorker | None = None
+        self.running = False
         self.permission_workbench: PermissionWorkbench | None = None
         self.planner_window: PlannerWindow | None = None
+        self.voice: VoicePanel | None = None
         self._request_id: UUID | None = None
         self._cancel_requested = False
+        self._in_close = False
+        self._waits = 0
         self._closing = False
         self._closed = False
         self.setWindowTitle("JARVIS • Desktop Preview")
@@ -66,6 +99,9 @@ class MainWindow(QMainWindow):
         load_fonts()
         self.setStyleSheet(STYLESHEET)
         self._build_ui()
+        # One planner session for the whole application, so the microphone, the command bar
+        # and the planner window share one registry, permission engine and audit log.
+        self._ensure_planner()
         self._set_state(UiState.IDLE)
         self._record(ShellEvent.STARTED)
         self.command_input.setFocus()
@@ -176,7 +212,13 @@ class MainWindow(QMainWindow):
             entry.setToolTip(f"{title}: открыть окно инструментов и разрешений")
             entry.clicked.connect(self.open_permissions)
             apps_body.addWidget(entry)
-        apps_body.addWidget(label("Действия проходят проверку разрешений", "sectionHint"))
+        apps_body.addWidget(
+            label(
+                "Открыть можно любое установленное приложение: назовите его. "
+                "Действия проходят проверку разрешений.",
+                "sectionHint",
+            )
+        )
         left.addWidget(self.apps_card, 2)
 
         self.center_column = QWidget()
@@ -200,32 +242,47 @@ class MainWindow(QMainWindow):
         keyboard = IconButton("keyboard", "Ввести команду с клавиатуры")
         keyboard.clicked.connect(lambda: self._navigate("chat"))
         voice_controls.addWidget(keyboard)
-        self.microphone_button = QPushButton()
+        self.microphone_button = HoldButton("")
         self.microphone_button.setObjectName("microphone")
         self.microphone_button.setIcon(line_icon("mic", "#81bfff", 32))
         self.microphone_button.setIconSize(QSize(30, 30))
         self.microphone_button.setFixedSize(72, 72)
-        self.microphone_button.setAccessibleName("Открыть голосовой ввод в планировщике")
+        self.microphone_button.setAccessibleName("Удерживайте для записи команды")
         self.microphone_button.setToolTip(
-            "Открыть голосовой ввод. Запись начнётся по удержанию кнопки."
+            "Удерживайте кнопку или пробел на ней и говорите. "
+            "Распознанная команда запускается сразу."
         )
-        self.microphone_button.clicked.connect(self.open_planner)
         voice_controls.addWidget(self.microphone_button)
-        self.stop_button = IconButton("close", "Остановить демонстрацию (Esc)")
+        self.stop_button = IconButton("close", "Остановить выполнение (Esc)")
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop)
         voice_controls.addWidget(self.stop_button)
         voice_controls.addStretch()
         center.addLayout(voice_controls)
-        voice_hint = label("Голос в планировщике · запись только по удержанию", "muted")
-        voice_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        center.addWidget(voice_hint)
+        self.voice_hint = label("Микрофон выключен. Запись только по удержанию.", "muted")
+        self.voice_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.voice_hint.setAccessibleName("Состояние микрофона")
+        center.addWidget(self.voice_hint)
         center.addSpacing(14)
-        self.demo_mode = QComboBox()
-        self.demo_mode.addItems(["Обычная демонстрация", "Проверить ошибку"])
-        self.demo_mode.setAccessibleName("Сценарий демонстрации")
-        self.demo_mode.setMaximumWidth(230)
-        center.addWidget(self.demo_mode, 0, Qt.AlignmentFlag.AlignHCenter)
+        controls = QHBoxLayout()
+        controls.setSpacing(10)
+        controls.addStretch()
+        self.run_mode = QComboBox()
+        self.run_mode.addItems(["Выполнять действия", "Только симуляция"])
+        self.run_mode.setAccessibleName("Режим выполнения")
+        self.run_mode.setMaximumWidth(210)
+        controls.addWidget(self.run_mode)
+        self.provider_mode = QComboBox()
+        self.provider_mode.addItems(["Офлайн: учебные команды", "OpenAI: любые команды"])
+        self.provider_mode.setAccessibleName("Планировщик команд")
+        self.provider_mode.setMaximumWidth(230)
+        controls.addWidget(self.provider_mode)
+        controls.addStretch()
+        center.addLayout(controls)
+        self.autonomy = QCheckBox("Автономно: не подтверждать каждый шаг")
+        self.autonomy.setChecked(True)
+        self.autonomy.setAccessibleName("Автономный режим")
+        center.addWidget(self.autonomy, 0, Qt.AlignmentFlag.AlignHCenter)
         command_label = label("Ваша команда", "sectionHint")
         center.addWidget(command_label)
         command_frame = QFrame()
@@ -249,12 +306,14 @@ class MainWindow(QMainWindow):
         self.submit_button.setIcon(line_icon("arrow", "#e4eeff", 28))
         self.submit_button.setIconSize(QSize(26, 26))
         self.submit_button.setFixedSize(42, 42)
-        self.submit_button.setAccessibleName("Запустить демо")
-        self.submit_button.setToolTip("Запустить демо · Ctrl+Enter")
+        self.submit_button.setAccessibleName("Выполнить команду")
+        self.submit_button.setToolTip("Выполнить команду · Ctrl+Enter")
         self.submit_button.clicked.connect(self.submit)
         command_layout.addWidget(self.submit_button)
         center.addWidget(command_frame)
-        self.validation_label = label("Текстовый ввод — демо · Ctrl+Enter для запуска", "inputHint")
+        self.validation_label = label(
+            "Скажите или напишите команду · Ctrl+Enter для запуска", "inputHint"
+        )
         self.validation_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         center.addWidget(self.validation_label)
 
@@ -269,12 +328,12 @@ class MainWindow(QMainWindow):
         right.addWidget(self.calendar_card, 3)
 
         self.task_card, task_body = self._card("Текущая задача")
-        self._demo_completed = 0
+        self._completed = 0
         summary_row = QHBoxLayout()
         summary_icon = label("")
         summary_icon.setPixmap(line_icon("check", "#70e2c7", 26).pixmap(26, 26))
         summary_row.addWidget(summary_icon)
-        self.summary_label = label("Завершено демонстраций: 0")
+        self.summary_label = label("Завершено команд: 0")
         summary_row.addWidget(self.summary_label, 1)
         task_body.addLayout(summary_row)
         self.progress = QProgressBar()
@@ -290,7 +349,7 @@ class MainWindow(QMainWindow):
         self.transcript.setPlaceholderText("Начните с одной команды")
         self.transcript.setFixedHeight(62)
         task_body.addWidget(self.transcript)
-        self.action_label = label("Её текст и результат появятся здесь.", "muted")
+        self.action_label = label("Её текст и факты выполнения появятся здесь.", "muted")
         self.action_label.setAccessibleName("Результат задачи")
         task_body.addWidget(self.action_label)
         task_body.addStretch()
@@ -403,8 +462,8 @@ class MainWindow(QMainWindow):
         self.log.record(event, self._request_id)
         self.activity.append_event(event)
         if event == ShellEvent.SUCCEEDED:
-            self._demo_completed += 1
-            self.summary_label.setText(f"Завершено демонстраций: {self._demo_completed}")
+            self._completed += 1
+            self.summary_label.setText(f"Завершено команд: {self._completed}")
 
     def _set_state(self, state: UiState) -> None:
         self.state = state
@@ -418,7 +477,11 @@ class MainWindow(QMainWindow):
     def _set_busy(self, busy: bool) -> None:
         self.command_input.setReadOnly(busy)
         self.submit_button.setEnabled(not busy)
-        self.demo_mode.setEnabled(not busy)
+        self.run_mode.setEnabled(not busy)
+        self.provider_mode.setEnabled(not busy)
+        self.autonomy.setEnabled(not busy)
+        self.planner_button.setEnabled(not busy)
+        self.permissions_button.setEnabled(not busy)
         self.stop_button.setEnabled(busy)
         self.progress.setRange(0, 0 if busy else 1)
         if not busy:
@@ -426,38 +489,166 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def submit(self) -> None:
-        if self.worker is not None or self._closing:
+        if self.running or self._closing:
             return
         command = self.command_input.toPlainText().strip()
         if not command or len(command) > 4000:
             self.validation_label.setText("Введите команду длиной от 1 до 4 000 символов.")
             return
-        self.validation_label.setText(
-            "Текст принят только для демонстрации. Он не записывается в журнал."
-        )
+        planner = self._ensure_planner()
+        if planner is None:
+            return
+        if planner.worker is not None:
+            self.validation_label.setText("Планировщик уже выполняет задачу.")
+            return
+        cloud = self.provider_mode.currentIndex() == 1
+        if cloud and not self._cloud_ready(planner):
+            return
+        # A hidden planner still owns the session; this window shows its prompts and results.
+        planner.prompt_parent = self
         self.transcript.setPlainText(command)
+        self.validation_label.setText(
+            "Команда выполняется по-настоящему."
+            if self.run_mode.currentIndex() == 0
+            else "Симуляция: проверки разрешений без реальных действий."
+        )
+        self._begin()
+        self._waits = 0
+        self.action_label.setText("Планирование первого шага…")
+        self._launch(command, cloud)
+
+    def _launch(self, command: str, cloud: bool) -> None:
+        """Start the run, waiting out the memory panel's own start-up read if it is busy."""
+        planner = self.planner_window
+        if planner is None or not self.running or self._cancel_requested:
+            return
+        if planner.memory.worker is not None and self._waits < 40:
+            # A command that lands while the memory store is being read waits for it.
+            self._waits += 1
+            self.action_label.setText("Память загружается; команда запустится сама…")
+            QTimer.singleShot(50, lambda: self._launch(command, cloud))
+            return
+        started = planner.run_command(
+            command,
+            execute=self.run_mode.currentIndex() == 0,
+            autonomous=self.autonomy.isChecked(),
+            cloud=cloud,
+        )
+        if not started:
+            self._reset()
+            self._set_state(UiState.ERROR)
+            self.action_label.setText(planner.status.text())
+            self._record(ShellEvent.FAILED)
+            self._request_id = None
+
+    def _ensure_planner(self) -> PlannerWindow | None:
+        """One planner session owns the registry, engine, audit and approval authority."""
+        if self.planner_window is None:
+            try:
+                planner = PlannerWindow(self.config, self)
+            except Exception:
+                self.action_label.setText(
+                    "Не удалось открыть планировщик. Проверьте журнал и зависимости."
+                )
+                self._set_state(UiState.ERROR)
+                return None
+            planner.command.setPlainText(self.command_input.toPlainText())
+            planner.finished.connect(self._planner_closed)
+            planner.progress_event.connect(self._planner_progress)
+            planner.task_finished.connect(self._planner_finished)
+            self.planner_window = planner
+            self.voice = planner.voice
+            # The assistant answers out loud from this window; the planner keeps the switch.
+            self.voice.speech_enabled.setChecked(True)
+            self.voice.attach(self.microphone_button)
+            self.voice.message.connect(self.voice_hint.setText)
+            self.voice.transcript_ready.connect(self._spoken)
+        self.planner_window.setStyleSheet(self.styleSheet())
+        return self.planner_window
+
+    @Slot(str)
+    def _spoken(self, command: str) -> None:
+        """A finished transcript runs at once: speaking the command is the submission."""
+        if not command.strip() or self.running or self._closing:
+            return
+        self.command_input.setPlainText(command)
+        self.submit()
+
+    def _cloud_ready(self, planner: PlannerWindow) -> bool:
+        """Cloud use needs a model identifier and an explicit transmission consent."""
+        if planner.cloud_consent.isChecked() and planner.model.text().strip():
+            return True
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Отправка команды в OpenAI")
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        body = QVBoxLayout(dialog)
+        body.addWidget(
+            label(
+                "Облачный планировщик отправляет в OpenAI текст команды, ваши уточнения и "
+                "результаты инструментов — даже в режиме симуляции. Запросы тарифицируются "
+                "отдельно. store=false не означает отсутствие хранения у провайдера."
+            )
+        )
+        body.addWidget(label("Идентификатор модели Responses API:"))
+        model = QPlainTextEdit(planner.model.text() or self.config.planner_model)
+        model.setFixedHeight(46)
+        body.addWidget(model)
+        body.addWidget(
+            label(
+                "Ключ вводите сами в терминале: python -m jarvis.security.credentials set — "
+                "он хранится в Windows Credential Locker и не попадает в команду или журнал."
+            )
+        )
+        consent = QCheckBox("Разрешаю отправку команды, уточнений и результатов в OpenAI")
+        body.addWidget(consent)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        body.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            self.validation_label.setText("Облачный режим не подтверждён.")
+            return False
+        identifier = model.toPlainText().strip()
+        if not consent.isChecked() or not identifier:
+            self.validation_label.setText("Нужны согласие на передачу и идентификатор модели.")
+            return False
+        planner.model.setText(identifier)
+        planner.cloud_consent.setChecked(True)
+        return True
+
+    def _begin(self) -> None:
         self._request_id = uuid4()
         self._cancel_requested = False
+        self.running = True
         self._set_busy(True)
         self._set_state(UiState.THINKING)
-        self.action_label.setText("План демо: подготовить → подождать в фоне → показать итог.")
         self._record(ShellEvent.SUBMITTED)
-        worker = DemoWorker(
-            self.config.demo_duration_ms,
-            self.config.task_timeout_ms,
-            self.demo_mode.currentIndex() == 1,
-            self,
-        )
-        self.worker = worker
-        worker.executing.connect(self._executing)
-        worker.finished.connect(self._finished)
-        worker.start()
 
-    @Slot()
-    def _executing(self) -> None:
-        if self.worker is not None and not self._cancel_requested:
+    def _reset(self) -> None:
+        """Release the UI. The request id outlives this so the closing event stays correlated."""
+        self.running = False
+        self._set_busy(False)
+
+    @Slot(str, object)
+    def _planner_progress(self, kind: str, value: object) -> None:
+        if self._cancel_requested:
+            return
+        if not self.running:
+            # A run started from the planner window itself; mirror it here too.
+            self._begin()
+        if kind == "thinking":
+            self._set_state(UiState.THINKING)
+            self.action_label.setText(f"Планирование шага {value}…")
+        elif kind == "executing":
             self._set_state(UiState.EXECUTING)
+            self.action_label.setText(f"Выполняется: {value}")
             self._record(ShellEvent.EXECUTING)
+        elif kind == "tool" and isinstance(value, Step):
+            self.action_label.setText(
+                f"{value.tool}: {value.outcome.status.value} ({value.outcome.error.value})"
+            )
 
     @Slot()
     def stop(self) -> None:
@@ -465,49 +656,44 @@ class MainWindow(QMainWindow):
             self.planner_window.stop()
         if self.permission_workbench is not None:
             self.permission_workbench.stop()
-        if self.worker is not None and not self._cancel_requested:
+        if self.running and not self._cancel_requested:
             self._cancel_requested = True
-            self.worker.cancel()
             self.stop_button.setEnabled(False)
-            self.action_label.setText("Остановка демонстрации…")
+            self.action_label.setText("Остановка; уже выданные действия не отзываются…")
             self._record(ShellEvent.CANCEL_REQUESTED)
+            if self.planner_window is None or self.planner_window.worker is None:
+                # Stopped before the planner started: nothing else will report this task.
+                self._planner_finished("cancelled")
 
-    @Slot()
-    def _finished(self) -> None:
-        worker = self.worker
-        if worker is None:
+    @Slot(str)
+    def _planner_finished(self, status: str) -> None:
+        if not self.running:
             return
-        worker.wait()
-        outcome = DemoOutcome.CANCELLED if self._cancel_requested else worker.outcome
-        self.worker = None
-        worker.deleteLater()
-        states = {
-            DemoOutcome.SUCCESS: (UiState.SUCCESS, ShellEvent.SUCCEEDED),
-            DemoOutcome.ERROR: (UiState.ERROR, ShellEvent.FAILED),
-            DemoOutcome.CANCELLED: (UiState.CANCELLED, ShellEvent.CANCELLED),
-            DemoOutcome.TIMEOUT: (UiState.ERROR, ShellEvent.TIMED_OUT),
-        }
-        state, event = states[outcome]
-        self._set_busy(False)
+        state, event = PLAN_STATES.get(status, (UiState.ERROR, ShellEvent.FAILED))
+        self._reset()
         self._set_state(state)
-        self.action_label.setText(EVENT_TEXT[event])
+        result = self.planner_window.last_result if self.planner_window is not None else None
+        rows = [result.summary if result is not None else EVENT_TEXT[event]]
+        if result is not None and result.error in ERROR_ADVICE:
+            rows.append(ERROR_ADVICE[result.error])
+        self.action_label.setText("\n".join(rows))
         self._record(event)
         self._request_id = None
         self.command_input.setFocus()
-        self.task_finished.emit(outcome.value)
-        if self._closing:
+        self.task_finished.emit(status)
+        if self._closing and not self._in_close:
             self.close()
 
     def shutdown(self) -> None:
-        """Fallback for application-level quit; the demo's Event makes the join immediate."""
+        """Fallback for application-level quit; planner shutdown joins its worker thread."""
+        if self.running:
+            self.stop()
         if self.planner_window is not None:
             self.planner_window.shutdown()
         if self.permission_workbench is not None:
             self.permission_workbench.shutdown()
-        if self.worker is not None:
-            self.stop()
-            self.worker.wait()
-            self._finished()
+        self._reset()
+        self._request_id = None
         if not self._closed:
             self._record(ShellEvent.CLOSED)
             self.log.close()
@@ -515,8 +701,14 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._closing = True
-        if self.worker is not None:
-            self.stop()
+        if self.running:
+            self._in_close = True
+            try:
+                self.stop()
+            finally:
+                self._in_close = False
+        if self.running:
+            # A planner thread is still draining; its completion closes this window.
             event.ignore()
             return
         self.shutdown()
@@ -524,7 +716,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def open_permissions(self) -> None:
-        if self.worker is not None or self._closing:
+        if self.running or self._closing:
             return
         if self.permission_workbench is None:
             try:
@@ -552,20 +744,17 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def open_planner(self) -> None:
-        if self.worker is not None or self._closing:
+        if self.running or self._closing:
             return
-        if self.planner_window is None:
-            try:
-                self.planner_window = PlannerWindow(self.config, self)
-            except Exception:
-                self.action_label.setText(
-                    "Не удалось открыть планировщик. Проверьте журнал и зависимости."
-                )
-                return
-            self.planner_window.command.setPlainText(self.command_input.toPlainText())
-            self.planner_window.finished.connect(self._planner_closed)
-        self.planner_window.setStyleSheet(self.styleSheet())
-        self.planner_window.show()
+        planner = self._ensure_planner()
+        if planner is None:
+            return
+        # A visible planner owns its own prompts again.
+        planner.prompt_parent = planner
+        typed = self.command_input.toPlainText()
+        if typed.strip():
+            planner.command.setPlainText(typed)
+        planner.show()
 
     @Slot(int)
     def _planner_closed(self, result: int) -> None:
@@ -573,3 +762,4 @@ class MainWindow(QMainWindow):
             self.planner_window.shutdown()
             self.planner_window.deleteLater()
             self.planner_window = None
+            self.voice = None

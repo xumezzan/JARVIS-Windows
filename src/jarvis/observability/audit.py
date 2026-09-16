@@ -34,6 +34,7 @@ class ErrorCode(StrEnum):
     AUDIT = "audit_unavailable"
     UNSUPPORTED_PLATFORM = "unsupported_platform"
     APPLICATION_MISSING = "application_missing"
+    APPLICATION_AMBIGUOUS = "application_ambiguous"
     TARGET_CHANGED = "target_changed"
     CONTROL_UNSUPPORTED = "control_unsupported"
     NATIVE_TIMEOUT = "native_timeout"

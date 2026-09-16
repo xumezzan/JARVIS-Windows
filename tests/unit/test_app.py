@@ -8,17 +8,17 @@ import pytest
 from jarvis.app import main
 
 
-def test_help_explains_demo_scope(capsys: pytest.CaptureFixture[str]) -> None:
+def test_help_explains_scope(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as error:
         main(["--help"])
     assert error.value.code == 0
-    assert "no command execution" in capsys.readouterr().out
+    assert "simulated offline command" in capsys.readouterr().out
 
 
 def test_invalid_configuration_fails_before_gui(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setenv("JARVIS_DEMO_DURATION_MS", "invalid")
+    monkeypatch.setenv("JARVIS_TASK_TIMEOUT_MS", "invalid")
     assert main([]) == 2
     assert "configuration error" in capsys.readouterr().err
 
