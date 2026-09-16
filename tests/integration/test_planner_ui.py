@@ -258,3 +258,75 @@ def test_real_browser_observation_drives_next_registered_step(qtbot: QtBot, tmp_
         window.shutdown()
         site.close()
     assert host._thread is not None and not host._thread.is_alive()
+
+
+def test_a_field_the_planner_never_observed_is_rejected(qtbot: QtBot, tmp_path: Path) -> None:
+    """Listing one window's fields does not authorise typing into a different field."""
+    probe = WindowsProbe()
+    observed = target()
+    invented = observed.editor
+    assert invented is not None
+    window = PlannerWindow(
+        AppConfig(tmp_path),
+        windows_backend=probe,
+        provider=Scripted(
+            [
+                call("windows.get_open_windows", {}),
+                call(
+                    "windows.type_text",
+                    {
+                        "target": observed.model_dump(),
+                        "editor": invented.model_copy(update={"handle": 4242}).model_dump(),
+                        "text": "x",
+                    },
+                ),
+            ]
+        ),
+    )
+    qtbot.addWidget(window)
+    try:
+        window.simulation.setChecked(False)
+        window.command.setPlainText("test")
+        with qtbot.waitSignal(window.task_finished) as result:
+            window.start()
+        assert result.args == ["error"] and "unobserved_target" in window.status.text()
+        assert [item.operation for item in probe.calls] == ["list"]
+        assert window.approval_dialog is None
+    finally:
+        window.shutdown()
+
+
+def test_a_listed_field_can_be_typed_into_after_approval(qtbot: QtBot, tmp_path: Path) -> None:
+    probe = WindowsProbe()
+    observed = target()
+    editor = observed.editor
+    assert editor is not None
+    window = PlannerWindow(
+        AppConfig(tmp_path),
+        windows_backend=probe,
+        provider=Scripted(
+            [
+                call("windows.get_open_windows", {}),
+                call("windows.get_text_fields", {"target": observed.model_dump()}),
+                call(
+                    "windows.type_text",
+                    {
+                        "target": observed.model_dump(),
+                        "editor": editor.model_dump(),
+                        "text": "привет",
+                    },
+                ),
+            ]
+        ),
+    )
+    qtbot.addWidget(window)
+    try:
+        window.simulation.setChecked(False)
+        window.command.setPlainText("test")
+        with qtbot.waitSignal(window.task_finished, timeout=15000) as result:
+            assert window.run_command("test", execute=True, autonomous=True)
+        assert result.args == ["finished"], window.status.text()
+        assert "windows.type_text: SUCCESS" in window.output.toPlainText()
+        assert [item.operation for item in probe.calls].count("type") == 1
+    finally:
+        window.shutdown()

@@ -20,6 +20,7 @@ from jarvis.tools.base import ToolError
 from jarvis.tools.windows import (
     AppId,
     EditorTarget,
+    ListFields,
     NativeRequest,
     TypeText,
     WindowsResult,
@@ -293,32 +294,69 @@ class NativeDesktop:
             if tab.iface_selection_item.CurrentIsSelected
         )
 
-    def editor(self, window: Any) -> Any:
-        # A Find/Save dialog in the same process is not a document editor.
-        if str(window.element_info.class_name).lower() != "notepad":
-            raise ToolError("control_unsupported")
-        candidates = [
-            control
-            for control in window.descendants()
-            if control.element_info.control_type in ("Edit", "Document")
-            and control.element_info.class_name.lower() in EDIT_CLASSES
-            and control.is_visible()
-            and control.is_enabled()
-        ]
-        if len(candidates) != 1:
-            raise ToolError("control_unsupported")
-        editor = candidates[0]
-        # Require a real native edit control for directed insertion, including modern RichEdit.
-        handle = int(editor.handle or 0)
+    def writable(self, control: Any) -> bool:
+        """A password box or a read-only view is never a typing target, whatever was asked.
+
+        Anything that cannot answer these questions is refused rather than guessed at.
+        """
+        try:
+            if bool(control.element_info.element.CurrentIsPassword):
+                return False
+            return not bool(control.iface_value.CurrentIsReadOnly)
+        except Exception:
+            return False
+
+    def controls(self, window: Any) -> list[Any]:
+        """Visible, writable text fields of one window; bounded and asked for by type."""
+        found: list[Any] = []
+        for kind in ("Edit", "Document"):
+            try:
+                found.extend(window.descendants(control_type=kind))
+            except Exception:
+                continue
+            if len(found) >= 40:
+                break
+        usable: list[Any] = []
+        for control in found[:40]:
+            try:
+                if control.is_visible() and control.is_enabled() and self.writable(control):
+                    usable.append(control)
+            except Exception:
+                continue
+            if len(usable) == 20:
+                break
+        return usable
+
+    def native_handle(self, window: Any, control: Any) -> int:
+        """The control's own window, only when it really belongs to this window's process."""
+        handle = int(control.handle or 0)
+        if not handle:
+            return 0
         owner = wintypes.DWORD()
         self.user32.GetWindowThreadProcessId(handle, ctypes.byref(owner))
-        if (
-            not handle
-            or owner.value != window.process_id()
-            or not self.user32.IsChild(window.handle, handle)
-        ):
+        if owner.value != window.process_id() or not self.user32.IsChild(window.handle, handle):
             raise ToolError("control_unsupported")
-        return editor
+        return handle
+
+    def editor(self, window: Any) -> Any:
+        """The one unambiguous field of a window; several fields must be chosen explicitly."""
+        candidates = self.controls(window)
+        if len(candidates) != 1:
+            raise ToolError("control_unsupported")
+        return candidates[0]
+
+    def chosen_editor(self, window: Any, wanted: EditorTarget) -> Any:
+        """The one field of this window that still matches; ambiguity is refused."""
+        matches = []
+        for control in self.controls(window):
+            try:
+                if self.editor_target(window, control).identity == wanted.identity:
+                    matches.append(control)
+            except Exception:
+                continue
+        if len(matches) != 1:
+            raise ToolError("target_changed")
+        return matches[0]
 
     def read(self, editor: Any) -> str:
         try:
@@ -333,7 +371,8 @@ class NativeDesktop:
             control_type=cast("Any", editor.element_info.control_type),
             automation_id=str(editor.element_info.automation_id),
             class_name=str(editor.element_info.class_name),
-            handle=int(editor.handle),
+            handle=int(editor.handle or 0),
+            name=str(editor.element_info.name or "")[:200],
             selected_tabs=self.selected_tabs(window),
         )
 
@@ -343,13 +382,14 @@ class NativeDesktop:
         app = app_key(executable)
         editor_target = None
         empty = False
-        if include_editor and app == "notepad":
+        if include_editor:
             try:
                 editor = self.editor(window)
                 editor_target = self.editor_target(window, editor)
                 empty = self.read(editor) == ""
             except Exception:
-                # Unsupported editors remain focusable; they can never be typing targets.
+                # A window with no single obvious field still focuses; its fields are listed
+                # explicitly instead of guessed at.
                 editor_target = None
         return WindowTarget(
             app=app,
@@ -389,14 +429,58 @@ class NativeDesktop:
         except Exception:
             raise ToolError("target_changed") from None
 
-    def resolve_editor(self, target: WindowTarget, *, empty: bool) -> Any:
-        window = self.resolve(target, check_title=empty)
-        editor = self.editor(window)
-        if self.editor_target(window, editor) != target.editor:
+    def message(self, handle: int, code: int, first: int, second: ctypes.c_void_p) -> None:
+        result = ctypes.c_size_t()
+        # SMTO_ABORTIFHUNG, 1s. No Enter/submit key is ever sent.
+        # The application may finish an already issued message after helper termination.
+        if not self.user32.SendMessageTimeoutW(
+            handle, code, first, second, 0x0002, 1000, ctypes.byref(result)
+        ):
+            raise ToolError("native_failure")
+
+    def write(self, window: Any, editor: Any, value: str, overwrite: bool) -> None:
+        """One directed write. Never global keys, clipboard, coordinates or a submit key."""
+        handle = self.native_handle(window, editor)
+        if handle:
+            if overwrite:
+                # EM_SETSEL over the whole field, so replacing really replaces. Selecting
+                # is a message to this exact control, not a key press anyone else can see.
+                self.message(handle, 0x00B1, 0, ctypes.c_void_p(-1))
+            buffer = ctypes.create_unicode_buffer(value)
+            # EM_REPLACESEL with undo enabled.
+            self.message(handle, 0x00C2, 1, ctypes.cast(buffer, ctypes.c_void_p))
+            return
+        # A field with no window of its own, as in browser and Electron user interfaces:
+        # the value pattern is the application's own supported way to set the text.
+        try:
+            editor.iface_value.SetValue(value)
+        except Exception:
+            raise ToolError("control_unsupported") from None
+
+    def resolve_editor(self, args: TypeText) -> tuple[Any, Any]:
+        """Re-observe the exact window and field, and refuse to destroy unseen content."""
+        window = self.resolve(args.target, check_title=False)
+        editor = self.chosen_editor(window, args.field)
+        if not self.writable(editor):
+            raise ToolError("control_unsupported")
+        if not args.overwrite and self.read(editor) != "":
             raise ToolError("target_changed")
-        if empty and self.read(editor) != "":
-            raise ToolError("target_changed")
-        return editor
+        return window, editor
+
+    @staticmethod
+    def typing(request: NativeRequest) -> TypeText:
+        """Re-validate the typing request inside the helper, never trusting the caller."""
+        if request.target is None:
+            raise ToolError("native_failure")
+        try:
+            return TypeText(
+                target=request.target,
+                editor=request.editor,
+                text=request.text or "",
+                overwrite=request.overwrite,
+            )
+        except Exception:
+            raise ToolError("native_failure") from None
 
     def dispatch(self, request: NativeRequest) -> WindowsResult:
         match request.operation:
@@ -437,11 +521,21 @@ class NativeDesktop:
                 if request.target is None:
                     raise ToolError("native_failure")
                 if request.text is not None:
-                    TypeText(target=request.target, text=request.text)
-                    self.resolve_editor(request.target, empty=True)
+                    self.resolve_editor(self.typing(request))
                 else:
                     self.resolve(request.target)
                 return WindowsResult(target=request.target)
+            case "fields":
+                if request.target is None:
+                    raise ToolError("native_failure")
+                window = self.resolve(request.target, check_title=False)
+                ListFields(target=request.target)
+                return WindowsResult(
+                    target=request.target,
+                    editors=[
+                        self.editor_target(window, control) for control in self.controls(window)
+                    ],
+                )
             case "focus":
                 if request.target is None:
                     raise ToolError("native_failure")
@@ -456,29 +550,23 @@ class NativeDesktop:
             case "type":
                 if request.target is None or request.text is None:
                     raise ToolError("native_failure")
-                args = TypeText(target=request.target, text=request.text)
-                editor = self.resolve_editor(args.target, empty=True)
-                buffer = ctypes.create_unicode_buffer(args.text)
-                result = ctypes.c_size_t()
-                # EM_REPLACESEL, undo enabled, SMTO_ABORTIFHUNG, 1s. No Enter/submit.
-                # The application may finish an already issued message after helper termination.
-                if not self.user32.SendMessageTimeoutW(
-                    editor.handle,
-                    0x00C2,
-                    1,
-                    ctypes.cast(buffer, ctypes.c_void_p),
-                    0x0002,
-                    1000,
-                    ctypes.byref(result),
-                ):
-                    raise ToolError("native_failure")
-                editor = self.resolve_editor(args.target, empty=False)
+                args = self.typing(request)
+                window, editor = self.resolve_editor(args)
+                self.write(window, editor, args.text, args.overwrite)
+                editor = self.chosen_editor(
+                    self.resolve(args.target, check_title=False), args.field
+                )
                 return WindowsResult(target=args.target, text_sha256=text_digest(self.read(editor)))
             case "verify":
                 if request.target is None or request.result is None:
                     raise ToolError("native_failure")
                 if request.result.text_sha256 is not None:
-                    editor = self.resolve_editor(request.target, empty=False)
+                    # A read-back names the same field; it carries no text of its own.
+                    wanted = request.editor or request.target.editor
+                    if wanted is None:
+                        raise ToolError("native_failure")
+                    window = self.resolve(request.target, check_title=False)
+                    editor = self.chosen_editor(window, wanted)
                     return WindowsResult(
                         target=request.target, text_sha256=text_digest(self.read(editor))
                     )

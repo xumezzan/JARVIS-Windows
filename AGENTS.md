@@ -65,8 +65,15 @@ name through the Windows apps folder, Start menu, App Paths and system tools, re
 ambiguous name, and never launch a script host or interpreter by name. A launched window is
 identified by its own executable, never by the requested word. No user text ever becomes a
 path, argument or command line.
-Typing is CONFIRM, only into an observed empty Notepad editor; preserve exact process,
-window, editor and selected-tab identity. Do not add global keys or clipboard fallbacks.
+Typing is CONFIRM and reaches only a field the caller observed in this task, in a window
+identified exactly by process, start time, handle and runtime id. A field is matched by its
+role, class, automation id, name and selected tab, because an application may rebuild the
+control and change its handle without changing the field; an ambiguous or missing match is
+refused. Password and read-only fields are never targets, and no observation ever returns
+the content of a field. Existing content stays unless the caller asks to replace it, and
+replacing selects the field with a directed message first. Write through the control's own
+window message when it has one, otherwise the application's value pattern. Do not add global
+keys, clipboard, coordinates or a submit key.
 Preserve exact immutable action snapshots, UI-only approval authority, atomic token consumption,
 and fail-closed durable audit before adapter calls. Simulation must never call adapter hooks.
 Update documentation with commands, actual results, decisions, and limitations.
