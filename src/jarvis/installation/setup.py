@@ -235,6 +235,17 @@ def check_slot(slot: Path, model: str, root: Path) -> dict[str, Any]:
     return dict(checks)
 
 
+def shown_window(receipt: object, launched: int) -> bool:
+    """Bind the receipt to the launched process; a venv redirector reports its own child."""
+    if not isinstance(receipt, dict):
+        return False
+    return (
+        receipt.get("platform") == "windows"
+        and receipt.get("visible") is True
+        and launched in (receipt.get("pid"), receipt.get("ppid"))
+    )
+
+
 def launch(slot: Path, model: str, root: Path) -> None:
     """Observe a real shown Qt window via a fresh PID-bound receipt; leave it running."""
     report = root / "startup.json"
@@ -259,7 +270,7 @@ def launch(slot: Path, model: str, root: Path) -> None:
         while time.monotonic() < deadline and process.poll() is None:
             try:
                 value = json.loads(report.read_text(encoding="utf-8"))
-                if value == {"pid": process.pid, "platform": "windows", "visible": True}:
+                if shown_window(value, process.pid):
                     observed = True
                     return
             except (OSError, ValueError):
