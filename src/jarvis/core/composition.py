@@ -15,6 +15,8 @@ from pathlib import Path
 from jarvis.browser.host import BrowserHost
 from jarvis.config import AppConfig
 from jarvis.connectors.base import ConnectorRegistry
+from jarvis.connectors.microsoft.calendar import CalendarConnector
+from jarvis.connectors.microsoft.tools import register_calendar
 from jarvis.core.workflow.store import WorkflowStore
 from jarvis.files.policy import FilePolicy
 from jarvis.knowledge.store import KnowledgeStore
@@ -81,6 +83,9 @@ def build(
     register_files(registry, files, LocalFiles())
     session = mail_session or MailSession()
     register_outlook(registry, session)
+    calendar = CalendarConnector(session)
+    register_calendar(registry, calendar, matrix)
+    connectors.add(calendar)
     audit = AuditLog(config.data_dir / "audit.sqlite3")
     approvals = ApprovalStore()
     engine = PermissionEngine(registry, approvals, audit)

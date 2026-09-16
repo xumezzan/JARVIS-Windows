@@ -25,6 +25,8 @@ from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Mode, Risk, Status
 from jarvis.tools.registry import ToolRegistry
 
+MICROSOFT = ("outlook.", "calendar.")
+
 Approve = Callable[[Action], Awaitable[ApprovalToken | None]]
 Clarify = Callable[[str], Awaitable[str | None]]
 
@@ -261,11 +263,12 @@ class Runner:
 
     def _observed_target(self, action: Action) -> bool:
         args = json.loads(action.payload)
-        if action.tool.startswith("outlook.") and action.tool != "outlook.account":
+        # Mail and calendar are one account, so either surface may supply the observation.
+        if action.tool.startswith(MICROSOFT) and action.tool != "outlook.account":
             observations = [
                 json.loads(step.outcome.result_json or "{}")
                 for step in self.steps
-                if step.tool.startswith("outlook.") and step.outcome.status is Status.SUCCESS
+                if step.tool.startswith(MICROSOFT) and step.outcome.status is Status.SUCCESS
             ]
             if not any(value.get("account") == args.get("account") for value in observations):
                 return False
@@ -276,6 +279,21 @@ class Runner:
                     if value.get("state") == "listed"
                     for row in json.loads(value.get("data", "[]"))
                     if isinstance(row, dict)
+                )
+            if action.tool in ("calendar.get", "calendar.update", "calendar.cancel"):
+                # A meeting is addressable only after this task has seen it listed, read
+                # or created; an identifier the model supplies on its own is refused.
+                listed = any(
+                    row.get("id") == args.get("event_id")
+                    for value in observations
+                    if value.get("state") == "listed"
+                    for row in json.loads(value.get("data", "[]"))
+                    if isinstance(row, dict)
+                )
+                return listed or any(
+                    value.get("event_id") == args.get("event_id")
+                    for value in observations
+                    if value.get("event_id")
                 )
             return True
         if "target" not in args or not action.tool.startswith(("browser.", "windows.")):
