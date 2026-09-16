@@ -16,11 +16,14 @@ from jarvis.browser.host import BrowserHost
 from jarvis.config import AppConfig
 from jarvis.connectors.base import ConnectorRegistry
 from jarvis.connectors.fireflies.connector import FirefliesConnector
+from jarvis.connectors.fireflies.mapping import MAPPERS as FIREFLIES_MAPPERS
 from jarvis.connectors.fireflies.tools import register_fireflies
 from jarvis.connectors.microsoft.calendar import CalendarConnector
+from jarvis.connectors.microsoft.mapping import MAPPERS as CALENDAR_MAPPERS
 from jarvis.connectors.microsoft.tools import register_calendar
 from jarvis.core.workflow.store import WorkflowStore
 from jarvis.files.policy import FilePolicy
+from jarvis.knowledge.harvest import GraphHarvester
 from jarvis.knowledge.store import KnowledgeStore
 from jarvis.mail.session import MailSession
 from jarvis.observability.audit import AuditLog
@@ -51,6 +54,7 @@ class Workbench:
     matrix: PermissionMatrix
     connectors: ConnectorRegistry
     knowledge: KnowledgeStore
+    harvester: GraphHarvester
     workflows: WorkflowStore
     browser_host: BrowserHost
     files: FilePolicy
@@ -77,6 +81,8 @@ def build(
     connectors = ConnectorRegistry()
     knowledge = KnowledgeStore(config.data_dir / "knowledge.sqlite3")
     workflows = WorkflowStore(config.data_dir / "workflows.sqlite3")
+    # Each connector says how to read its own answers; the harvester only applies them.
+    harvester = GraphHarvester(knowledge, {**CALENDAR_MAPPERS, **FIREFLIES_MAPPERS})
     host = browser_host or BrowserHost(NetworkPolicy(config.browser_origins))
     registry, outbox = local_registry()
     register_browser(registry, host, host.policy)
@@ -102,6 +108,7 @@ def build(
         matrix=matrix,
         connectors=connectors,
         knowledge=knowledge,
+        harvester=harvester,
         workflows=workflows,
         browser_host=host,
         files=files,

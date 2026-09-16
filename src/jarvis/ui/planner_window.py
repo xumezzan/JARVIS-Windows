@@ -303,6 +303,7 @@ class PlannerWindow(QDialog):
             self.limits,
             memory,
             context.knowledge,
+            self.bench.harvester,
         )
         self.worker.progress_event.connect(self._event)
         self.worker.prompt.connect(self._prompt)
