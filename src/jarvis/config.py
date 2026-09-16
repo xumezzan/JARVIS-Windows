@@ -14,7 +14,6 @@ from jarvis.tools.base import ToolError
 @dataclass(frozen=True)
 class AppConfig:
     data_dir: Path
-    demo_duration_ms: int = 2400
     task_timeout_ms: int = 10000
     activity_limit: int = 200
     browser_origins: tuple[str, ...] = DEFAULT_ORIGINS
@@ -30,7 +29,6 @@ class AppConfig:
         except ToolError:
             raise ValueError("Invalid browser origin policy.") from None
         for name, value, minimum, maximum in (
-            ("demo_duration_ms", self.demo_duration_ms, 100, 30000),
             ("task_timeout_ms", self.task_timeout_ms, 100, 60000),
             ("activity_limit", self.activity_limit, 10, 1000),
         ):
@@ -57,7 +55,6 @@ def load_config(environ: Mapping[str, str] | None = None) -> AppConfig:
 
     return AppConfig(
         data_dir=directory,
-        demo_duration_ms=integer("JARVIS_DEMO_DURATION_MS", 2400),
         task_timeout_ms=integer("JARVIS_TASK_TIMEOUT_MS", 10000),
         activity_limit=integer("JARVIS_ACTIVITY_LIMIT", 200),
         planner_model=env.get("JARVIS_PLANNER_MODEL", ""),

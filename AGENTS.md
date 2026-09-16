@@ -53,9 +53,18 @@ Use an isolated virtual environment. Install with `python -m pip install -e ".[d
 Run focused tests, fix failures, then full `python -m pytest`, `python -m ruff check .`,
 `python -m ruff format --check .`, and `python -m mypy`.
 Run `python -m jarvis --smoke-test` and build with `python -m build`.
-Use `python -m jarvis` for interactive GUI verification. The command shell remains a demo;
-the permissions and planner windows run local, Windows, and browser tools through PermissionEngine.
+Use `python -m jarvis` for interactive GUI verification. The command bar, the permissions
+window and the planner window all run local, Windows, and browser tools through PermissionEngine;
+the main window drives one planner session and hosts its prompts. Autonomous mode is an explicit,
+visible user setting: it replaces the per-step human review only, and the approval token is still
+issued by the UI-owned authority, audited before issue, expiring, single-use and bound to the exact
+action snapshot. BLOCKED and CRITICAL stay disabled.
 Windows calls belong in the killable helper, never directly in the UI/event loop.
+windows.open_app starts any installed application the user can start: resolve the spoken
+name through the Windows apps folder, Start menu, App Paths and system tools, refuse an
+ambiguous name, and never launch a script host or interpreter by name. A launched window is
+identified by its own executable, never by the requested word. No user text ever becomes a
+path, argument or command line.
 Typing is CONFIRM, only into an observed empty Notepad editor; preserve exact process,
 window, editor and selected-tab identity. Do not add global keys or clipboard fallbacks.
 Preserve exact immutable action snapshots, UI-only approval authority, atomic token consumption,
@@ -108,7 +117,9 @@ Preserve its one-use UI consent, Free/overage/quota checks, native credential he
 fixed endpoints and no retries. It accepts only preview/trusted summary text, never microphone audio.
 The explicit repository installer may download its reviewed Russian model; ordinary
 application startup and recording never download models. JARVIS_VOSK_MODEL is a local path.
-Transcript review and a separate submit are mandatory; voice only cancels, never approves.
+A finished transcript submits the command directly from the main window: this is the
+owner's explicit choice, and the recognised text stays visible. Voice still only commands and
+cancels, never approves: approval tokens come from the autonomy setting or the approval button.
 Preserve bounded PCM/pipes/timeouts, no audio/transcript persistence, no simultaneous
 recording and speech, and deterministic spoken summaries from engine outcomes.
 Ordinary tests use fixtures; real microphone/speaker checks require --run-voice, a native

@@ -1,15 +1,25 @@
 """Portable Windows schemas and registered operations. No native imports here."""
 
 from hashlib import sha256
-from typing import Literal, Protocol
+from typing import Annotated, Literal, Protocol
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from jarvis.permissions.policies import Risk
 from jarvis.tools.base import ExecutionContext, ToolModel, ToolSpec
 from jarvis.tools.registry import ToolRegistry
 
-AppId = Literal["notepad", "chrome", "vscode"]
+# Any installed application: a spoken or typed name for a request, and the executable's
+# own stem for an observed window. Letters, digits, spaces and a few separators only —
+# never a path, argument, URL or shell fragment.
+AppId = Annotated[
+    str,
+    StringConstraints(
+        min_length=1,
+        max_length=100,
+        pattern=r"^[0-9A-Za-z\u0400-\u04FF][0-9A-Za-z\u0400-\u04FF ._+\-]*$",
+    ),
+]
 
 
 def text_digest(text: str) -> str:
@@ -115,7 +125,9 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
         return await backend.call(NativeRequest(operation="open", app=args.app), context)
 
     async def open_verify(args: OpenApp, result: WindowsResult, context: ExecutionContext) -> bool:
-        if result.target is None or result.target.app != args.app:
+        # The requested name is a human word; the observed window carries the real
+        # executable identity, which check_target re-observes before this returns true.
+        if result.target is None:
             return False
         await backend.call(NativeRequest(operation="check_target", target=result.target), context)
         return True
@@ -174,7 +186,7 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
     registry.register(
         ToolSpec(
             "windows.open_app",
-            "Открыть Notepad, Chrome или VS Code.",
+            "Открыть установленное приложение по названию.",
             Risk.SAFE,
             OpenApp,
             WindowsResult,

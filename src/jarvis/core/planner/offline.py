@@ -7,6 +7,10 @@ import re
 from jarvis.core.planner.contracts import PlannerInput, Proposal
 from jarvis.permissions.policies import Mode
 
+# A spoken application name, never a path, argument or URL; the adapter resolves it.
+APP_NAME = re.compile(r"[0-9A-Za-z\u0400-\u04FF][0-9A-Za-z\u0400-\u04FF ._+\-]{0,99}")
+LAUNCH = re.compile(r"(?:открой|открыть|запусти|запустить|включи)\s+([\s\S]+)", re.IGNORECASE)
+
 
 def call(tool: str, arguments: object) -> Proposal:
     return Proposal(kind="call", tool=tool, arguments=json.dumps(arguments, ensure_ascii=False))
@@ -47,9 +51,6 @@ class OfflineProvider:
                 if count == 0
                 else Proposal(kind="finish")
             )
-        if command.casefold() in ("открой chrome", "открой vs code"):
-            app = "chrome" if command.casefold().endswith("chrome") else "vscode"
-            return call("windows.open_app", {"app": app}) if count == 0 else Proposal(kind="finish")
         if re.search(r"(?:напиши|отправь|письмо|свяжись)", command, re.IGNORECASE) and not typed:
             return Proposal(
                 kind="clarify",
@@ -98,11 +99,18 @@ class OfflineProvider:
                 if result.get("page"):
                     return call("browser.read", {"target": result["page"]["target"]})
             return Proposal(kind="finish")
+        launch = LAUNCH.fullmatch(command)
+        if launch:
+            name = " ".join(launch.group(1).split())
+            if APP_NAME.fullmatch(name):
+                if count == 0:
+                    return call("windows.open_app", {"app": name})
+                return Proposal(kind="finish")
         return Proposal(
             kind="clarify",
             question=(
-                "Офлайн-режим понимает учебные команды: «проверь систему», «открой блокнот», "
-                "«открой https://example.com/», «найди OpenAI». Укажите одну из них "
-                "или используйте OpenAI."
+                "Без модели понимаю простые команды: «открой <название приложения>», "
+                "«проверь систему», «открой https://example.com/», «найди OpenAI». "
+                "Для произвольных формулировок включите провайдер OpenAI."
             ),
         )

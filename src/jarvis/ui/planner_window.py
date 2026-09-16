@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 
 from jarvis.browser.host import BrowserHost
 from jarvis.config import AppConfig
-from jarvis.core.planner.contracts import Limits, Provider, Step
+from jarvis.core.planner.contracts import Limits, PlanResult, Provider, Step
 from jarvis.core.planner.offline import OfflineProvider
 from jarvis.core.planner.openai_provider import OpenAIProvider
 from jarvis.mail.session import MailSession
@@ -50,6 +50,7 @@ def note(text: str) -> QLabel:
 
 class PlannerWindow(QDialog):
     task_finished = Signal(str)
+    progress_event = Signal(str, object)
 
     def __init__(
         self,
@@ -62,6 +63,7 @@ class PlannerWindow(QDialog):
         limits: Limits | None = None,
         voice_panel: VoicePanel | None = None,
         mail_session: MailSession | None = None,
+        embed_voice: bool = True,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Jarvis — планировщик команд")
@@ -80,6 +82,10 @@ class PlannerWindow(QDialog):
         self.engine = PermissionEngine(self.registry, store, self.audit)
         self.authority = store.take_authority(self.audit.approved)
         self.worker: PlannerWorker | None = None
+        self.last_result: PlanResult | None = None
+        # The surface that owns approval and clarification dialogs; the main window sets
+        # itself here so a command typed there never needs this window on screen.
+        self.prompt_parent: QWidget = self
         self.approval_dialog: ApprovalDialog | None = None
         self.question_dialog: QDialog | None = None
         self.answer_input: QLineEdit | None = None
@@ -150,11 +156,22 @@ class PlannerWindow(QDialog):
         self.voice.transcript_ready.connect(self.command.setPlainText)
         self.voice.cancel_requested.connect(self.stop)
         self.voice.busy_changed.connect(self._voice_busy)
-        layout.addWidget(self.voice)
+        if embed_voice:
+            # Otherwise the owning window places the same panel next to its command bar.
+            layout.addWidget(self.voice)
         layout.addWidget(self.command)
         self.simulation = QCheckBox("Simulation Mode — инструменты не выполняются")
         self.simulation.setChecked(True)
         layout.addWidget(self.simulation)
+        self.autonomous = QCheckBox("Автономный режим — шаги CONFIRM подтверждаются без диалога")
+        layout.addWidget(self.autonomous)
+        layout.addWidget(
+            note(
+                "В автономном режиме подтверждение выдаётся тем же одноразовым токеном, "
+                "привязанным к точному снимку действия, но без вашего просмотра. "
+                "Ошибочный шаг выполнится без остановки; BLOCKED и CRITICAL остаются запрещены."
+            )
+        )
         buttons = QHBoxLayout()
         self.run_button = QPushButton("Запустить планировщик")
         self.run_button.setObjectName("primary")
@@ -187,6 +204,7 @@ class PlannerWindow(QDialog):
             self.cloud_consent,
             self.command,
             self.simulation,
+            self.autonomous,
             self.run_button,
             self.memory,
             self.mail,
@@ -247,6 +265,7 @@ class PlannerWindow(QDialog):
             else:
                 provider = OfflineProvider()
         self.output.clear()
+        self.last_result = None
         self.voice.was_cancelled = False
         self._busy(True)
         self.worker = PlannerWorker(
@@ -268,6 +287,7 @@ class PlannerWindow(QDialog):
     def _event(self, kind: str, value: object) -> None:
         if self._closing or self.worker is None:
             return
+        self.progress_event.emit(kind, value)
         if kind == "thinking":
             self.status.setText(f"Подготовка следующего шага ({value})…")
         elif kind == "executing":
@@ -285,8 +305,11 @@ class PlannerWindow(QDialog):
         if worker is None or self._closing or worker.runner.cancelled.is_set():
             return
         if prompt.kind == "approval" and isinstance(prompt.value, Action):
+            if self.autonomous.isChecked():
+                self._approve_without_review(prompt.id, prompt.value)
+                return
             self.status.setText("Ожидается подтверждение точного действия.")
-            dialog = ApprovalDialog(prompt.value, self.authority, self)
+            dialog = ApprovalDialog(prompt.value, self.authority, self.prompt_parent)
             self.approval_dialog = dialog
             dialog_layout = dialog.layout()
             assert dialog_layout is not None
@@ -303,7 +326,8 @@ class PlannerWindow(QDialog):
             dialog.open()
         elif prompt.kind == "clarification" and isinstance(prompt.value, str):
             self.status.setText("Нужно уточнение команды.")
-            question = QDialog(self)
+            self.voice.announce(prompt.value)
+            question = QDialog(self.prompt_parent)
             question.setWindowTitle("Уточнение команды")
             question.setWindowModality(Qt.WindowModality.WindowModal)
             question.resize(620, 250)
@@ -329,6 +353,35 @@ class PlannerWindow(QDialog):
             question.finished.connect(answered)
             question.open()
 
+    def _approve_without_review(self, prompt_id: str, action: Action) -> None:
+        """Autonomous mode: the user enabled standing approval instead of per-step review.
+
+        The token still comes from the UI-owned authority, is audited before issue, expires,
+        and stays bound to this exact action snapshot; only the human check is skipped.
+        """
+        worker = self.worker
+        if worker is None:
+            return
+        try:
+            token = self.authority.approve(action)
+        except ValueError:
+            worker.respond(prompt_id, None)
+            return
+        self.status.setText("Автономное подтверждение выдано: " + action.tool)
+        self.output.appendPlainText("Автономное подтверждение (без просмотра): " + action.tool)
+        worker.respond(prompt_id, token)
+
+    def run_command(
+        self, command: str, *, execute: bool, autonomous: bool, cloud: bool = False
+    ) -> bool:
+        """Programmatic entry for the main window's command bar. Returns False if not started."""
+        self.command.setPlainText(command)
+        self.simulation.setChecked(not execute)
+        self.autonomous.setChecked(autonomous)
+        self.provider_choice.setCurrentIndex(1 if cloud else 0)
+        self.start()
+        return self.worker is not None
+
     @Slot()
     def stop(self) -> None:
         self.voice.cancel()
@@ -351,6 +404,7 @@ class PlannerWindow(QDialog):
             if dialog is not None:
                 dialog.reject()
         self.worker = None
+        self.last_result = worker.outcome
         self.status.setText(worker.outcome.summary)
         self._busy(False)
         self.voice.finish_plan(worker.outcome)

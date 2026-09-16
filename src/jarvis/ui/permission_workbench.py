@@ -120,7 +120,10 @@ class PermissionWorkbench(QDialog):
         self.simulation.setChecked(True)
         form.addRow("Режим", self.simulation)
         self.app_choice = QComboBox()
-        for title, app in (("Блокнот", "notepad"), ("Chrome", "chrome"), ("VS Code", "vscode")):
+        # Editable: any installed application can be named, not only these shortcuts.
+        self.app_choice.setEditable(True)
+        self.app_choice.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        for title, app in (("Блокнот", "notepad"), ("Chrome", "chrome"), ("VS Code", "code")):
             self.app_choice.addItem(title, app)
         form.addRow("Приложение Windows", self.app_choice)
         self.target_choice = QComboBox()
@@ -266,7 +269,13 @@ class PermissionWorkbench(QDialog):
                 "attachments": [],
             }
         elif tool in ("windows.open_app", "windows.get_open_windows"):
-            arguments = {"app": str(self.app_choice.currentData())}
+            typed = self.app_choice.currentText().strip()
+            preset = self.app_choice.currentData()
+            arguments = {
+                "app": str(preset)
+                if preset and typed == self.app_choice.itemText(self.app_choice.currentIndex())
+                else typed
+            }
         elif tool in ("windows.focus_app", "windows.type_text"):
             target = self.target_choice.currentData()
             if not isinstance(target, WindowTarget):

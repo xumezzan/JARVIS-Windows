@@ -71,6 +71,34 @@ def test_exact_ui_approval_only(qtbot: QtBot, tmp_path: Path, approve: bool) -> 
         window.shutdown()
 
 
+@pytest.mark.parametrize("autonomous", [True, False])
+def test_autonomous_mode_replaces_only_the_human_review(
+    qtbot: QtBot, tmp_path: Path, autonomous: bool
+) -> None:
+    window = PlannerWindow(
+        AppConfig(tmp_path), provider=Scripted([call("local.append_message", MESSAGE)])
+    )
+    qtbot.addWidget(window)
+    window.show()
+    try:
+        if autonomous:
+            with qtbot.waitSignal(window.task_finished) as result:
+                assert window.run_command("test", execute=True, autonomous=True)
+            assert result.args == ["finished"]
+            # No dialog was shown, yet the outbox holds exactly the approved snapshot.
+            assert window.approval_dialog is None and window.outbox.count == 1
+            assert "Автономное подтверждение" in window.output.toPlainText()
+        else:
+            assert window.run_command("test", execute=True, autonomous=False)
+            qtbot.waitUntil(lambda: window.approval_dialog is not None)
+            assert window.outbox.count == 0
+            with qtbot.waitSignal(window.task_finished):
+                window.stop()
+            assert window.outbox.count == 0
+    finally:
+        window.shutdown()
+
+
 def test_clarification_resumes(qtbot: QtBot, tmp_path: Path) -> None:
     window = PlannerWindow(AppConfig(tmp_path))
     qtbot.addWidget(window)

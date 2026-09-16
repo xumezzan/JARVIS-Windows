@@ -20,6 +20,7 @@ class ToolError(Exception):
         code: Literal[
             "unsupported_platform",
             "application_missing",
+            "application_ambiguous",
             "target_changed",
             "control_unsupported",
             "native_timeout",

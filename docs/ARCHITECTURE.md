@@ -4,7 +4,7 @@
 
 Один Python-пакет, запускаемый через `python -m jarvis` или `jarvis`. Этапы 0–5
 реализовали desktop shell, локальные typed tools, PermissionEngine, approvals и audit.
-Текстовая команда остаётся fake demo этапа 1. Кнопка «Открыть инструменты» открывает
+Текстовая команда главного окна запускает планировщик того же сеанса: MainWindow владеет одним PlannerWindow, берёт из него реестр, движок разрешений и audit, и показывает его уточнения и подтверждения в своём окне. Кнопка «Открыть инструменты» открывает
 ручное окно локальных, Windows и браузерных инструментов. Windows UIA изолирован в helper-процессе;
 Playwright имеет отдельный asyncio owner. Отдельное окно планировщика использует offline
 recipes или OpenAI Responses; локальный голос и управляемая память реализованы.
@@ -83,7 +83,7 @@ preconditions, execute и verify — пропускаются. Итог толь
 
 ## Отмена, потоки и тайм-аут
 
-Обычный shell demo остаётся отдельным bounded Event/QThread из этапа 1. Для инструментов
+Оболочка больше не содержит отдельного demo-потока; её состояние повторяет события планировщика. Для инструментов
 Qt worker владеет короткоживущим asyncio loop. Engine ограничивает время preconditions,
 execute и verify общим timeout инструмента. Watcher проверяет thread-safe Event с шагом
 10 ms и отменяет async task. Закрытие/Stop/Escape аннулируют pending approvals и дожидаются

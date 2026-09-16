@@ -1,4 +1,4 @@
-"""Real Qt event-loop and worker tests; no mocked execution adapters."""
+"""Real Qt event-loop tests of the command shell; execution runs through PermissionEngine."""
 
 import json
 from collections.abc import Iterator
@@ -16,11 +16,14 @@ from jarvis.ui.states import UiState
 
 pytestmark = pytest.mark.integration
 
+SIMULATION = 1
+EXECUTE = 0
+
 
 @pytest.fixture
 def window(qtbot: QtBot, tmp_path: Path) -> Iterator[MainWindow]:
     log = ShellLog(tmp_path / "logs")
-    shell = MainWindow(AppConfig(tmp_path, demo_duration_ms=200), log)
+    shell = MainWindow(AppConfig(tmp_path), log)
     qtbot.addWidget(shell)
     shell.show()
     yield shell
@@ -28,7 +31,7 @@ def window(qtbot: QtBot, tmp_path: Path) -> Iterator[MainWindow]:
     shell.close()
 
 
-def start(qtbot: QtBot, window: MainWindow, text: str = "Проверь интерфейс") -> None:
+def start(qtbot: QtBot, window: MainWindow, text: str = "проверь систему") -> None:
     window.command_input.setPlainText(text)
     QTest.mouseClick(window.submit_button, Qt.MouseButton.LeftButton)
 
@@ -37,9 +40,16 @@ def test_startup_and_unavailable_capabilities(window: MainWindow) -> None:
     assert window.isVisible()
     assert window.state == UiState.IDLE
     assert window.microphone_button.isEnabled()
-    assert window.planner_window is None  # Opening the app never starts microphone capture.
+    # The session exists from the start, but opening the app never starts capture.
+    assert window.voice is not None and window.voice.worker is None
+    assert window.planner_window is not None and not window.planner_window.isVisible()
     assert window.permissions_button.isEnabled()
     assert not window.stop_button.isEnabled()
+    assert not window.running
+    # Execution is the default; autonomy was requested and is visible, never hidden.
+    assert window.run_mode.currentIndex() == EXECUTE
+    assert window.provider_mode.currentIndex() == 0
+    assert window.autonomy.isChecked()
 
 
 def test_small_window_scrolls_instead_of_clipping(qtbot: QtBot, window: MainWindow) -> None:
@@ -59,103 +69,148 @@ def test_small_window_scrolls_instead_of_clipping(qtbot: QtBot, window: MainWind
     ) == (0, 1, 1, 1)
 
 
-def test_text_success_and_ui_responsiveness(qtbot: QtBot, window: MainWindow) -> None:
+def test_simulated_command_reports_facts(qtbot: QtBot, window: MainWindow) -> None:
+    states: list[str] = []
+    window.state_changed.connect(states.append)
+    window.run_mode.setCurrentIndex(SIMULATION)
+    with qtbot.waitSignal(window.task_finished, timeout=15000) as result:
+        start(qtbot, window, "проверь систему дважды")
+        assert window.state == UiState.THINKING
+        assert not window.submit_button.isEnabled()
+    assert result.args == ["simulated"]
+    assert states[0] == "thinking" and states[-1] == "success"
+    assert "executing" in states
+    assert window.transcript.toPlainText() == "проверь систему дважды"
+    assert "local.check: SIMULATED" in window.action_label.text()
+    assert not window.running
+    assert window.submit_button.isEnabled()
+    assert "command_succeeded" in window.log.path.read_text()
+
+
+def test_real_execution_runs_the_tool_without_blocking_the_ui(
+    qtbot: QtBot, window: MainWindow
+) -> None:
+    assert window.run_mode.currentIndex() == EXECUTE
     ticks: list[int] = []
     timer = QTimer(window)
     timer.timeout.connect(lambda: ticks.append(1))
     timer.start(5)
-    states: list[str] = []
-    window.state_changed.connect(states.append)
-    with qtbot.waitSignal(window.task_finished, timeout=3000):
-        start(qtbot, window, "Открой Блокнот")
-        assert window.state == UiState.THINKING
-        assert not window.submit_button.isEnabled()
+    # Each local.check sleeps 100 ms inside the adapter; the UI thread must keep running.
+    with qtbot.waitSignal(window.task_finished, timeout=15000) as result:
+        start(qtbot, window, "проверь систему дважды")
     timer.stop()
     assert len(ticks) >= 3
-    assert states == ["thinking", "executing", "success"]
-    assert window.transcript.toPlainText() == "Открой Блокнот"
-    assert "не исполнялась" in window.action_label.text()
-    assert window.worker is None
-    assert window.submit_button.isEnabled()
+    assert result.args == ["finished"]
+    assert window.state == UiState.SUCCESS
+    assert "local.check: SUCCESS" in window.action_label.text()
+    assert (window.config.data_dir / "audit.sqlite3").exists()
 
 
-def test_failure_then_retry(qtbot: QtBot, window: MainWindow) -> None:
-    window.demo_mode.setCurrentIndex(1)
-    with qtbot.waitSignal(window.task_finished, timeout=3000):
+def test_autonomy_reaches_the_planner_session(qtbot: QtBot, window: MainWindow) -> None:
+    window.run_mode.setCurrentIndex(SIMULATION)
+    with qtbot.waitSignal(window.task_finished, timeout=15000):
         start(qtbot, window)
-    assert window.state == UiState.ERROR
-    window.demo_mode.setCurrentIndex(0)
-    with qtbot.waitSignal(window.task_finished, timeout=3000):
-        start(qtbot, window)
-    qtbot.waitUntil(lambda: window.state == UiState.SUCCESS)
+    planner = window.planner_window
+    assert planner is not None
+    assert planner.autonomous.isChecked()
+    assert planner.simulation.isChecked()  # Simulation was requested and applied.
+    assert planner.provider_choice.currentIndex() == 0
+    assert not planner.isVisible()  # The command bar never needs a second window.
+
+
+def test_spoken_command_runs_without_a_second_step(qtbot: QtBot, window: MainWindow) -> None:
+    window.run_mode.setCurrentIndex(SIMULATION)
+    assert window.voice is not None
+    # The assistant answers out loud, and a finished transcript is the submission itself.
+    assert window.voice.speech_enabled.isChecked()
+    assert window.microphone_button.wired
+    with qtbot.waitSignal(window.task_finished, timeout=15000) as result:
+        window.voice.transcript_ready.emit("проверь систему")
+    assert result.args == ["simulated"]
+    assert window.transcript.toPlainText() == "проверь систему"
+    # A cancelled or empty transcript never starts anything.
+    window.voice.transcript_ready.emit("   ")
+    assert not window.running
+
+
+def test_unknown_command_asks_in_the_main_window(qtbot: QtBot, window: MainWindow) -> None:
+    window.run_mode.setCurrentIndex(SIMULATION)
+    start(qtbot, window, "сделай что-нибудь")
+    planner = window.planner_window
+    assert planner is not None
+    qtbot.waitUntil(lambda: planner.question_dialog is not None, timeout=15000)
+    question = planner.question_dialog
+    assert question is not None and question.parent() is window
+    assert planner.answer_input is not None and planner.answer_button is not None
+    planner.answer_input.setText("проверь систему")
+    with qtbot.waitSignal(window.task_finished, timeout=15000) as result:
+        QTest.mouseClick(planner.answer_button, Qt.MouseButton.LeftButton)
+    assert result.args == ["simulated"]
 
 
 @pytest.mark.parametrize("when", ["thinking", "executing"])
 def test_stop_and_no_stale_success(qtbot: QtBot, window: MainWindow, when: str) -> None:
-    window.config = AppConfig(window.config.data_dir, demo_duration_ms=1000)
-    start(qtbot, window)
+    start(qtbot, window, "проверь систему дважды")
     if when == "executing":
-        qtbot.waitUntil(lambda: window.state == UiState.EXECUTING)
-    with qtbot.waitSignal(window.task_finished, timeout=2000):
+        qtbot.waitUntil(lambda: window.state == UiState.EXECUTING, timeout=15000)
+    with qtbot.waitSignal(window.task_finished, timeout=15000):
         QTest.mouseClick(window.stop_button, Qt.MouseButton.LeftButton)
         window.stop()  # Repeated emergency stop is harmless.
     assert window.state == UiState.CANCELLED
-    assert window.worker is None
+    assert not window.running
     rows = window.log.path.read_text()
     assert rows.count('"event": "cancel_requested"') == 1
-    assert "demo_succeeded" not in rows
-
-
-def test_timeout(qtbot: QtBot, window: MainWindow) -> None:
-    window.config = AppConfig(window.config.data_dir, demo_duration_ms=500, task_timeout_ms=100)
-    with qtbot.waitSignal(window.task_finished, timeout=2000):
-        start(qtbot, window)
-    assert window.state == UiState.ERROR
-    assert "время ожидания" in window.action_label.text()
+    assert "command_succeeded" not in rows
 
 
 def test_close_during_work_joins_thread(qtbot: QtBot, window: MainWindow) -> None:
-    window.config = AppConfig(window.config.data_dir, demo_duration_ms=30000)
-    start(qtbot, window)
-    with qtbot.waitSignal(window.task_finished, timeout=2000):
+    start(qtbot, window, "проверь систему дважды")
+    with qtbot.waitSignal(window.task_finished, timeout=15000):
         window.close()
     qtbot.waitUntil(lambda: not window.isVisible())
-    assert window.worker is None
+    assert not window.running
     assert "shell_closed" in window.log.path.read_text()
 
 
 def test_direct_shutdown_during_work(window: MainWindow, qtbot: QtBot) -> None:
-    start(qtbot, window)
+    start(qtbot, window, "проверь систему дважды")
     window.shutdown()
-    assert window.worker is None
+    assert not window.running
     assert window.state == UiState.CANCELLED
 
 
 @pytest.mark.parametrize("text", ["   ", "x" * 4001])
 def test_invalid_input_does_not_start(window: MainWindow, qtbot: QtBot, text: str) -> None:
     start(qtbot, window, text)
-    assert window.worker is None
+    assert not window.running
+    assert window.planner_window is not None and window.planner_window.worker is None
     assert window.state == UiState.IDLE
     assert "от 1 до 4 000" in window.validation_label.text()
 
 
 def test_busy_submission_cannot_replace_task(qtbot: QtBot, window: MainWindow) -> None:
-    with qtbot.waitSignal(window.task_finished, timeout=3000):
-        start(qtbot, window, "Первая команда")
+    window.run_mode.setCurrentIndex(SIMULATION)
+    with qtbot.waitSignal(window.task_finished, timeout=15000):
+        start(qtbot, window, "проверь систему дважды")
         window.submit()
-    assert window.log.path.read_text().count('"event": "demo_submitted"') == 1
+    assert window.log.path.read_text().count('"event": "command_submitted"') == 1
 
 
 def test_arbitrary_command_is_plain_text_and_not_logged(qtbot: QtBot, window: MainWindow) -> None:
     text = '<img src="https://invalid.example/pixel">\nPRIVATE_INPUT_SENTINEL'
-    with qtbot.waitSignal(window.task_finished, timeout=3000):
-        start(qtbot, window, text)
+    window.run_mode.setCurrentIndex(SIMULATION)
+    start(qtbot, window, text)
+    planner = window.planner_window
+    assert planner is not None
+    qtbot.waitUntil(lambda: planner.question_dialog is not None, timeout=15000)
+    with qtbot.waitSignal(window.task_finished, timeout=15000):
+        planner.stop()
     assert window.transcript.toPlainText() == text
     content = window.log.path.read_text()
     assert "PRIVATE_INPUT_SENTINEL" not in content
     assert "invalid.example" not in content
     rows = [json.loads(line) for line in content.splitlines()]
-    requests = {row["request_id"] for row in rows if row["event"].startswith("demo_")}
+    requests = {row["request_id"] for row in rows if row["event"].startswith("command_")}
     assert len(requests) == 1
 
 
@@ -172,12 +227,19 @@ def test_planner_entrypoint_and_close_allows_reopen(qtbot: QtBot, window: MainWi
     QTest.mouseClick(window.planner_button, Qt.MouseButton.LeftButton)
     planner = window.planner_window
     assert planner is not None and planner.command.toPlainText() == "проверь систему дважды"
-    with qtbot.waitSignal(planner.task_finished):
+    assert planner.isVisible() and planner.prompt_parent is planner
+    # The planner's own run button waits for its memory panel to finish its start-up read.
+    qtbot.waitUntil(lambda: planner.memory.worker is None, timeout=15000)
+    with qtbot.waitSignal(planner.task_finished, timeout=15000):
         QTest.mouseClick(planner.run_button, Qt.MouseButton.LeftButton)
+    # A run started in the planner is mirrored by the shell it belongs to.
+    assert window.state == UiState.SUCCESS
     planner.close()
     qtbot.waitUntil(lambda: window.planner_window is None)
     window.open_planner()
-    assert window.planner_window is not None
+    assert window.planner_window is not None and window.planner_window is not planner
+    # The rebuilt session takes the microphone back over without doubling the capture.
+    assert window.voice is window.planner_window.voice
     window.shutdown()
     assert window.planner_window._closed
 

@@ -163,7 +163,7 @@ async def test_step_limit_stops_before_extra_effect(harness: Harness) -> None:
 
 @pytest.mark.asyncio
 async def test_clarification_resumes_same_task(harness: Harness) -> None:
-    result = await harness.runner(OfflineProvider()).run("открой приложение", Mode.EXECUTE)
+    result = await harness.runner(OfflineProvider()).run("сделай что-нибудь", Mode.EXECUTE)
     assert result.status == "finished" and result.steps[0].tool == "local.check"
 
 

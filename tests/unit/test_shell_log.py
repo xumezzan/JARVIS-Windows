@@ -19,5 +19,5 @@ def test_structured_log_and_independent_sessions(tmp_path: Path) -> None:
     assert len(rows) == 2
     assert rows[0]["request_id"] == str(request)
     assert rows[0]["session_id"] != rows[1]["session_id"]
-    assert rows[0]["mode"] == "demo"
+    assert rows[0]["mode"] == "command"
     assert set(rows[0]) == {"timestamp", "session_id", "request_id", "actor", "event", "mode"}
