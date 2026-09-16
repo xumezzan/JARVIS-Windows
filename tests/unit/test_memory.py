@@ -4,6 +4,7 @@ import asyncio
 import json
 import sqlite3
 from collections.abc import Iterator
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 from threading import Event
@@ -134,7 +135,7 @@ def test_corrupt_row_fails_closed_and_clear_recovers(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.sqlite3", clock=lambda: NOW)
     first = entry()
     store.save(first)
-    with sqlite3.connect(store.path) as db:
+    with closing(sqlite3.connect(store.path)) as db, db:
         db.execute("UPDATE profile SET payload=?", ('{"unknown":"fixture"}',))
     with pytest.raises(MemoryFailure, match="invalid") as error:
         store.read()
@@ -143,7 +144,9 @@ def test_corrupt_row_fails_closed_and_clear_recovers(tmp_path: Path) -> None:
     assert store.save(first) == (first,)
 
 
-@pytest.mark.parametrize("content", [b"not a sqlite database", b"x" * 1048577])
+@pytest.mark.parametrize(
+    "content", [b"not a sqlite database", b"x" * 1048577], ids=["not-sqlite", "oversized"]
+)
 def test_bad_storage_is_not_overwritten(tmp_path: Path, content: bytes) -> None:
     path = tmp_path / "memory.sqlite3"
     path.write_bytes(content)
@@ -166,7 +169,7 @@ def test_cancelled_write_has_no_effect(tmp_path: Path) -> None:
 def test_sqlite_lock_fails_in_bounded_time(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "memory.sqlite3", clock=lambda: NOW)
     store.save(entry())
-    with sqlite3.connect(store.path) as db:
+    with closing(sqlite3.connect(store.path)) as db, db:
         db.execute("BEGIN IMMEDIATE")
         with pytest.raises(MemoryFailure, match="storage"):
             store.read()

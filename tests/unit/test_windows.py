@@ -252,7 +252,7 @@ async def test_payload_not_in_process_argv(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("output", ["not-json\\n", "x" * 150000])
+@pytest.mark.parametrize("output", ["not-json\\n", "x" * 150000], ids=["not-json", "oversized"])
 async def test_bad_or_oversized_protocol_is_rejected_and_reaped(
     output: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -261,10 +261,13 @@ async def test_bad_or_oversized_protocol_is_rejected_and_reaped(
     processes: list[asyncio.subprocess.Process] = []
 
     async def launch(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+        literal = repr(output)
+        if len(literal) > 4096:
+            # Windows caps a command line at 32767 chars; let the child build it.
+            assert output == output[0] * len(output)
+            literal = f"{output[0]!r} * {len(output)}"
         script = (
-            "import sys,time; sys.stdout.write("
-            + repr(output)
-            + "); sys.stdout.flush(); time.sleep(60)"
+            "import sys,time; sys.stdout.write(" + literal + "); sys.stdout.flush(); time.sleep(60)"
         )
         process = await real_launch(sys.executable, "-I", "-c", script, **kwargs)
         processes.append(process)

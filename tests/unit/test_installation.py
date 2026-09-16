@@ -21,7 +21,10 @@ from jarvis.installation.assets import SetupError, download, extract_model
 def archive(path: Path, names: list[str]) -> Path:
     with zipfile.ZipFile(path, "w") as bundle:
         for name in names:
-            bundle.writestr(name, "fixture")
+            # ZipInfo(name) would rewrite os.sep; assign to keep the literal entry name.
+            entry = zipfile.ZipInfo("placeholder")
+            entry.filename = name
+            bundle.writestr(entry, "fixture")
     return path
 
 
@@ -31,7 +34,6 @@ def archive(path: Path, names: list[str]) -> Path:
         "../outside",
         "/outside",
         "model/../outside",
-        "model\\outside",
         "model/C:stream",
         "model/NUL",
         "model/name.",
@@ -48,6 +50,16 @@ def test_zip_escape_and_windows_aliases_rejected_before_writes(tmp_path: Path, n
     with pytest.raises(SetupError):
         extract_model(bundle, tmp_path / "output", "model")
     assert not (tmp_path / "output").exists()
+    assert not (tmp_path / "outside").exists()
+
+
+def test_backslash_entry_never_escapes_the_destination(tmp_path: Path) -> None:
+    """POSIX rejects the literal alias; Windows zipfile rewrites os.sep on write/read."""
+    bundle = archive(tmp_path / "asset.zip", ["model/am/final.mdl", "model\\outside"])
+    try:
+        extract_model(bundle, tmp_path / "output", "model")
+    except SetupError:
+        assert not (tmp_path / "output").exists()
     assert not (tmp_path / "outside").exists()
 
 
@@ -214,10 +226,11 @@ def test_invalid_pointer_does_not_select_or_delete_directory(tmp_path: Path) -> 
 
 def test_subprocess_arguments_are_literal_and_error_is_sanitized(tmp_path: Path) -> None:
     value = 'Асаль space & $evil; "quotes"'
-    assert (
-        setup.run([sys.executable, "-c", "import sys; print(sys.argv[1])", value], {})
-        == value + "\n"
+    # Production always supplies the UTF-8 child env; Windows text stdout adds a return.
+    literal = setup.run(
+        [sys.executable, "-c", "import sys; print(sys.argv[1])", value], {"PYTHONUTF8": "1"}
     )
+    assert literal.replace("\r\n", "\n") == value + "\n"
     with pytest.raises(SetupError) as error:
         setup.run([sys.executable, "-c", "print('SECRET'); raise SystemExit(1)"], {})
     assert "SECRET" not in str(error.value)

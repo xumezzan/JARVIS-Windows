@@ -18,7 +18,9 @@ from jarvis.voice.contracts import MAX_AUDIO_BYTES, AudioClip, Transcript, Voice
 from jarvis.voice.local import exchange
 
 
-@pytest.mark.parametrize("pcm", [b"", b"a", b"a" * (MAX_AUDIO_BYTES + 2)])
+@pytest.mark.parametrize(
+    "pcm", [b"", b"a", b"a" * (MAX_AUDIO_BYTES + 2)], ids=["empty", "short", "oversized"]
+)
 def test_audio_bounds(pcm: bytes) -> None:
     with pytest.raises(VoiceError, match="invalid_audio"):
         AudioClip(pcm)

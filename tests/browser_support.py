@@ -24,7 +24,9 @@ HOME = """<!doctype html><html><head><title>Browser fixture</title></head><body>
 class FixtureSite:
     def __init__(self) -> None:
         self.seen: list[tuple[str, str, str, str | None]] = []
+        self.agents: list[str | None] = []
         seen = self.seen
+        agents = self.agents
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, format: str, *args: object) -> None:
@@ -39,8 +41,18 @@ class FixtureSite:
             def respond(self) -> None:
                 body = self.rfile.read(int(self.headers.get("Content-Length", "0"))).decode()
                 seen.append((self.command, self.path, body, self.headers.get("Cookie")))
+                agents.append(self.headers.get("User-Agent"))
                 if self.path == "/drop":
                     self.connection.close()
+                    return
+                if self.path == "/challenge":
+                    # A search origin answers an anti-bot challenge with 202.
+                    self.send_response(202)
+                    self.send_header("Content-Type", "text/html; charset=utf-8")
+                    encoded = b"<html><body>Confirm you are human</body></html>"
+                    self.send_header("Content-Length", str(len(encoded)))
+                    self.end_headers()
+                    self.wfile.write(encoded)
                     return
                 if self.path == "/slow":
                     time.sleep(2)
