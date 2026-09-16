@@ -108,8 +108,13 @@ Real model checks require --run-model and JARVIS_PLANNER_MODEL; do not claim ver
 
 ## Voice boundary (milestone 6)
 
-Keep push-to-talk visible and bound to a held UI gesture; no background capture. Release
-stops recording; focus loss, Stop, Escape and close cancel and dispose helpers. Local
+Push-to-talk stays visible and bound to a held UI gesture. Hands-free standing capture is
+the owner's explicit choice and is not background capture: it is off by default, switched on
+only from a visible control, shows a recording indicator the whole time, ends each phrase on
+silence, and stops on switch-off, device failure, window close and shutdown. It acts only on
+a phrase that names the assistant; anything else is dropped without leaving the helper.
+Segmentation reads block loudness only, never content. Release stops a held recording; focus
+loss, Stop, Escape and close cancel and dispose helpers. Local
 Vosk model paths only, explicit native TTS drivers, no model downloads or cloud audio.
 A cloud audio adapter requires new disclosure and explicit consent before transmission.
 The user-requested optional ElevenLabs Free TTS is documented in docs/ELEVENLABS.md.

@@ -14,6 +14,8 @@ from jarvis.core.planner.contracts import PlanResult, Step
 from jarvis.permissions.engine import Outcome
 from jarvis.permissions.policies import Status
 from jarvis.platforms import audio
+from jarvis.platforms.audio import NOISE_BLOCKS, QUIET_BLOCKS, SPEECH_BLOCKS, Segmenter
+from jarvis.ui.voice_panel import wake_command
 from jarvis.voice.contracts import MAX_AUDIO_BYTES, AudioClip, Transcript, VoiceError, spoken_result
 from jarvis.voice.local import exchange
 
@@ -155,3 +157,64 @@ def test_native_capture_bounds_and_disposes_stream(
         result = audio.capture()
         assert len(base64.b64decode(str(result["pcm"]))) == MAX_AUDIO_BYTES
     assert disposed == [True]
+
+
+@pytest.mark.parametrize(
+    "heard,expected",
+    [
+        ("джарвис открой калькулятор", "открой калькулятор"),
+        ("Джарвис, открой блокнот", "открой блокнот"),
+        ("эй джарвис проверь систему", "проверь систему"),
+        ("jarvis открой хром", "открой хром"),
+        ("открой калькулятор", ""),
+        ("джарвис", ""),
+        ("сегодня хорошая погода", ""),
+        ("", ""),
+    ],
+)
+def test_hands_free_acts_only_on_a_phrase_addressed_to_the_assistant(
+    heard: str, expected: str
+) -> None:
+    assert wake_command(heard) == expected
+
+
+def blocks(segmenter: "Segmenter", peak: int, count: int) -> bool:
+    """Feed count blocks of one loudness; return True if the phrase ended within them."""
+    return any(segmenter.feed(peak) for _ in range(count))
+
+
+def test_a_pause_after_speech_ends_a_standing_capture() -> None:
+    segmenter = Segmenter()
+    assert not blocks(segmenter, 40, NOISE_BLOCKS)  # The room is measured first.
+    assert not blocks(segmenter, 9000, SPEECH_BLOCKS)
+    assert segmenter.started
+    assert not blocks(segmenter, 20, QUIET_BLOCKS - 1)  # A breath is not the end.
+    assert segmenter.feed(20)
+
+
+def test_quiet_and_short_noises_never_start_a_phrase() -> None:
+    segmenter = Segmenter()
+    assert not blocks(segmenter, 40, NOISE_BLOCKS)
+    assert not blocks(segmenter, 50, 400)  # A quiet room never ends a phrase it never heard.
+    assert not segmenter.started
+    assert not blocks(segmenter, 9000, SPEECH_BLOCKS - 1)  # A single click is not speech.
+    assert not segmenter.started
+
+
+def test_a_noisy_room_raises_the_bar_instead_of_hearing_itself() -> None:
+    loud = Segmenter()
+    assert not blocks(loud, 4000, NOISE_BLOCKS)  # Calibrated in a noisy place.
+    assert not blocks(loud, 4000, 50)
+    assert not loud.started
+    assert not blocks(loud, 20000, SPEECH_BLOCKS)  # A real voice still gets through.
+    assert loud.started
+
+
+def test_a_pause_inside_a_phrase_does_not_cut_it() -> None:
+    segmenter = Segmenter()
+    blocks(segmenter, 40, NOISE_BLOCKS)
+    blocks(segmenter, 9000, SPEECH_BLOCKS)
+    assert not blocks(segmenter, 20, QUIET_BLOCKS - 1)
+    assert not blocks(segmenter, 9000, 2)  # Speaking again resets the pause.
+    assert not blocks(segmenter, 20, QUIET_BLOCKS - 1)
+    assert segmenter.feed(20)

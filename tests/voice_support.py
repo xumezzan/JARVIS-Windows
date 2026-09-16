@@ -22,14 +22,20 @@ class VoiceFixture:
         self.speech_delay = 0.0
         self.error = ""
         self.captures = 0
+        self.listens = 0
+        self.speech_ends = Event()
         self.spoken: list[str] = []
 
-    async def record(self, released: Event, ready: Callable[[], None]) -> AudioClip:
+    async def record(
+        self, released: Event, ready: Callable[[], None], listen: bool = False
+    ) -> AudioClip:
         self.captures += 1
+        self.listens += int(listen)
         self.recording.set()
         ready()
         try:
-            while not released.is_set():
+            # Hands-free capture ends by itself; a held control ends on release.
+            while not released.is_set() and not (listen and self.speech_ends.is_set()):
                 await asyncio.sleep(0.005)
             if self.error:
                 raise VoiceError(self.error)

@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import sys
+from array import array
 from io import BufferedReader
 from pathlib import Path
 from threading import Event, Thread
@@ -11,15 +12,59 @@ from typing import Any, cast
 
 from jarvis.voice.contracts import MAX_AUDIO_BYTES, MAX_SECONDS, SAMPLE_RATE, AudioClip, VoiceError
 
+# Hands-free segmentation, in 100 ms blocks of 16 kHz mono audio.
+SPEECH_PEAK = 700  # int16 peak that counts as speech even in a silent room
+NOISE_BLOCKS = 3  # the first 0.3 s measures the room instead of the speaker
+SPEECH_BLOCKS = 3  # a click or a door is not a phrase
+QUIET_BLOCKS = 12  # 1.2 s of quiet ends the phrase
+WAIT_BLOCKS = 200  # 20 s without speech ends the attempt so the caller can retry
 
-def capture(pending: bytes = b"") -> dict[str, object]:
+
+class Segmenter:
+    """Decides when a spoken phrase has ended, from block peak amplitudes alone.
+
+    Deliberately content-blind: it sees loudness, never audio, and holds no recording.
+    The first blocks measure the room, so a noisy place raises the bar instead of
+    treating its own hum as speech.
+    """
+
+    def __init__(self) -> None:
+        self.noise = 0
+        self.blocks = 0
+        self.voiced = 0
+        self.quiet = 0
+        self.started = False
+
+    def feed(self, peak: int) -> bool:
+        """Take one block's peak amplitude; return True when the phrase is over."""
+        self.blocks += 1
+        if self.blocks <= NOISE_BLOCKS:
+            self.noise = max(self.noise, peak)
+            return False
+        if peak >= max(SPEECH_PEAK, self.noise * 3):
+            self.voiced += 1
+            self.quiet = 0
+            if self.voiced >= SPEECH_BLOCKS:
+                self.started = True
+        elif self.started:
+            self.quiet += 1
+            if self.quiet >= QUIET_BLOCKS:
+                return True
+        else:
+            self.voiced = 0
+        return False
+
+
+def capture(pending: bytes = b"", listen: bool = False) -> dict[str, object]:
     try:
         import sounddevice as sd  # type: ignore[import-untyped]
     except ImportError:
         raise VoiceError("voice_failed") from None
     stop = Event()
     failed = Event()
+    speech = Event()
     pcm = bytearray()
+    segmenter = Segmenter()
 
     def release() -> None:
         # EOF also ends capture if the parent disappears. No raw command interpretation.
@@ -43,6 +88,16 @@ def capture(pending: bytes = b"") -> dict[str, object]:
             stop.set()
             raise sd.CallbackStop
         pcm.extend(chunk)
+        if not listen:
+            return
+        # Peak amplitude only: cheap enough for the audio callback and never inspects content.
+        samples = array("h", chunk)
+        finished = segmenter.feed(max(max(samples), -min(samples)) if samples else 0)
+        if segmenter.started:
+            speech.set()
+        if finished:
+            stop.set()
+            raise sd.CallbackStop
 
     try:
         # No input stream before an explicit UI request. Device is the user's OS default.
@@ -56,6 +111,9 @@ def capture(pending: bytes = b"") -> dict[str, object]:
             callback=receive,
         ):
             print('{"ready":true}', flush=True)
+            if listen and not speech.wait(WAIT_BLOCKS / 10) and not stop.is_set():
+                stop.set()
+                raise VoiceError("silence")
             stop.wait(MAX_SECONDS)
             stop.set()
         if failed.is_set():
@@ -166,7 +224,7 @@ def main() -> int:
         request = json.loads(line)
         operation = request.get("operation")
         if operation == "record":
-            result = capture(pending)
+            result = capture(pending, bool(request.get("listen")))
         elif operation == "transcribe":
             result = recognize(request)
         elif operation == "speak":

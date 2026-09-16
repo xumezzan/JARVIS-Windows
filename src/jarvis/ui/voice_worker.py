@@ -20,6 +20,7 @@ class VoiceWorker(QThread):
         speaker: Speaker,
         *,
         speech: str = "",
+        listen: bool = False,
     ) -> None:
         super().__init__()
         authorized_cloud = (
@@ -32,6 +33,7 @@ class VoiceWorker(QThread):
             raise ValueError("Cloud audio requires a separate consent implementation.")
         self.recorder, self.recognizer, self.speaker = recorder, recognizer, speaker
         self.speech = speech
+        self.listen = listen
         self.released = Event()
         self.cancelled = Event()
         self.transcript: Transcript | None = None
@@ -61,7 +63,7 @@ class VoiceWorker(QThread):
                 await self.speaker.speak(self.speech)
             else:
                 clip = await self.recorder.record(
-                    self.released, lambda: self.phase.emit("recording")
+                    self.released, lambda: self.phase.emit("recording"), self.listen
                 )
                 if self.cancelled.is_set():
                     return
