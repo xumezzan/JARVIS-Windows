@@ -154,7 +154,7 @@ class MemoryPanel(QWidget):
         # people and work, and both would otherwise leave the machine unannounced.
         self.cloud_consent = QCheckBox(
             "Разрешаю передать показанные метки и названных знакомых лиц и проектов "
-            "в OpenAI для одной задачи"
+            "в DeepSeek или OpenAI для одной задачи"
         )
         layout.addWidget(self.cloud_consent)
         self.status = note("Загрузка профиля…")

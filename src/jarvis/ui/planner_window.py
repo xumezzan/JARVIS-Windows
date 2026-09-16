@@ -22,8 +22,10 @@ from jarvis.config import AppConfig
 from jarvis.core.composition import build
 from jarvis.core.context.assembly import assemble
 from jarvis.core.planner.contracts import Limits, PlanResult, Provider, Step
+from jarvis.core.planner.deepseek_provider import DeepSeekProvider
 from jarvis.core.planner.offline import OfflineProvider
 from jarvis.core.planner.openai_provider import OpenAIProvider
+from jarvis.core.planner.routing import EscalatingRouter
 from jarvis.mail.session import MailSession
 from jarvis.memory.store import MemoryFailure, MemoryStore
 from jarvis.permissions.approvals import Action
@@ -64,7 +66,9 @@ class PlannerWindow(QDialog):
         self.setWindowTitle("Jarvis — планировщик команд")
         self.setWindowModality(Qt.WindowModality.WindowModal)
         self.resize(900, 790)
+        self.config = config
         self.override_provider = provider
+        self.router: EscalatingRouter | None = None
         self.limits = limits or Limits()
         # One composition root owns what exists in this session; the window only uses it.
         self.bench = build(
@@ -116,12 +120,17 @@ class PlannerWindow(QDialog):
             )
         )
         self.provider_choice = QComboBox()
-        self.provider_choice.addItems(["Офлайн: учебные команды, без LLM", "OpenAI: Responses API"])
+        self.provider_choice.addItems(
+            [
+                "Офлайн: учебные команды, без LLM",
+                "Облако: DeepSeek, сложные задачи — OpenAI",
+            ]
+        )
         layout.addWidget(self.provider_choice)
         self.cloud_box = QWidget()
         cloud = QVBoxLayout(self.cloud_box)
         self.model = QLineEdit(config.planner_model)
-        self.model.setPlaceholderText("Идентификатор доступной вам модели Responses API")
+        self.model.setPlaceholderText("Модель OpenAI для сложных задач, например gpt-5.4-mini")
         self.model.setMaxLength(100)
         cloud.addWidget(self.model)
         cloud.addWidget(
@@ -132,7 +141,8 @@ class PlannerWindow(QDialog):
             )
         )
         self.cloud_consent = QCheckBox(
-            "Разрешаю отправить команду, уточнения и результаты инструментов в OpenAI"
+            "Разрешаю отправить команду, уточнения и результаты инструментов в DeepSeek, "
+            "а для сложных задач — в OpenAI"
         )
         cloud.addWidget(self.cloud_consent)
         cloud.addWidget(
@@ -261,7 +271,13 @@ class PlannerWindow(QDialog):
                     self.status.setText("Для OpenAI нужно разрешить передачу команды и наблюдений.")
                     return
                 try:
-                    provider = OpenAIProvider(self.model.text())
+                    # Ordinary work runs on the fast model; the strong one takes over only
+                    # when the task proves multi-layered or the fast answer is unusable.
+                    self.router = EscalatingRouter(
+                        DeepSeekProvider(self.config.fast_model),
+                        OpenAIProvider(self.model.text()),
+                    )
+                    provider = self.router
                 except ValueError:
                     self.status.setText("Укажите идентификатор модели Responses API.")
                     return

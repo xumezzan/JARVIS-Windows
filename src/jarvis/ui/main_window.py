@@ -42,7 +42,8 @@ from jarvis.ui.voice_panel import HoldButton, VoicePanel
 # Finite planner error categories rendered as advice; never arbitrary text from a tool.
 ERROR_ADVICE: dict[str, str] = {
     "credentials": (
-        "Ключ OpenAI не найден. В терминале выполните: python -m jarvis.security.credentials set"
+        "Ключ модели не найден. В терминале выполните: "
+        "python -m jarvis.security.credentials set deepseek"
     ),
     "provider_failed": "Модель не ответила. Проверьте ключ, идентификатор модели и сеть.",
     "provider_output": "Ответ модели не соответствует схеме планировщика.",
@@ -273,7 +274,9 @@ class MainWindow(QMainWindow):
         self.run_mode.setMaximumWidth(210)
         controls.addWidget(self.run_mode)
         self.provider_mode = QComboBox()
-        self.provider_mode.addItems(["Офлайн: учебные команды", "OpenAI: любые команды"])
+        self.provider_mode.addItems(
+            ["Офлайн: учебные команды", "Облако: DeepSeek, сложные задачи — OpenAI"]
+        )
         self.provider_mode.setAccessibleName("Планировщик команд")
         self.provider_mode.setMaximumWidth(230)
         controls.addWidget(self.provider_mode)
@@ -595,12 +598,12 @@ class MainWindow(QMainWindow):
         if planner.cloud_consent.isChecked() and planner.model.text().strip():
             return True
         dialog = QDialog(self)
-        dialog.setWindowTitle("Отправка команды в OpenAI")
+        dialog.setWindowTitle("Отправка команды в DeepSeek и OpenAI")
         dialog.setWindowModality(Qt.WindowModality.WindowModal)
         body = QVBoxLayout(dialog)
         body.addWidget(
             label(
-                "Облачный планировщик отправляет в OpenAI текст команды, ваши уточнения и "
+                "Облачный планировщик отправляет текст команды, ваши уточнения и "
                 "результаты инструментов — даже в режиме симуляции. Запросы тарифицируются "
                 "отдельно. store=false не означает отсутствие хранения у провайдера."
             )
@@ -615,7 +618,10 @@ class MainWindow(QMainWindow):
                 "он хранится в Windows Credential Locker и не попадает в команду или журнал."
             )
         )
-        consent = QCheckBox("Разрешаю отправку команды, уточнений и результатов в OpenAI")
+        consent = QCheckBox(
+            "Разрешаю отправку команды, уточнений и результатов в DeepSeek, "
+            "а для сложных задач — в OpenAI"
+        )
         body.addWidget(consent)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel

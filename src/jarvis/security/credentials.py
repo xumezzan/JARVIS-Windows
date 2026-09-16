@@ -7,11 +7,22 @@ from contextlib import suppress
 
 from jarvis.core.planner.contracts import ProviderError
 
-SERVICE = "Jarvis/OpenAI"
 ACCOUNT = "default"
+# One entry per vendor, named in full. A key is never shared between providers, and the
+# allowlist keeps an argument from ever becoming an arbitrary credential-store name.
+SERVICES = {"openai": "Jarvis/OpenAI", "deepseek": "Jarvis/DeepSeek"}
+SERVICE = SERVICES["openai"]
+VENDORS = {"openai": "OpenAI", "deepseek": "DeepSeek"}
 
 
-async def load_api_key() -> str:
+def service_of(provider: str) -> str:
+    if provider not in SERVICES:
+        raise ProviderError("credentials")
+    return SERVICES[provider]
+
+
+async def load_api_key(provider: str = "openai") -> str:
+    service_of(provider)  # Refuse an unknown vendor before spawning anything.
     launch = asyncio.create_task(
         asyncio.create_subprocess_exec(
             sys.executable,
@@ -19,6 +30,7 @@ async def load_api_key() -> str:
             "-m",
             "jarvis.security.credentials",
             "--pipe",
+            provider,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
@@ -87,27 +99,33 @@ def main() -> int:
         from jarvis.platforms.credentials import native_store
 
         store = native_store()
-        if sys.argv[1:] == ["set"] and console(sys.stdin, True):
-            key = getpass.getpass("OpenAI API key (скрытый ввод): ")
+        arguments = sys.argv[1:]
+        provider = arguments[1] if len(arguments) == 2 and arguments[1] in SERVICES else "openai"
+        if arguments[:1] == ["set"] and len(arguments) <= 2 and console(sys.stdin, True):
+            key = getpass.getpass(f"{VENDORS[provider]} API key (скрытый ввод): ")
             if not valid_key(key):
                 raise ValueError
-            store.set_password(SERVICE, ACCOUNT, key)
-            print("Ключ сохранён в системном хранилище.")
+            store.set_password(SERVICES[provider], ACCOUNT, key)
+            print(f"Ключ {VENDORS[provider]} сохранён в системном хранилище.")
             return 0
         if (
-            sys.argv[1:] == ["--pipe"]
+            arguments[:1] == ["--pipe"]
+            and len(arguments) <= 2
             and not console(sys.stdin, True)
             and not console(sys.stdout, False)
         ):
-            key = store.get_password(SERVICE, ACCOUNT) or ""
+            key = store.get_password(SERVICES[provider], ACCOUNT) or ""
             if not valid_key(key):
                 return 1
             sys.stdout.write(key + "\n")
             return 0
     except Exception:
         pass
-    if sys.argv[1:] != ["--pipe"]:
-        print("Ключ недоступен. Настройка: python -m jarvis.security.credentials set")
+    if sys.argv[1:2] != ["--pipe"]:
+        print(
+            "Ключ недоступен. Настройка: "
+            "python -m jarvis.security.credentials set [openai|deepseek]"
+        )
     return 1
 
 

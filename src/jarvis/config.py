@@ -20,12 +20,13 @@ class AppConfig:
     browser_origins: tuple[str, ...] = DEFAULT_ORIGINS
     file_roots: tuple[str, ...] = ()
     planner_model: str = ""
+    # The ordinary-task model. The planner starts here and moves up only on evidence.
+    fast_model: str = "deepseek-flash"
 
     def __post_init__(self) -> None:
-        if self.planner_model and not re.fullmatch(
-            r"[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}", self.planner_model
-        ):
-            raise ValueError("Invalid planner model identifier.")
+        for name, model in (("planner", self.planner_model), ("fast", self.fast_model)):
+            if model and not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}", model):
+                raise ValueError(f"Invalid {name} model identifier.")
         try:
             NetworkPolicy(self.browser_origins)
         except ToolError:
@@ -64,6 +65,7 @@ def load_config(environ: Mapping[str, str] | None = None) -> AppConfig:
         task_timeout_ms=integer("JARVIS_TASK_TIMEOUT_MS", 10000),
         activity_limit=integer("JARVIS_ACTIVITY_LIMIT", 200),
         planner_model=env.get("JARVIS_PLANNER_MODEL", ""),
+        fast_model=env.get("JARVIS_FAST_MODEL", "deepseek-flash"),
         browser_origins=tuple(
             part.strip()
             for part in env.get("JARVIS_BROWSER_ORIGINS", ",".join(DEFAULT_ORIGINS)).split(",")
