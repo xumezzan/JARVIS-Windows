@@ -5,6 +5,7 @@ from typing import Literal, Protocol
 
 from pydantic import Field, model_validator
 
+from jarvis.knowledge.models import KnowledgeContext
 from jarvis.memory.models import MemoryContext
 from jarvis.permissions.engine import Outcome
 from jarvis.permissions.policies import Mode
@@ -43,6 +44,7 @@ class PlannerInput:
     mode: Mode
     catalog_json: str = field(repr=False)
     memory: MemoryContext = field(default_factory=MemoryContext, repr=False)
+    knowledge: KnowledgeContext = field(default_factory=KnowledgeContext, repr=False)
 
 
 class ProviderError(Exception):

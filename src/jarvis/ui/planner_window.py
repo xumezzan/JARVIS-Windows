@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from jarvis.browser.host import BrowserHost
 from jarvis.config import AppConfig
 from jarvis.core.composition import build
+from jarvis.core.context.assembly import assemble
 from jarvis.core.planner.contracts import Limits, PlanResult, Provider, Step
 from jarvis.core.planner.offline import OfflineProvider
 from jarvis.core.planner.openai_provider import OpenAIProvider
@@ -241,13 +242,16 @@ class PlannerWindow(QDialog):
         except (ValueError, MemoryFailure):
             self.status.setText("Проверьте вкладку «Память»: загрузка и лимит выбранных записей.")
             return
+        # Knowledge is selected by the command, so it is assembled here rather than chosen
+        # in a panel; it leaves the machine under the same consent as the chosen labels.
+        context = assemble(command, self.bench.knowledge, memory=memory)
         if (
             self.provider_choice.currentIndex() == 1
-            and not memory.empty
+            and not context.empty
             and not self.memory.cloud_consent.isChecked()
         ):
             self.status.setText(
-                "Во вкладке «Память» разрешите передачу выбранных меток или снимите выбор."
+                "Во вкладке «Память» разрешите передачу контекста задачи или снимите выбор меток."
             )
             return
         provider = self.override_provider
@@ -264,6 +268,13 @@ class PlannerWindow(QDialog):
             else:
                 provider = OfflineProvider()
         self.output.clear()
+        if not context.knowledge.empty:
+            # Say exactly what the command pulled in, rather than letting it travel unseen.
+            named = ", ".join(
+                f"{hint.name} ({', '.join(hint.services) or 'без сервисов'})"
+                for hint in context.knowledge.entities
+            )
+            self.output.appendPlainText("Контекст задачи: " + named)
         self.last_result = None
         self.voice.was_cancelled = False
         self._busy(True)
@@ -275,6 +286,7 @@ class PlannerWindow(QDialog):
             Mode.SIMULATION if self.simulation.isChecked() else Mode.EXECUTE,
             self.limits,
             memory,
+            context.knowledge,
         )
         self.worker.progress_event.connect(self._event)
         self.worker.prompt.connect(self._prompt)

@@ -77,6 +77,10 @@ class KnowledgeStore:
             if db is not None:
                 db.close()
 
+    def _absent(self) -> bool:
+        """A graph nobody has written to yet. Reading one must not create a database."""
+        return not self.path.exists()
+
     @staticmethod
     def _check(cancelled: Event) -> None:
         if cancelled.is_set():
@@ -202,17 +206,33 @@ class KnowledgeStore:
             return self._store(db, self._merge(current, draft, now))
 
     def get(self, entity_id: str, cancelled: Event | None = None) -> Entity | None:
+        if self._absent():
+            return None
         with self._db(cancelled or Event()) as db:
             return self._read(db, entity_id)
 
     def by_reference(
         self, service: str, value: str, cancelled: Event | None = None
     ) -> Entity | None:
+        if self._absent():
+            return None
         with self._db(cancelled or Event()) as db:
             row = db.execute(
                 "SELECT entity FROM external WHERE key=?", (f"{service}:{value}",)
             ).fetchone()
             return None if row is None else self._read(db, row[0])
+
+    def entities(self, cancelled: Event | None = None) -> tuple[Entity, ...]:
+        """Everything known, bounded by MAX_ENTITIES.
+
+        Context assembly scores candidates itself, so the matching rule lives in one place
+        rather than half here and half there. If the cap ever rises far above a few
+        thousand, this is where a term index belongs.
+        """
+        if self._absent():
+            return ()
+        with self._db(cancelled or Event()) as db:
+            return self._all(db)
 
     def search(
         self,
@@ -222,7 +242,7 @@ class KnowledgeStore:
         cancelled: Event | None = None,
     ) -> tuple[Entity, ...]:
         needle = text.strip().casefold()
-        if not needle:
+        if not needle or self._absent():
             return ()
         with self._db(cancelled or Event()) as db:
             found = [
@@ -272,6 +292,8 @@ class KnowledgeStore:
     def links(
         self, entity_id: str, limit: int = 50, cancelled: Event | None = None
     ) -> tuple[Relationship, ...]:
+        if self._absent():
+            return ()
         with self._db(cancelled or Event()) as db:
             rows = db.execute(
                 "SELECT payload FROM links WHERE key LIKE ? OR key LIKE ? LIMIT ?",
@@ -289,6 +311,8 @@ class KnowledgeStore:
 
     def context(self, limit: int = 8, cancelled: Event | None = None) -> KnowledgeContext:
         """The planner's view of what is known. Identifiers stay behind in the store."""
+        if self._absent():
+            return KnowledgeContext()
         with self._db(cancelled or Event()) as db:
             entities = sorted(self._all(db), key=lambda entity: -entity.updated)
         return KnowledgeContext(

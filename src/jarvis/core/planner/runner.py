@@ -18,6 +18,7 @@ from jarvis.core.planner.contracts import (
 from jarvis.core.workflow.journal import Journal
 from jarvis.core.workflow.models import step_key
 from jarvis.core.workflow.store import WorkflowFailure
+from jarvis.knowledge.models import KnowledgeContext
 from jarvis.memory.models import MemoryContext
 from jarvis.permissions.approvals import Action, ApprovalToken
 from jarvis.permissions.engine import Outcome, PermissionEngine
@@ -39,10 +40,12 @@ class Runner:
         *,
         limits: Limits | None = None,
         memory: MemoryContext | None = None,
+        knowledge: KnowledgeContext | None = None,
         journal: Journal | None = None,
         notify: Callable[[str, object], None] = lambda kind, value: None,
     ) -> None:
         self.memory = MemoryContext.model_validate(memory or MemoryContext())
+        self.knowledge = KnowledgeContext.model_validate(knowledge or KnowledgeContext())
         self.registry = registry
         self.engine = engine
         self.provider = provider
@@ -100,6 +103,7 @@ class Runner:
                 self.engine.cancel(self.active)
                 self.active = None
             self.memory = MemoryContext()
+            self.knowledge = KnowledgeContext()
             job.cancel()
             watcher.cancel()
             await asyncio.gather(job, watcher, return_exceptions=True)
@@ -137,7 +141,13 @@ class Runner:
             async with asyncio.timeout(self.limits.provider_seconds):
                 raw = await self.provider.propose(
                     PlannerInput(
-                        command, tuple(answers), tuple(self.steps), mode, catalog, self.memory
+                        command,
+                        tuple(answers),
+                        tuple(self.steps),
+                        mode,
+                        catalog,
+                        self.memory,
+                        self.knowledge,
                     )
                 )
             proposal = Proposal.model_validate(raw, strict=True)

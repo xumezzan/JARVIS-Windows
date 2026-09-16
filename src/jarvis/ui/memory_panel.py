@@ -150,8 +150,11 @@ class MemoryPanel(QWidget):
         self.preview.setMaximumHeight(100)
         self.preview.setAccessibleName("Точный контекст следующей задачи")
         layout.addWidget(self.preview)
+        # Covers the selected labels and any known entity the command names: both describe
+        # people and work, and both would otherwise leave the machine unannounced.
         self.cloud_consent = QCheckBox(
-            "Разрешаю передать показанные метки в OpenAI для одной задачи"
+            "Разрешаю передать показанные метки и названных знакомых лиц и проектов "
+            "в OpenAI для одной задачи"
         )
         layout.addWidget(self.cloud_consent)
         self.status = note("Загрузка профиля…")

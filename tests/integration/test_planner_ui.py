@@ -181,6 +181,38 @@ def test_cloud_requires_disclosure_and_model(qtbot: QtBot, tmp_path: Path) -> No
         window.shutdown()
 
 
+def test_known_people_do_not_leave_the_machine_without_consent(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    from jarvis.knowledge.models import EntityDraft
+    from jarvis.knowledge.store import KnowledgeStore, reference
+
+    KnowledgeStore(tmp_path / "knowledge.sqlite3").upsert(
+        EntityDraft(
+            type="person",
+            name="John Smith",
+            external=(reference("asana", "user_456", "asana.search_tasks", "a" * 32),),
+        )
+    )
+    window = PlannerWindow(AppConfig(tmp_path))
+    qtbot.addWidget(window)
+    try:
+        window.command.setPlainText("создай задачу для John Smith")
+        window.model.setText("test-model")
+        window.provider_choice.setCurrentIndex(1)
+        window.cloud_consent.setChecked(True)
+        window.start()
+        # No label was selected, but the command names a known person: still consent.
+        assert "контекста" in window.status.text()
+        assert not window.output.toPlainText()
+        window.memory.cloud_consent.setChecked(True)
+        window.start()
+        # The run started and says exactly whom it took along.
+        assert "John Smith" in window.output.toPlainText()
+    finally:
+        window.shutdown()
+
+
 @pytest.mark.parametrize("text", ["«Точный текст»", "Jarvis test successful"])
 def test_observed_notepad_then_literal_typing(qtbot: QtBot, tmp_path: Path, text: str) -> None:
     probe = WindowsProbe()
