@@ -19,24 +19,15 @@ from PySide6.QtWidgets import (
 
 from jarvis.browser.host import BrowserHost
 from jarvis.config import AppConfig
+from jarvis.core.composition import build
 from jarvis.core.planner.contracts import Limits, PlanResult, Provider, Step
 from jarvis.core.planner.offline import OfflineProvider
 from jarvis.core.planner.openai_provider import OpenAIProvider
-from jarvis.files.policy import FilePolicy
 from jarvis.mail.session import MailSession
 from jarvis.memory.store import MemoryFailure, MemoryStore
-from jarvis.observability.audit import AuditLog
-from jarvis.permissions.approvals import Action, ApprovalStore
-from jarvis.permissions.engine import PermissionEngine
+from jarvis.permissions.approvals import Action
 from jarvis.permissions.policies import Mode
-from jarvis.platforms.files import LocalFiles
-from jarvis.platforms.windows.transport import ProcessBackend
-from jarvis.security.browser_policy import NetworkPolicy
-from jarvis.tools.browser import register_browser
-from jarvis.tools.files import register_files
-from jarvis.tools.local import local_registry
-from jarvis.tools.outlook import register_outlook
-from jarvis.tools.windows import WindowsBackend, register_windows
+from jarvis.tools.windows import WindowsBackend
 from jarvis.ui.approval_dialog import ApprovalDialog
 from jarvis.ui.mail_panel import MailPanel
 from jarvis.ui.memory_panel import MemoryPanel
@@ -74,18 +65,21 @@ class PlannerWindow(QDialog):
         self.resize(900, 790)
         self.override_provider = provider
         self.limits = limits or Limits()
-        self.host = browser_host or BrowserHost(NetworkPolicy(config.browser_origins))
-        self.registry, self.outbox = local_registry()
-        register_browser(self.registry, self.host, self.host.policy)
-        register_windows(self.registry, windows_backend or ProcessBackend())
-        self.files = FilePolicy(config.file_roots)
-        register_files(self.registry, self.files, LocalFiles())
-        self.mail_session = mail_session or MailSession()
-        register_outlook(self.registry, self.mail_session)
-        self.audit = AuditLog(config.data_dir / "audit.sqlite3")
-        store = ApprovalStore()
-        self.engine = PermissionEngine(self.registry, store, self.audit)
-        self.authority = store.take_authority(self.audit.approved)
+        # One composition root owns what exists in this session; the window only uses it.
+        self.bench = build(
+            config,
+            browser_host=browser_host,
+            windows_backend=windows_backend,
+            mail_session=mail_session,
+        )
+        self.host = self.bench.browser_host
+        self.registry = self.bench.registry
+        self.outbox = self.bench.outbox
+        self.files = self.bench.files
+        self.mail_session = self.bench.mail_session
+        self.audit = self.bench.audit
+        self.engine = self.bench.engine
+        self.authority = self.bench.authority
         self.worker: PlannerWorker | None = None
         self.last_result: PlanResult | None = None
         # The surface that owns approval and clarification dialogs; the main window sets
@@ -429,10 +423,7 @@ class PlannerWindow(QDialog):
             self._finished()
         if not self._closed:
             self._closed = True
-            try:
-                self.host.shutdown()
-            finally:
-                self.audit.close()
+            self.bench.shutdown()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._closing = True
