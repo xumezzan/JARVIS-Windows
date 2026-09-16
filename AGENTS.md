@@ -84,6 +84,21 @@ before its real Windows acceptance scenario passes.
 Before pinning dependencies, check official documentation and the real Windows target.
 Dependency versions are intentionally unpinned until that verification.
 
+## File boundary
+
+Files are reachable only inside an explicit folder allowlist, which defaults to the user's
+own document folders and never includes the installation, the repository or system
+directories. Every path is resolved before it is judged, so a link or a parent segment
+cannot lead outside; the decision is a pure policy hook, so simulation refuses exactly what
+execution refuses. Executable and script extensions are never written, renamed into or
+opened. Only plain text is read or written as text, with a size bound. Reading, listing and
+finding are SAFE; writing, renaming, recycling and opening are CONFIRM. Existing content is
+never replaced unless the caller asks, and a write is staged and renamed into place.
+Deletion goes to the recycle bin and nowhere else: there is no permanent delete, and folders
+are not removed. An observation returns names, sizes and paths, never a directory tree of
+somewhere else. Do not add shell globbing, path patterns from model output, or an
+"open anything" tool.
+
 ## Browser boundary (milestone 4)
 
 Keep browser policy pure and synchronous at registry normalization, including simulation.

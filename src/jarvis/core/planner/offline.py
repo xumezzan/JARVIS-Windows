@@ -9,6 +9,7 @@ from jarvis.permissions.policies import Mode
 
 # A spoken application name, never a path, argument or URL; the adapter resolves it.
 APP_NAME = re.compile(r"[0-9A-Za-z\u0400-\u04FF][0-9A-Za-z\u0400-\u04FF ._+\-]{0,99}")
+FIND = re.compile(r"найди файл\s+([\s\S]+)", re.IGNORECASE)
 LAUNCH = re.compile(r"(?:открой|открыть|запусти|запустить|включи)\s+([\s\S]+)", re.IGNORECASE)
 
 
@@ -99,6 +100,12 @@ class OfflineProvider:
                 if result.get("page"):
                     return call("browser.read", {"target": result["page"]["target"]})
             return Proposal(kind="finish")
+        found = FIND.fullmatch(command)
+        if found:
+            query = " ".join(found.group(1).split())[:200]
+            if count == 0 and query:
+                return call("files.find", {"query": query})
+            return Proposal(kind="finish")
         launch = LAUNCH.fullmatch(command)
         if launch:
             name = " ".join(launch.group(1).split())
@@ -110,7 +117,8 @@ class OfflineProvider:
             kind="clarify",
             question=(
                 "Без модели понимаю простые команды: «открой <название приложения>», "
-                "«проверь систему», «открой https://example.com/», «найди OpenAI». "
+                "«найди файл <имя>», «проверь систему», «открой https://example.com/», "
+                "«найди OpenAI». "
                 "Для произвольных формулировок включите провайдер OpenAI."
             ),
         )
