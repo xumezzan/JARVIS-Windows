@@ -74,6 +74,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.startup_report,
                     {
                         "pid": os.getpid(),
+                        "ppid": os.getppid(),
                         "platform": application.platformName(),
                         "visible": window.isVisible(),
                     },

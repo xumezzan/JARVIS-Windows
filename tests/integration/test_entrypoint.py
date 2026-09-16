@@ -52,6 +52,7 @@ def test_startup_receipt_describes_fresh_shown_window(tmp_path: Path) -> None:
         assert process.returncode == 0
         assert json.loads(receipt.read_text()) == {
             "pid": process.pid,
+            "ppid": os.getpid(),
             "platform": "offscreen",
             "visible": True,
         }

@@ -44,7 +44,12 @@ try:
     while time.monotonic() < deadline and process.poll() is None:
         try:
             value = json.loads(receipt.read_text(encoding="utf-8"))
-            if value == {"pid": process.pid, "platform": "windows", "visible": True}:
+            # A venv redirector starts the interpreter as its child; accept either identity.
+            if isinstance(value, dict) and (
+                value.get("platform") == "windows"
+                and value.get("visible") is True
+                and process.pid in (value.get("pid"), value.get("ppid"))
+            ):
                 observed = True
                 break
         except (OSError, ValueError):
