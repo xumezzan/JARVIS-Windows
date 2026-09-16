@@ -251,7 +251,17 @@ class Runner:
                 continue
             result = json.loads(step.outcome.result_json or "{}")
             if action.tool.startswith("windows."):
-                if args["target"] in [result.get("target"), *result.get("windows", [])]:
+                windows = [result.get("target"), *result.get("windows", [])]
+                if args["target"] not in windows:
+                    continue
+                if args.get("editor") is None:
+                    return True
+                # A named field must come from the same observation as its window.
+                fields = list(result.get("editors", []))
+                fields += [
+                    item.get("editor") for item in windows if isinstance(item, dict) and item
+                ]
+                if args["editor"] in fields:
                     return True
             else:
                 page = result.get("page") or {}

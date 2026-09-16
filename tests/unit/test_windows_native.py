@@ -45,45 +45,155 @@ def test_native_rechecks_identity(
         desktop.resolve(target())
 
 
-def test_nonempty_editor_is_never_modified(
+def prepared(
+    desktop: NativeDesktop,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    editor: Mock,
+    reads: tuple[str, ...] = ("",),
+) -> None:
+    """Point the adapter at one observed, writable field; reads are returned in order."""
+    contents = list(reads)
+
+    def read(*args: object) -> str:
+        return contents.pop(0) if len(contents) > 1 else contents[0]
+
+    monkeypatch.setattr(desktop, "resolve", lambda *args, **kwargs: Mock())
+    monkeypatch.setattr(desktop, "controls", lambda *args: [editor])
+    monkeypatch.setattr(desktop, "editor_target", lambda *args: target().editor)
+    monkeypatch.setattr(desktop, "writable", lambda *args: True)
+    monkeypatch.setattr(desktop, "read", read)
+
+
+def test_existing_content_is_never_replaced_unless_asked(
     desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(desktop, "resolve", lambda *args, **kwargs: Mock())
-    monkeypatch.setattr(desktop, "editor", lambda *args: Mock())
-    monkeypatch.setattr(desktop, "editor_target", lambda *args: target().editor)
-    monkeypatch.setattr(desktop, "read", lambda *args: "unsaved user content")
+    editor = Mock(handle=101)
+    prepared(desktop, monkeypatch, editor=editor, reads=("unsaved user content",))
     with pytest.raises(ToolError, match="target_changed"):
         desktop.dispatch(NativeRequest(operation="type", target=target(), text="new"))
     desktop.user32.SendMessageTimeoutW.assert_not_called()
+    editor.iface_value.SetValue.assert_not_called()
 
 
-def test_tab_switch_denied(desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("selected_tabs", [[999]]),
+        ("automation_id", "other"),
+        ("class_name", "Other"),
+        ("name", "Пароль"),
+        ("control_type", "Document"),
+    ],
+)
+def test_a_changed_field_identity_is_refused(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch, field: str, value: object
+) -> None:
     editor_target = target().editor
     assert editor_target is not None
-    monkeypatch.setattr(desktop, "resolve", lambda *args, **kwargs: Mock())
-    monkeypatch.setattr(desktop, "editor", lambda *args: Mock())
+    monkeypatch.setattr(desktop, "controls", lambda *args: [Mock()])
+    monkeypatch.setattr(
+        desktop, "editor_target", lambda *args: editor_target.model_copy(update={field: value})
+    )
+    with pytest.raises(ToolError, match="target_changed"):
+        desktop.chosen_editor(Mock(), editor_target)
+
+
+def test_a_rebuilt_control_is_still_the_same_field(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Notepad hands out a new window handle between calls; that is not a different field."""
+    editor_target = target().editor
+    assert editor_target is not None
+    control = Mock()
+    monkeypatch.setattr(desktop, "controls", lambda *args: [control])
     monkeypatch.setattr(
         desktop,
         "editor_target",
-        lambda *args: editor_target.model_copy(update={"selected_tabs": [[999]]}),
+        lambda *args: editor_target.model_copy(update={"handle": 999, "runtime_id": [7, 999]}),
     )
+    assert desktop.chosen_editor(Mock(), editor_target) is control
+
+
+def test_two_identical_fields_are_refused_instead_of_guessed(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    editor_target = target().editor
+    assert editor_target is not None
+    monkeypatch.setattr(desktop, "controls", lambda *args: [Mock(), Mock()])
+    monkeypatch.setattr(desktop, "editor_target", lambda *args: editor_target)
     with pytest.raises(ToolError, match="target_changed"):
-        desktop.resolve_editor(target(), empty=True)
+        desktop.chosen_editor(Mock(), editor_target)
 
 
 def test_literal_directed_message_and_readback(
     desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     editor = Mock(handle=101)
-    monkeypatch.setattr(desktop, "resolve_editor", lambda *args, **kwargs: editor)
     text = "Жарвис {ENTER}\nsecond line"
-    monkeypatch.setattr(desktop, "read", lambda *args: text)
+    prepared(desktop, monkeypatch, editor=editor, reads=(text,))
+    monkeypatch.setattr(desktop, "native_handle", lambda *args: 101)
+    result = desktop.dispatch(
+        NativeRequest(operation="type", target=target(), text=text, overwrite=True)
+    )
+    assert result.text_sha256 == text_digest(text)
+    calls = desktop.user32.SendMessageTimeoutW.call_args_list
+    # Replacing selects the whole field first, so it replaces instead of inserting.
+    assert [item.args[1] for item in calls] == [0xB1, 0xC2]
+    assert calls[-1].args[:3] == (101, 0xC2, 1)
+    assert calls[-1].args[4:6] == (2, 1000)
+    desktop.user32.SetForegroundWindow.assert_not_called()
+    editor.iface_value.SetValue.assert_not_called()
+
+
+def test_an_empty_field_is_filled_without_selecting_anything(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    editor = Mock(handle=101)
+    text = "привет"
+    prepared(desktop, monkeypatch, editor=editor, reads=("", text))
+    monkeypatch.setattr(desktop, "native_handle", lambda *args: 101)
+    desktop.dispatch(NativeRequest(operation="type", target=target(), text=text))
+    assert [item.args[1] for item in desktop.user32.SendMessageTimeoutW.call_args_list] == [0xC2]
+
+
+def test_a_field_without_its_own_window_uses_the_value_pattern(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Browser and Electron fields have no native window; keys are still never sent."""
+    editor = Mock(handle=0)
+    text = "привет"
+    prepared(desktop, monkeypatch, editor=editor, reads=("", text))
+    monkeypatch.setattr(desktop, "native_handle", lambda *args: 0)
     result = desktop.dispatch(NativeRequest(operation="type", target=target(), text=text))
     assert result.text_sha256 == text_digest(text)
-    call = desktop.user32.SendMessageTimeoutW.call_args.args
-    assert call[:3] == (101, 0xC2, 1)
-    assert call[4:6] == (2, 1000)
-    desktop.user32.SetForegroundWindow.assert_not_called()
+    editor.iface_value.SetValue.assert_called_once_with(text)
+    desktop.user32.SendMessageTimeoutW.assert_not_called()
+
+
+def test_password_and_read_only_fields_are_never_targets(desktop: NativeDesktop) -> None:
+    secret = Mock()
+    secret.element_info.element.CurrentIsPassword = True
+    assert not desktop.writable(secret)
+    locked = Mock()
+    locked.element_info.element.CurrentIsPassword = False
+    locked.iface_value.CurrentIsReadOnly = True
+    assert not desktop.writable(locked)
+    unknown = Mock()
+    type(unknown.element_info).element = property(lambda self: (_ for _ in ()).throw(OSError()))
+    assert not desktop.writable(unknown)  # Anything unreadable fails closed.
+
+
+def test_listing_fields_reports_only_identity(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(desktop, "resolve", lambda *args, **kwargs: Mock())
+    monkeypatch.setattr(desktop, "controls", lambda *args: [Mock(), Mock()])
+    monkeypatch.setattr(desktop, "editor_target", lambda *args: target().editor)
+    result = desktop.dispatch(NativeRequest(operation="fields", target=target()))
+    assert len(result.editors) == 2
+    # Identity only: the content of a field never leaves the machine in an observation.
+    assert "text" not in result.editors[0].model_dump()
 
 
 def installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *names: str) -> Path:
@@ -158,8 +268,17 @@ def test_ambiguous_editor_fails_closed(desktop: NativeDesktop) -> None:
         desktop.editor(window)
 
 
-def test_notepad_dialog_is_not_a_document_target(desktop: NativeDesktop) -> None:
-    window = Mock(element_info=Mock(class_name="#32770"))
+def test_a_window_without_a_writable_field_is_not_a_typing_target(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(desktop, "controls", lambda *args: [])
     with pytest.raises(ToolError, match="control_unsupported"):
-        desktop.editor(window)
-    window.descendants.assert_not_called()
+        desktop.editor(Mock())
+    # A dialog of the same application is a separate window with its own field identity,
+    # so it can never be mistaken for the document the caller observed.
+    monkeypatch.setattr(desktop, "controls", lambda *args: [Mock()])
+    monkeypatch.setattr(desktop, "editor_target", lambda *args: target().editor)
+    other = target().editor
+    assert other is not None
+    with pytest.raises(ToolError, match="target_changed"):
+        desktop.chosen_editor(Mock(), other.model_copy(update={"automation_id": "dialog"}))

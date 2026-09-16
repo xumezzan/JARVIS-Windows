@@ -27,12 +27,32 @@ def text_digest(text: str) -> str:
 
 
 class EditorTarget(ToolModel):
+    """Identity of one text field inside an already exactly identified window."""
+
     runtime_id: list[int] = Field(min_length=1, max_length=32)
     control_type: Literal["Edit", "Document"]
     automation_id: str = Field(max_length=500)
     class_name: str = Field(max_length=200)
     handle: int = Field(ge=0)
+    name: str = Field(default="", max_length=200)
     selected_tabs: list[list[int]] = Field(default_factory=list, max_length=32)
+
+    @property
+    def identity(self) -> tuple[object, ...]:
+        """What must still match when the field is found again.
+
+        An application may rebuild a control between two calls, which gives it a new window
+        handle and runtime id while it stays the same field of the same document. Role,
+        name, automation id and the selected tab do not change that way, so they are the
+        binding; the surrounding window is identified exactly and separately.
+        """
+        return (
+            self.control_type,
+            self.class_name,
+            self.automation_id,
+            self.name,
+            tuple(tuple(tab) for tab in self.selected_tabs),
+        )
 
 
 class WindowTarget(ToolModel):
@@ -59,11 +79,19 @@ class FocusApp(ToolModel):
     target: WindowTarget
 
 
+class ListFields(ToolModel):
+    target: WindowTarget
+
+
 class TypeText(ToolModel):
     service: Literal["windows-desktop"] = "windows-desktop"
-    action_type: Literal["fill_empty_notepad_editor"] = "fill_empty_notepad_editor"
+    action_type: Literal["fill_text_field"] = "fill_text_field"
     target: WindowTarget
+    # The exact field, as observed in this task. Omitted only when the window has one.
+    editor: EditorTarget | None = None
     text: str = Field(min_length=1, max_length=4000)
+    # Existing content is kept unless the caller asks for it to be replaced.
+    overwrite: bool = False
 
     @field_validator("text")
     @classmethod
@@ -74,28 +102,40 @@ class TypeText(ToolModel):
             raise ValueError("Invalid Unicode scalar.")
         return value
 
+    @property
+    def field(self) -> EditorTarget:
+        chosen = self.editor or self.target.editor
+        if chosen is None:
+            raise ValueError("Select an observed text field.")
+        return chosen
+
     @model_validator(mode="after")
-    def only_empty_notepad(self) -> "TypeText":
-        if self.target.app != "notepad" or not self.target.empty or self.target.editor is None:
-            raise ValueError("Select an observed empty Notepad editor.")
+    def observed_field(self) -> "TypeText":
+        if self.editor is None and self.target.editor is None:
+            raise ValueError("Select an observed text field.")
         return self
 
 
 class WindowsResult(ToolModel):
     windows: list[WindowTarget] = Field(default_factory=list, max_length=100)
+    editors: list[EditorTarget] = Field(default_factory=list, max_length=20)
     target: WindowTarget | None = None
     focused: bool = False
     text_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 
-Operation = Literal["list", "open", "focus", "type", "check_open", "check_target", "verify"]
+Operation = Literal[
+    "list", "open", "focus", "type", "fields", "check_open", "check_target", "verify"
+]
 
 
 class NativeRequest(ToolModel):
     operation: Operation
     app: AppId | None = None
     target: WindowTarget | None = None
+    editor: EditorTarget | None = None
     text: str | None = Field(default=None, max_length=4000)
+    overwrite: bool = False
     result: WindowsResult | None = None
 
 
@@ -132,6 +172,19 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
         await backend.call(NativeRequest(operation="check_target", target=result.target), context)
         return True
 
+    async def fields_check(args: ListFields, context: ExecutionContext) -> bool:
+        await backend.call(NativeRequest(operation="check_target", target=args.target), context)
+        return True
+
+    async def fields_run(args: ListFields, context: ExecutionContext) -> WindowsResult:
+        return await backend.call(NativeRequest(operation="fields", target=args.target), context)
+
+    async def fields_verify(
+        args: ListFields, result: WindowsResult, context: ExecutionContext
+    ) -> bool:
+        await context.checkpoint()
+        return result.target == args.target
+
     async def focus_check(args: FocusApp, context: ExecutionContext) -> bool:
         await backend.call(NativeRequest(operation="check_target", target=args.target), context)
         return True
@@ -151,20 +204,37 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
 
     async def type_check(args: TypeText, context: ExecutionContext) -> bool:
         await backend.call(
-            NativeRequest(operation="check_target", target=args.target, text=args.text), context
+            NativeRequest(
+                operation="check_target",
+                target=args.target,
+                editor=args.editor,
+                text=args.text,
+                overwrite=args.overwrite,
+            ),
+            context,
         )
         return True
 
     async def type_run(args: TypeText, context: ExecutionContext) -> WindowsResult:
         return await backend.call(
-            NativeRequest(operation="type", target=args.target, text=args.text), context
+            NativeRequest(
+                operation="type",
+                target=args.target,
+                editor=args.editor,
+                text=args.text,
+                overwrite=args.overwrite,
+            ),
+            context,
         )
 
     async def type_verify(args: TypeText, result: WindowsResult, context: ExecutionContext) -> bool:
         if result.target != args.target or result.text_sha256 != text_digest(args.text):
             return False
         checked = await backend.call(
-            NativeRequest(operation="verify", target=args.target, result=result), context
+            NativeRequest(
+                operation="verify", target=args.target, editor=args.editor, result=result
+            ),
+            context,
         )
         return checked.text_sha256 == text_digest(args.text)
 
@@ -199,6 +269,20 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
     )
     registry.register(
         ToolSpec(
+            "windows.get_text_fields",
+            "Найти текстовые поля точно выбранного окна.",
+            Risk.SAFE,
+            ListFields,
+            WindowsResult,
+            fields_check,
+            fields_run,
+            fields_verify,
+            timeout_seconds=30,
+            cancellation=cancellation,
+        )
+    )
+    registry.register(
+        ToolSpec(
             "windows.focus_app",
             "Фокус на точно выбранное окно.",
             Risk.SAFE,
@@ -214,7 +298,7 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
     registry.register(
         ToolSpec(
             "windows.type_text",
-            "Ввести буквальный текст в пустой Блокнот.",
+            "Ввести буквальный текст в наблюдаемое текстовое поле.",
             Risk.CONFIRM,
             TypeText,
             WindowsResult,
