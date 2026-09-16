@@ -308,16 +308,27 @@ async def test_oauth_failure_and_changed_home_id(mail: MailHarness) -> None:
 
 
 @pytest.mark.asyncio
-async def test_attachment_helper_regular_size_and_symlink(tmp_path: Path) -> None:
+async def test_attachment_helper_rejects_symlink(tmp_path: Path) -> None:
+    from jarvis.mail.attachments import read_attachment
+
+    file = tmp_path / "attachment.txt"
+    file.write_bytes(b"exact test data")
+    alias = tmp_path / "alias.txt"
+    try:
+        alias.symlink_to(file)
+    except OSError:
+        pytest.skip("Symlink creation needs Windows Developer Mode or an elevated session.")
+    with pytest.raises(MailFailure):
+        await read_attachment(str(alias))
+
+
+@pytest.mark.asyncio
+async def test_attachment_helper_regular_and_size(tmp_path: Path) -> None:
     from jarvis.mail.attachments import read_attachment
 
     file = tmp_path / "attachment.txt"
     file.write_bytes(b"exact test data")
     assert await read_attachment(str(file)) == b"exact test data"
-    alias = tmp_path / "alias.txt"
-    alias.symlink_to(file)
-    with pytest.raises(MailFailure):
-        await read_attachment(str(alias))
     file.write_bytes(b"x" * 32769)
     with pytest.raises(MailFailure):
         await read_attachment(str(file))
