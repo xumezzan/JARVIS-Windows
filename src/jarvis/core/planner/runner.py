@@ -15,6 +15,10 @@ from jarvis.core.planner.contracts import (
     ProviderError,
     Step,
 )
+from jarvis.core.workflow.journal import Journal
+from jarvis.core.workflow.models import step_key
+from jarvis.core.workflow.store import WorkflowFailure
+from jarvis.knowledge.models import KnowledgeContext
 from jarvis.memory.models import MemoryContext
 from jarvis.permissions.approvals import Action, ApprovalToken
 from jarvis.permissions.engine import Outcome, PermissionEngine
@@ -36,15 +40,19 @@ class Runner:
         *,
         limits: Limits | None = None,
         memory: MemoryContext | None = None,
+        knowledge: KnowledgeContext | None = None,
+        journal: Journal | None = None,
         notify: Callable[[str, object], None] = lambda kind, value: None,
     ) -> None:
         self.memory = MemoryContext.model_validate(memory or MemoryContext())
+        self.knowledge = KnowledgeContext.model_validate(knowledge or KnowledgeContext())
         self.registry = registry
         self.engine = engine
         self.provider = provider
         self.approve = approve
         self.clarify = clarify
         self.limits = limits or Limits()
+        self.journal = journal
         self.notify = notify
         self.cancelled = Event()
         self.active: Action | None = None
@@ -95,6 +103,7 @@ class Runner:
                 self.engine.cancel(self.active)
                 self.active = None
             self.memory = MemoryContext()
+            self.knowledge = KnowledgeContext()
             job.cancel()
             watcher.cancel()
             await asyncio.gather(job, watcher, return_exceptions=True)
@@ -132,7 +141,13 @@ class Runner:
             async with asyncio.timeout(self.limits.provider_seconds):
                 raw = await self.provider.propose(
                     PlannerInput(
-                        command, tuple(answers), tuple(self.steps), mode, catalog, self.memory
+                        command,
+                        tuple(answers),
+                        tuple(self.steps),
+                        mode,
+                        catalog,
+                        self.memory,
+                        self.knowledge,
                     )
                 )
             proposal = Proposal.model_validate(raw, strict=True)
@@ -203,15 +218,36 @@ class Runner:
                 self.engine.cancel(action)
                 self.active = None
                 return PlanResult("error", tuple(self.steps), "unobserved_target")
+            # Reads leave nothing behind, so only effects are journalled and guarded.
+            journal = self.journal if action.risk is not Risk.SAFE else None
+            key = step_key(action.tool, action.payload)
+            if journal is not None and journal.issued(key):
+                self.engine.cancel(action)
+                self.active = None
+                return PlanResult("error", tuple(self.steps), "duplicate_effect")
             token = await self.approve(action) if action.risk is Risk.CONFIRM else None
             if self.cancelled.is_set():
                 raise asyncio.CancelledError
+            if journal is not None:
+                try:
+                    # Written before the call: a timeout must not look like an untouched world.
+                    journal.issue(len(self.steps), action.tool, key)
+                except WorkflowFailure:
+                    self.engine.cancel(action)
+                    self.active = None
+                    return PlanResult("error", tuple(self.steps), "journal_unavailable")
             self.notify("executing", action.tool)
             outcome = await self.engine.execute(action, token)
             self.active = None
             step = Step(action.tool, outcome)
             self.steps.append(step)
             self.notify("tool", step)
+            if journal is not None:
+                try:
+                    journal.complete(key, outcome)
+                except WorkflowFailure:
+                    # The step stays unresolved, so a later attempt still refuses to repeat it.
+                    return PlanResult("error", tuple(self.steps), "journal_unavailable")
             if outcome.status not in (Status.SUCCESS, Status.SIMULATED):
                 return PlanResult(
                     "cancelled"

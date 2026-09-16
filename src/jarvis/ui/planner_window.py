@@ -19,24 +19,18 @@ from PySide6.QtWidgets import (
 
 from jarvis.browser.host import BrowserHost
 from jarvis.config import AppConfig
+from jarvis.core.composition import build
+from jarvis.core.context.assembly import assemble
 from jarvis.core.planner.contracts import Limits, PlanResult, Provider, Step
+from jarvis.core.planner.deepseek_provider import DeepSeekProvider
 from jarvis.core.planner.offline import OfflineProvider
 from jarvis.core.planner.openai_provider import OpenAIProvider
-from jarvis.files.policy import FilePolicy
+from jarvis.core.planner.routing import EscalatingRouter
 from jarvis.mail.session import MailSession
 from jarvis.memory.store import MemoryFailure, MemoryStore
-from jarvis.observability.audit import AuditLog
-from jarvis.permissions.approvals import Action, ApprovalStore
-from jarvis.permissions.engine import PermissionEngine
+from jarvis.permissions.approvals import Action
 from jarvis.permissions.policies import Mode
-from jarvis.platforms.files import LocalFiles
-from jarvis.platforms.windows.transport import ProcessBackend
-from jarvis.security.browser_policy import NetworkPolicy
-from jarvis.tools.browser import register_browser
-from jarvis.tools.files import register_files
-from jarvis.tools.local import local_registry
-from jarvis.tools.outlook import register_outlook
-from jarvis.tools.windows import WindowsBackend, register_windows
+from jarvis.tools.windows import WindowsBackend
 from jarvis.ui.approval_dialog import ApprovalDialog
 from jarvis.ui.mail_panel import MailPanel
 from jarvis.ui.memory_panel import MemoryPanel
@@ -72,20 +66,25 @@ class PlannerWindow(QDialog):
         self.setWindowTitle("Jarvis — планировщик команд")
         self.setWindowModality(Qt.WindowModality.WindowModal)
         self.resize(900, 790)
+        self.config = config
         self.override_provider = provider
+        self.router: EscalatingRouter | None = None
         self.limits = limits or Limits()
-        self.host = browser_host or BrowserHost(NetworkPolicy(config.browser_origins))
-        self.registry, self.outbox = local_registry()
-        register_browser(self.registry, self.host, self.host.policy)
-        register_windows(self.registry, windows_backend or ProcessBackend())
-        self.files = FilePolicy(config.file_roots)
-        register_files(self.registry, self.files, LocalFiles())
-        self.mail_session = mail_session or MailSession()
-        register_outlook(self.registry, self.mail_session)
-        self.audit = AuditLog(config.data_dir / "audit.sqlite3")
-        store = ApprovalStore()
-        self.engine = PermissionEngine(self.registry, store, self.audit)
-        self.authority = store.take_authority(self.audit.approved)
+        # One composition root owns what exists in this session; the window only uses it.
+        self.bench = build(
+            config,
+            browser_host=browser_host,
+            windows_backend=windows_backend,
+            mail_session=mail_session,
+        )
+        self.host = self.bench.browser_host
+        self.registry = self.bench.registry
+        self.outbox = self.bench.outbox
+        self.files = self.bench.files
+        self.mail_session = self.bench.mail_session
+        self.audit = self.bench.audit
+        self.engine = self.bench.engine
+        self.authority = self.bench.authority
         self.worker: PlannerWorker | None = None
         self.last_result: PlanResult | None = None
         # The surface that owns approval and clarification dialogs; the main window sets
@@ -121,12 +120,17 @@ class PlannerWindow(QDialog):
             )
         )
         self.provider_choice = QComboBox()
-        self.provider_choice.addItems(["Офлайн: учебные команды, без LLM", "OpenAI: Responses API"])
+        self.provider_choice.addItems(
+            [
+                "Офлайн: учебные команды, без LLM",
+                "Облако: DeepSeek, сложные задачи — OpenAI",
+            ]
+        )
         layout.addWidget(self.provider_choice)
         self.cloud_box = QWidget()
         cloud = QVBoxLayout(self.cloud_box)
         self.model = QLineEdit(config.planner_model)
-        self.model.setPlaceholderText("Идентификатор доступной вам модели Responses API")
+        self.model.setPlaceholderText("Модель OpenAI для сложных задач, например gpt-5.4-mini")
         self.model.setMaxLength(100)
         cloud.addWidget(self.model)
         cloud.addWidget(
@@ -137,7 +141,8 @@ class PlannerWindow(QDialog):
             )
         )
         self.cloud_consent = QCheckBox(
-            "Разрешаю отправить команду, уточнения и результаты инструментов в OpenAI"
+            "Разрешаю отправить команду, уточнения и результаты инструментов в DeepSeek, "
+            "а для сложных задач — в OpenAI"
         )
         cloud.addWidget(self.cloud_consent)
         cloud.addWidget(
@@ -247,13 +252,16 @@ class PlannerWindow(QDialog):
         except (ValueError, MemoryFailure):
             self.status.setText("Проверьте вкладку «Память»: загрузка и лимит выбранных записей.")
             return
+        # Knowledge is selected by the command, so it is assembled here rather than chosen
+        # in a panel; it leaves the machine under the same consent as the chosen labels.
+        context = assemble(command, self.bench.knowledge, memory=memory)
         if (
             self.provider_choice.currentIndex() == 1
-            and not memory.empty
+            and not context.empty
             and not self.memory.cloud_consent.isChecked()
         ):
             self.status.setText(
-                "Во вкладке «Память» разрешите передачу выбранных меток или снимите выбор."
+                "Во вкладке «Память» разрешите передачу контекста задачи или снимите выбор меток."
             )
             return
         provider = self.override_provider
@@ -263,13 +271,26 @@ class PlannerWindow(QDialog):
                     self.status.setText("Для OpenAI нужно разрешить передачу команды и наблюдений.")
                     return
                 try:
-                    provider = OpenAIProvider(self.model.text())
+                    # Ordinary work runs on the fast model; the strong one takes over only
+                    # when the task proves multi-layered or the fast answer is unusable.
+                    self.router = EscalatingRouter(
+                        DeepSeekProvider(self.config.fast_model),
+                        OpenAIProvider(self.model.text()),
+                    )
+                    provider = self.router
                 except ValueError:
                     self.status.setText("Укажите идентификатор модели Responses API.")
                     return
             else:
                 provider = OfflineProvider()
         self.output.clear()
+        if not context.knowledge.empty:
+            # Say exactly what the command pulled in, rather than letting it travel unseen.
+            named = ", ".join(
+                f"{hint.name} ({', '.join(hint.services) or 'без сервисов'})"
+                for hint in context.knowledge.entities
+            )
+            self.output.appendPlainText("Контекст задачи: " + named)
         self.last_result = None
         self.voice.was_cancelled = False
         self._busy(True)
@@ -281,6 +302,7 @@ class PlannerWindow(QDialog):
             Mode.SIMULATION if self.simulation.isChecked() else Mode.EXECUTE,
             self.limits,
             memory,
+            context.knowledge,
         )
         self.worker.progress_event.connect(self._event)
         self.worker.prompt.connect(self._prompt)
@@ -429,10 +451,7 @@ class PlannerWindow(QDialog):
             self._finished()
         if not self._closed:
             self._closed = True
-            try:
-                self.host.shutdown()
-            finally:
-                self.audit.close()
+            self.bench.shutdown()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._closing = True
