@@ -96,10 +96,17 @@ async def exchange(
 
 
 class LocalRecorder:
-    async def record(self, released: Event, ready: Callable[[], None]) -> AudioClip:
+    async def record(
+        self, released: Event, ready: Callable[[], None], listen: bool = False
+    ) -> AudioClip:
         if released.is_set():
             raise asyncio.CancelledError
-        data = await exchange({"operation": "record"}, seconds=35, released=released, ready=ready)
+        data = await exchange(
+            {"operation": "record", "listen": listen},
+            seconds=70 if listen else 35,
+            released=released,
+            ready=ready,
+        )
         try:
             return AudioClip(base64.b64decode(data["pcm"], validate=True))
         except Exception:

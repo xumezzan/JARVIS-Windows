@@ -15,6 +15,7 @@ from jarvis.core.planner.offline import call
 from jarvis.ui.planner_window import PlannerWindow
 from jarvis.ui.voice_panel import HoldButton, VoicePanel
 from jarvis.ui.voice_worker import VoiceWorker
+from jarvis.voice.contracts import ERROR_TEXT
 
 
 def make_window(qtbot: QtBot, tmp_path: Path, fixture: VoiceFixture) -> PlannerWindow:
@@ -255,5 +256,49 @@ def test_escape_in_modal_cancels_voice_and_plan(qtbot: QtBot, tmp_path: Path) ->
         qtbot.waitUntil(lambda: panel.worker is None)
         assert result.args == ["cancelled"] and fixture.record_closed.is_set()
         assert window.outbox.count == 0 and not window.voice.deadline.isActive()
+    finally:
+        window.shutdown()
+
+
+def test_hands_free_listens_again_and_only_obeys_its_name(qtbot: QtBot, tmp_path: Path) -> None:
+    fixture = VoiceFixture(text="сегодня дождь")
+    window = make_window(qtbot, tmp_path, fixture)
+    panel = window.voice
+    try:
+        assert not panel.hands_free and panel.worker is None  # Never listening by default.
+        panel.set_hands_free(True)
+        qtbot.waitUntil(lambda: fixture.listens == 1)
+        # A phrase that does not name the assistant is dropped, and capture resumes.
+        fixture.speech_ends.set()
+        qtbot.waitUntil(lambda: "Пропущено" in panel.status.text(), timeout=5000)
+        assert window.command.toPlainText() == ""
+        fixture.speech_ends.clear()
+        qtbot.waitUntil(lambda: fixture.listens == 2, timeout=5000)
+        # Naming the assistant submits only the words that follow it.
+        fixture.text = "джарвис проверь систему"
+        fixture.speech_ends.set()
+        qtbot.waitUntil(lambda: window.command.toPlainText() == "проверь систему", timeout=5000)
+        panel.set_hands_free(False)
+        qtbot.waitUntil(lambda: panel.worker is None, timeout=5000)
+        captures = fixture.captures
+        qtbot.wait(400)
+        assert fixture.captures == captures  # Switching off really stops the microphone.
+    finally:
+        window.shutdown()
+
+
+def test_hands_free_stops_on_a_device_failure(qtbot: QtBot, tmp_path: Path) -> None:
+    fixture = VoiceFixture()
+    fixture.error = "device"
+    window = make_window(qtbot, tmp_path, fixture)
+    panel = window.voice
+    try:
+        panel.set_hands_free(True)
+        fixture.speech_ends.set()
+        qtbot.waitUntil(lambda: not panel.hands_free, timeout=5000)
+        assert ERROR_TEXT["device"] in panel.status.text()
+        captures = fixture.captures
+        qtbot.wait(400)
+        assert fixture.captures == captures
     finally:
         window.shutdown()

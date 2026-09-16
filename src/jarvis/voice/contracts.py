@@ -82,7 +82,10 @@ class Transcript:
 
 
 class Recorder(Protocol):
-    async def record(self, released: Event, ready: Callable[[], None]) -> AudioClip: ...
+    # listen=True lets the adapter end the phrase on silence instead of on a held control.
+    async def record(
+        self, released: Event, ready: Callable[[], None], listen: bool = False
+    ) -> AudioClip: ...
 
 
 class Recognizer(Protocol):

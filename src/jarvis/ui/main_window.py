@@ -283,6 +283,14 @@ class MainWindow(QMainWindow):
         self.autonomy.setChecked(True)
         self.autonomy.setAccessibleName("Автономный режим")
         center.addWidget(self.autonomy, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.hands_free = QCheckBox("Свободные руки: слушать по слову «Джарвис»")
+        self.hands_free.setAccessibleName("Постоянное прослушивание микрофона")
+        self.hands_free.setToolTip(
+            "Микрофон слушает без удержания кнопки, пока переключатель включён. "
+            "Выполняется только фраза, начинающаяся со слова «Джарвис»."
+        )
+        self.hands_free.toggled.connect(self._hands_free)
+        center.addWidget(self.hands_free, 0, Qt.AlignmentFlag.AlignHCenter)
         command_label = label("Ваша команда", "sectionHint")
         center.addWidget(command_label)
         command_frame = QFrame()
@@ -566,6 +574,14 @@ class MainWindow(QMainWindow):
         self.planner_window.setStyleSheet(self.styleSheet())
         return self.planner_window
 
+    @Slot(bool)
+    def _hands_free(self, enabled: bool) -> None:
+        """Standing capture: explicit, visible, never on by default and off on shutdown."""
+        if self.voice is not None:
+            self.voice.set_hands_free(enabled and not self._closing)
+            if enabled and not self.voice.hands_free:
+                self.hands_free.setChecked(False)
+
     @Slot(str)
     def _spoken(self, command: str) -> None:
         """A finished transcript runs at once: speaking the command is the submission."""
@@ -686,6 +702,9 @@ class MainWindow(QMainWindow):
 
     def shutdown(self) -> None:
         """Fallback for application-level quit; planner shutdown joins its worker thread."""
+        self._closing = True
+        if self.voice is not None:
+            self.voice.set_hands_free(False)
         if self.running:
             self.stop()
         if self.planner_window is not None:
