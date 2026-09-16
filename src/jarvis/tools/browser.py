@@ -65,7 +65,7 @@ class SearchWeb(BrowserArgs):
 
     @model_validator(mode="after")
     def exact_destination(self) -> "SearchWeb":
-        url = "https://html.duckduckgo.com/html/?" + urlencode({"q": self.query})
+        url = "https://lite.duckduckgo.com/lite/?" + urlencode({"q": self.query})
         if self.url and self.url != url:
             raise ValueError("Search destination changed.")
         object.__setattr__(self, "url", url)

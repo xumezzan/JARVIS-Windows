@@ -152,6 +152,27 @@ async def test_redirect_blocked_without_following(harness: Harness) -> None:
     assert (await harness.call("get_tabs", {})).status is Status.SUCCESS
 
 
+async def test_challenge_response_is_not_an_observation(harness: Harness) -> None:
+    """A search origin answers an anti-bot challenge with 202; it is not the page asked for."""
+    page = await harness.opened()
+    result = await harness.call(
+        "navigate", {"target": page.target.model_dump(), "url": harness.site.origin + "/challenge"}
+    )
+    assert result.status is Status.ERROR
+    assert any(row[1] == "/challenge" for row in harness.site.seen)
+    assert (await harness.call("get_tabs", {})).status is Status.SUCCESS
+
+
+async def test_requests_name_the_client_without_imitating_a_browser(harness: Harness) -> None:
+    await harness.opened()
+    assert harness.site.agents, "no request reached the fixture site"
+    for agent in harness.site.agents:
+        assert agent is not None and agent.startswith("Jarvis/"), agent
+        assert not any(
+            name in agent for name in ("Mozilla", "Chrome", "Safari", "AppleWebKit", "Gecko")
+        ), agent
+
+
 async def test_network_failure_is_not_retried(harness: Harness) -> None:
     result = await harness.call("open", {"url": harness.site.origin + "/drop"})
     assert result.status is Status.ERROR
@@ -253,5 +274,5 @@ async def test_registered_search_with_controlled_transport(
     result = BrowserResult.model_validate_json(outcome.result_json or "")
     assert result.page is not None
     assert result.page.title == "Result" and "OpenAI" in result.page.text
-    assert requests == [RequestIntent(url="https://html.duckduckgo.com/html/?q=OpenAI")]
+    assert requests == [RequestIntent(url="https://lite.duckduckgo.com/lite/?q=OpenAI")]
     assert [row[1] for row in harness.site.seen] == ["/find?q=OpenAI"]

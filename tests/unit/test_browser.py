@@ -236,7 +236,7 @@ def test_exact_origins_and_fixture_post_boundary() -> None:
 def test_search_destination_contains_exact_query() -> None:
     assert (
         SearchWeb(query="OpenAI & test").url
-        == "https://html.duckduckgo.com/html/?q=OpenAI+%26+test"
+        == "https://lite.duckduckgo.com/lite/?q=OpenAI+%26+test"
     )
     with pytest.raises(ValidationError):
         SearchWeb(query="OpenAI", url="https://example.com/")

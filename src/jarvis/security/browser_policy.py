@@ -12,7 +12,7 @@ DEFAULT_ORIGINS = (
     "https://example.com",
     "https://www.python.org",
     "https://docs.python.org",
-    "https://html.duckduckgo.com",
+    "https://lite.duckduckgo.com",
 )
 
 
