@@ -15,6 +15,8 @@ from pathlib import Path
 from jarvis.browser.host import BrowserHost
 from jarvis.config import AppConfig
 from jarvis.connectors.base import ConnectorRegistry
+from jarvis.connectors.fireflies.connector import FirefliesConnector
+from jarvis.connectors.fireflies.tools import register_fireflies
 from jarvis.connectors.microsoft.calendar import CalendarConnector
 from jarvis.connectors.microsoft.tools import register_calendar
 from jarvis.core.workflow.store import WorkflowStore
@@ -86,6 +88,9 @@ def build(
     calendar = CalendarConnector(session)
     register_calendar(registry, calendar, matrix)
     connectors.add(calendar)
+    fireflies = FirefliesConnector()
+    register_fireflies(registry, fireflies, matrix)
+    connectors.add(fireflies)
     audit = AuditLog(config.data_dir / "audit.sqlite3")
     approvals = ApprovalStore()
     engine = PermissionEngine(registry, approvals, audit)

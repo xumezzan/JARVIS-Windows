@@ -8,42 +8,16 @@ into a concrete range is the planner's job; this layer only accepts the result.
 Addresses are exact, as in mail: a display name or an alias never identifies an invitee.
 """
 
-import re
-from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
+from jarvis.connectors.instants import Instant, span, validate_instant
 from jarvis.mail.models import Account, Address, Identifier, validate_address
 from jarvis.tools.base import ToolModel
 
-INSTANT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 MAX_ATTENDEES = 20
 MAX_EVENTS = 25
-# Graph rejects ranges far wider than this, and a plan asking for one has lost its way.
-MAX_RANGE_DAYS = 62
-
-
-def validate_instant(value: str) -> str:
-    if not INSTANT.fullmatch(value):
-        raise ValueError("Укажите время в UTC в виде 2026-09-16T14:00:00Z.")
-    try:
-        datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-    except ValueError:
-        raise ValueError("Несуществующая дата или время.") from None
-    return value
-
-
-Instant = Annotated[str, Field(min_length=20, max_length=20)]
-
-
-def span(start: str, end: str) -> None:
-    first = datetime.strptime(start, "%Y-%m-%dT%H:%M:%SZ")
-    last = datetime.strptime(end, "%Y-%m-%dT%H:%M:%SZ")
-    if last <= first:
-        raise ValueError("Конец интервала должен быть позже начала.")
-    if (last - first).days > MAX_RANGE_DAYS:
-        raise ValueError("Интервал слишком широкий.")
 
 
 Response = Literal["none", "accepted", "declined", "tentative"]
