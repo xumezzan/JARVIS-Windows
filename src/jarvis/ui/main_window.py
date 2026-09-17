@@ -30,6 +30,7 @@ from jarvis.core.planner.contracts import Step
 from jarvis.observability.events import EVENT_TEXT, ShellEvent
 from jarvis.observability.logging import ShellLog
 from jarvis.security.browser_policy import NetworkPolicy
+from jarvis.security.credentials import setup_command
 from jarvis.ui.activity_log import ActivityLog
 from jarvis.ui.components import IconButton, MonthCalendar, Panel
 from jarvis.ui.dashboard import OrbWidget, line_icon
@@ -41,10 +42,7 @@ from jarvis.ui.voice_panel import HoldButton, VoicePanel
 
 # Finite planner error categories rendered as advice; never arbitrary text from a tool.
 ERROR_ADVICE: dict[str, str] = {
-    "credentials": (
-        "Ключ модели не найден. В терминале выполните: "
-        "python -m jarvis.security.credentials set deepseek"
-    ),
+    "credentials": ("Ключ модели не найден. В терминале выполните: " + setup_command("deepseek")),
     "provider_failed": "Модель не ответила. Проверьте ключ, идентификатор модели и сеть.",
     "provider_output": "Ответ модели не соответствует схеме планировщика.",
     "context_limit": "Запрос к модели превысил допустимый размер.",
@@ -616,13 +614,17 @@ class MainWindow(QMainWindow):
             )
         )
         model = QPlainTextEdit(planner.model.text() or self.config.planner_model)
+        model.setPlaceholderText("например, gpt-5.4-mini")
         model.setFixedHeight(46)
         body.addWidget(model)
         body.addWidget(
             label(
                 "Ключи вводите сами в терминале, по одному на поставщика: "
-                "python -m jarvis.security.credentials set deepseek и то же самое с openai. "
-                "Они хранятся в Windows Credential Locker и не попадают в команду или журнал."
+                + setup_command("deepseek")
+                + "  и  "
+                + setup_command("openai")
+                + ". Они хранятся в Windows Credential Locker и не попадают "
+                "в команду или журнал."
             )
         )
         consent = QCheckBox(

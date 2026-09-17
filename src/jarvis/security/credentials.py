@@ -25,6 +25,18 @@ def service_of(provider: str) -> str:
     return SERVICES[provider]
 
 
+def setup_command(provider: str = "") -> str:
+    """The command that actually works here: this interpreter, not whichever is on PATH.
+
+    Jarvis runs from its own virtual environment, so a bare `python` finds an interpreter
+    that has never heard of it and answers with a missing-module error. Printing the real
+    executable turns the advice into something the owner can paste and have work.
+    """
+    executable = sys.executable or "python"
+    quoted = f'"{executable}"' if " " in executable else executable
+    return f"{quoted} -m jarvis.security.credentials set {provider}".rstrip()
+
+
 async def load_api_key(provider: str = "openai") -> str:
     service_of(provider)  # Refuse an unknown vendor before spawning anything.
     launch = asyncio.create_task(
@@ -126,10 +138,7 @@ def main() -> int:
     except Exception:
         pass
     if sys.argv[1:2] != ["--pipe"]:
-        print(
-            "Ключ недоступен. Настройка: "
-            "python -m jarvis.security.credentials set [openai|deepseek|fireflies]"
-        )
+        print("Ключ недоступен. Настройка: " + setup_command("[openai|deepseek|fireflies]"))
     return 1
 
 

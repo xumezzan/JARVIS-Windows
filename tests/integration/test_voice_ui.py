@@ -23,6 +23,9 @@ def make_window(qtbot: QtBot, tmp_path: Path, fixture: VoiceFixture) -> PlannerW
     window = PlannerWindow(AppConfig(tmp_path), voice_panel=panel)
     qtbot.addWidget(window)
     window.show()
+    # The memory panel reads its store on the next turn and holds the run button until it
+    # is done; waiting here keeps that start-up out of what these tests are measuring.
+    qtbot.waitUntil(lambda: window.memory.worker is None, timeout=15000)
     return window
 
 
@@ -203,7 +206,10 @@ def test_device_errors_allow_text_fallback(qtbot: QtBot, tmp_path: Path, error: 
     window = make_window(qtbot, tmp_path, fixture)
     try:
         record(qtbot, window.voice)
-        assert window.worker is None and window.run_button.isEnabled()
+        assert window.worker is None
+        # Typing stays available after a device failure; other panels of the window may
+        # still be settling, so wait for the button rather than sampling it once.
+        qtbot.waitUntil(window.run_button.isEnabled, timeout=15000)
         assert fixture.record_closed.is_set()
         window.command.setPlainText("проверь систему")
         with qtbot.waitSignal(window.task_finished):
