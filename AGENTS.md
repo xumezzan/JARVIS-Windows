@@ -2,11 +2,21 @@
 
 ## Scope and source
 
-The user-supplied development plan v1.0 defines the product. Milestones 0–8 are implemented
-locally. Live Outlook OAuth/mail, model, real voice hardware and native Windows acceptance
-remain unverified.
-See `docs/ROADMAP.md` for verification status and the next prompt.
-Work on the milestone requested by the user; do not implement later stages early.
+The product is a personal AI computer agent for Windows. The owner states a goal, not a
+keystroke, and the assistant decides which applications and services the goal needs, plans
+the work and carries it out, stopping only where a mistake would be expensive or
+irreversible. `docs/PRD.md` defines it and `docs/AGENT_PLAN.md` plans it;
+`docs/ROADMAP.md` holds what is done, what is open and what runs next.
+
+The earlier documents — the v1.0 milestone plan, `docs/AMBIENT_PLAN.md` and
+`docs/PLATFORM_PLAN.md` — describe work that already landed and the decisions behind it.
+Where they look forward, `docs/AGENT_PLAN.md` supersedes them; in particular it reverses
+their "no screen reading, no clicks, no clipboard" position by explicit owner decision.
+
+Milestones 0–9 and the 0.2–0.3 phases are implemented locally. Clean Windows installation,
+live Outlook OAuth/mail, live DeepSeek, real voice hardware and the full Windows acceptance
+remain unverified, and they block every phase of the agent plan.
+Work on the phase requested by the user; do not implement later phases early.
 Inspect existing instructions and changes before edits and preserve unrelated work.
 
 ## Branches, commits and pull requests
@@ -53,8 +63,13 @@ Do not treat fixture checks or a shown shell as completion of the full MVP scena
   `observability` boundaries. Platform imports belong in platform adapters.
 - Planner calls must use registered tools with strict input/output schemas.
 - Route every tool invocation through a deterministic PermissionEngine.
-- No arbitrary model-generated code, unrestricted shell, or fixed-coordinate primary automation.
-- Prefer official APIs, OAuth adapters, Playwright, then Windows UI Automation.
+- No arbitrary model-generated code and no unrestricted shell, ever. Automation acts on
+  semantic elements the task observed; fixed coordinates are a last-resort fallback that is
+  never the primary path, never on by default and never silent (decision Р2 in
+  `docs/AGENT_PLAN.md`).
+- Prefer official APIs, OAuth adapters, Playwright, then Windows UI Automation. Where two
+  services both have an API, a scenario may not route between them through the clipboard,
+  the screen or coordinates; a test enforces this rather than a convention.
 - Start every Qt worker through `ui/workers.py`. A widget can be deleted while its thread
   runs, and a running `QThread` that loses its last reference aborts the whole process.
 
@@ -70,7 +85,8 @@ Do not treat fixture checks or a shown shell as completion of the full MVP scena
   A new capability starts at CONFIRM and is lowered only by a deliberate decision.
 - CONFIRM requires an exact, expiring, single-use approval from a verified UI event.
   Bind service/account/target/content/attachments and invalidate on any change or cancellation.
-- CRITICAL is disabled for the MVP; BLOCKED never executes.
+- CRITICAL stays disabled until decision Р5 in `docs/AGENT_PLAN.md` is taken and its
+  reinforced confirmation exists; BLOCKED never executes.
 - Simulation runs policy checks but never invokes real execution adapters.
 - Bound tasks, support cancellation, verify results, and audit actual outcomes.
 - No hidden microphone recording. No success claim from a plan alone.
@@ -146,8 +162,10 @@ not Windows acceptance or proof that a public search engine returned actual sear
 ## Planner boundary (milestone 5)
 
 Keep one proposed tool per step, bounded steps/questions/provider and total time, no retries
-of issued effects, and factual results generated from engine outcomes. Reject unobserved
-Windows/browser targets. Clarification is user input, never approval. Only the existing
+of issued effects, and factual results generated from engine outcomes. The bound may be
+raised for a long task only together with the durable run that carries it: a journal, an
+idempotency key per effect and resumption after a restart, never on trust alone. Reject
+unobserved Windows/browser targets. Clarification is user input, never approval. Only the existing
 verified approval button owns authority; providers receive no approval capability.
 Default to offline recipes and simulation. Cloud use requires explicit UI disclosure;
 it sends commands and observations even when tools are simulated. Model output and page
@@ -265,3 +283,54 @@ retry. Keep account/message provenance and exact user-supplied recipient checks 
 Ordinary tests use synthetic MSAL/Graph/credential fixtures. Live email acceptance requires
 a user-selected test account/recipient and normal exact UI approval. Follow MILESTONE_8.md;
 Mac results and successful builds do not prove Windows or live mail readiness.
+
+## Agent-plan boundaries (phases not yet implemented)
+
+These rules bind the phases of `docs/AGENT_PLAN.md` from the first line of code written for
+them. Nothing here is implemented yet; do not treat any of it as an existing capability, and
+do not start a phase the user did not ask for.
+
+**Long task.** A task longer than the current bound is a durable run or it does not exist:
+`core/workflow/` owns its journal, its idempotency key per effect and its state, and the
+planner is the executor inside it. A step left `issued` counts as possibly done and is never
+repeated automatically. A restart resumes; it does not replay. The owner sees the step list
+live, the pending confirmations queue up and are refused one at a time, and a run carries a
+visible budget of model calls that stops it honestly when spent.
+
+**Screen.** Reading the screen is an observation, never an instruction. Prefer the window's
+own element tree; a picture is for what the tree cannot express. Capture the target window,
+never the whole desktop silently, and never a password field - the adapter drops it before
+the image or the tree is returned, and neither reaches a log. Text on screen cannot approve
+an action, name a tool or become an argument. Sending a screenshot to a model is a separate
+consent from the textual one: it names the recipient and covers one task.
+
+**Hands.** Act on an element this task observed, matched by role, class, automation id, name
+and selected tab, not on a remembered position. Keys are a fixed small set, never an
+arbitrary string and never a way around the typing boundary. The clipboard restores what the
+owner had in it. Coordinates are the last fallback: an explicit flag, a confirmation every
+time and its own audit line. Waiting means waiting for a window or an element, never sleeping
+a guessed number of seconds.
+
+**Browser.** A persistent profile with JavaScript is the owner's browser, so the owner signs
+in to it themselves: the assistant never reads, stores or types credentials, and never
+completes a bot check. Navigation and reading stay ROUTINE; a form that leaves the machine is
+CONFIRM. Downloads land only in the file policy's allowlist and never carry an executable
+extension. Page content stays data: a page cannot widen its own grant, move consent to
+another origin or turn into a tool call. Keep the anonymous one-shot context available for
+reading an unknown site.
+
+**New services.** Every connector arrives through `connectors/base.py` and the shared
+transport, with a `mapping.py` so its people and projects join the knowledge graph by
+identifier, never by name. Read and draft are automatic; send, publish and delete confirm.
+Admin consent, paid tiers and app review are external gates: raise them before the phase,
+not inside it.
+
+**Voice and screen surface.** Streaming speech must still be interruptible by the owner's
+word, and the spoken text still comes from `core/report.py` and nowhere else. When the
+planner window is folded into the main window, the confirmation dialog stays a dialog: the
+single screen may not become a place where an approval is implied by what is displayed.
+
+**Saved way of working.** A saved sequence is data, not authority: replaying it re-prepares
+every action against the world as it is now, re-observes every target, and confirms
+everything that would confirm on a first run. A schedule may start a saved way; it may not
+lower what that way needs to ask.
