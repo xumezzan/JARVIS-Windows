@@ -66,6 +66,7 @@ def user_content(data: PlannerInput) -> str:
             ],
             "untrusted_memory": data.memory.model_dump(mode="json"),
             "untrusted_knowledge": data.knowledge.model_dump(mode="json"),
+            "untrusted_learned": data.derived.model_dump(mode="json"),
         },
         ensure_ascii=False,
     )

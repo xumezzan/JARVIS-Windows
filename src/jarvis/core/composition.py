@@ -21,6 +21,7 @@ from jarvis.connectors.fireflies.tools import register_fireflies
 from jarvis.connectors.microsoft.calendar import CalendarConnector
 from jarvis.connectors.microsoft.mapping import MAPPERS as CALENDAR_MAPPERS
 from jarvis.connectors.microsoft.tools import register_calendar
+from jarvis.core.context.learning import MemoryLearner
 from jarvis.core.routines.proposals import SuggestionQueue
 from jarvis.core.routines.runner import RoutineRunner
 from jarvis.core.routines.state import RoutineState
@@ -30,6 +31,7 @@ from jarvis.files.policy import FilePolicy
 from jarvis.knowledge.harvest import GraphHarvester
 from jarvis.knowledge.store import KnowledgeStore
 from jarvis.mail.session import MailSession
+from jarvis.memory.derived import DerivedStore
 from jarvis.observability.audit import AuditLog
 from jarvis.permissions.approvals import ApprovalAuthority, ApprovalStore
 from jarvis.permissions.engine import PermissionEngine
@@ -60,6 +62,8 @@ class Workbench:
     connectors: ConnectorRegistry
     knowledge: KnowledgeStore
     harvester: GraphHarvester
+    derived: DerivedStore
+    learner: MemoryLearner
     workflows: WorkflowStore
     routines: RoutineRunner
     browser_host: BrowserHost
@@ -86,6 +90,8 @@ def build(
     matrix = load_matrix(Path(config.data_dir) / MATRIX_FILE)
     connectors = ConnectorRegistry()
     knowledge = KnowledgeStore(config.data_dir / "knowledge.sqlite3")
+    # What the owner's own finished runs taught, kept apart from the labels they typed.
+    derived = DerivedStore(config.data_dir / "derived.sqlite3")
     workflows = WorkflowStore(config.data_dir / "workflows.sqlite3")
     # Each connector says how to read its own answers; the harvester only applies them.
     harvester = GraphHarvester(knowledge, {**CALENDAR_MAPPERS, **FIREFLIES_MAPPERS})
@@ -125,6 +131,8 @@ def build(
         connectors=connectors,
         knowledge=knowledge,
         harvester=harvester,
+        derived=derived,
+        learner=MemoryLearner(derived),
         workflows=workflows,
         routines=routines,
         browser_host=host,

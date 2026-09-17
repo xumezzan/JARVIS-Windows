@@ -8,10 +8,12 @@ from uuid import uuid4
 
 from PySide6.QtCore import QThread, Signal
 
+from jarvis.core.context.learning import Learner
 from jarvis.core.planner.contracts import Limits, PlanResult, Provider
 from jarvis.core.planner.runner import Runner
 from jarvis.knowledge.harvest import Harvester
 from jarvis.knowledge.models import KnowledgeContext
+from jarvis.memory.derived import DerivedContext
 from jarvis.memory.models import MemoryContext
 from jarvis.permissions.approvals import Action, ApprovalToken
 from jarvis.permissions.engine import PermissionEngine
@@ -40,7 +42,9 @@ class PlannerWorker(QThread):
         limits: Limits,
         memory: MemoryContext | None = None,
         knowledge: KnowledgeContext | None = None,
+        derived: DerivedContext | None = None,
         harvester: Harvester | None = None,
+        learner: Learner | None = None,
     ) -> None:
         super().__init__()
         self.command = command
@@ -54,7 +58,9 @@ class PlannerWorker(QThread):
             limits=limits,
             memory=memory,
             knowledge=knowledge,
+            derived=derived,
             harvester=harvester,
+            learner=learner,
             notify=self.progress_event.emit,
         )
         self.outcome = PlanResult("error", error="worker_failed")

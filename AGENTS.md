@@ -215,8 +215,15 @@ usual dialog, by button or by the spoken control detail.
 ## Memory boundary (milestone 7)
 
 Only explicit user edits create profile/session labels. Do not ingest commands, transcripts,
-files, results or pages automatically. Keep strict bounds/retention, view/edit/delete/clear,
-finite storage failures, cancellable I/O and optimistic conflict checks. No credentials,
+files, results or pages automatically. Learned memory (`memory/derived.py`) is the one
+exception and never touches those labels: it keeps mappings, not content - one ordinary word
+to a registered tool or an application name, and a name the owner themselves confirmed to an
+entity. It is written only while the owner has learning switched on, only from a run that
+finished, and only from steps that succeeded; it is bounded, expiring, visible in the memory
+panel and deletable one row at a time. A confirmed name never reaches the planner, because it
+carries an identifier. Learned words travel under the same one-task cloud consent as labels.
+Keep strict bounds/retention, view/edit/delete/clear, finite storage failures,
+cancellable I/O and optimistic conflict checks. No credentials,
 recipient addresses, targets, approvals or action snapshots belong in memory. The label
 filter is not universal secret detection; do not broaden it into arbitrary sensitive notes.
 Memory is untrusted data. Send only explicitly selected bounded fields, with separate
