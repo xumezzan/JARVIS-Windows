@@ -173,7 +173,16 @@ def prepare_slot(root: Path, repository: Path, name: str, asset: dict[str, Any])
     if slot.exists():
         if not (slot / ".jarvis-slot").is_file():
             raise SetupError("Refusing to replace a directory not owned by this installer.")
-        shutil.rmtree(slot)  # Only the inactive, marked slot; app data is elsewhere.
+        try:
+            shutil.rmtree(slot)  # Only the inactive, marked slot; app data is elsewhere.
+        except OSError as error:
+            # Setup starts Jarvis to see its window and deliberately leaves it running, so
+            # the copy from an earlier run still holds this slot open. Say so: a file-in-use
+            # error arriving as an unexplained failure sends the owner looking at the network.
+            raise SetupError(
+                "Cannot replace the previous components: their files are still in use. "
+                "Close every open Jarvis window and rerun setup."
+            ) from error
     slot.mkdir(parents=True)
     (slot / ".jarvis-slot").write_text("1", encoding="ascii")
     env = slot_environment(slot, asset["directory"])
@@ -365,13 +374,18 @@ def main() -> int:
         )
         return 130
     except (SetupError, OSError, subprocess.SubprocessError, ValueError) as error:
-        message = (
-            str(error)
-            if isinstance(error, SetupError)
-            else (
-                "Setup failed at the displayed step. "
-                "Check network, permissions, disk and runtime; rerun."
+        if isinstance(error, SetupError):
+            message = str(error)
+        else:
+            # Name what went wrong. The previous text promised a step that a failure before
+            # the first printed step never displayed, and it dropped the cause entirely.
+            # The operating system's own wording is localised and arrives mangled through a
+            # redirected console, so only the class and the numeric code are reported.
+            code = getattr(error, "winerror", None) or getattr(error, "errno", None)
+            named = type(error).__name__ + (f" {code}" if code else "")
+            message = (
+                f"Setup failed ({named}). Close open Jarvis windows, then check network, "
+                "permissions, disk and runtime; rerun."
             )
-        )
         print(message, file=sys.stderr)
         return 1
