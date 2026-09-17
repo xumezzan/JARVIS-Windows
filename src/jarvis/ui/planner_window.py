@@ -30,6 +30,7 @@ from jarvis.mail.session import MailSession
 from jarvis.memory.store import MemoryFailure, MemoryStore
 from jarvis.permissions.approvals import Action
 from jarvis.permissions.policies import Mode
+from jarvis.security.credentials import setup_command
 from jarvis.tools.windows import WindowsBackend
 from jarvis.ui.approval_dialog import ApprovalDialog
 from jarvis.ui.mail_panel import MailPanel
@@ -135,8 +136,11 @@ class PlannerWindow(QDialog):
         cloud.addWidget(self.model)
         cloud.addWidget(
             note(
-                "Ключ: python -m jarvis.security.credentials set (в терминале). "
-                "Он хранится в Windows Credential Locker / macOS Keychain. "
+                "Ключи (в терминале, по одному на поставщика): "
+                + setup_command("deepseek")
+                + "  и  "
+                + setup_command("openai")
+                + ". Они хранятся в Windows Credential Locker / macOS Keychain. "
                 "Не вставляйте ключ в команду."
             )
         )
