@@ -21,6 +21,10 @@ from jarvis.connectors.fireflies.tools import register_fireflies
 from jarvis.connectors.microsoft.calendar import CalendarConnector
 from jarvis.connectors.microsoft.mapping import MAPPERS as CALENDAR_MAPPERS
 from jarvis.connectors.microsoft.tools import register_calendar
+from jarvis.core.routines.proposals import SuggestionQueue
+from jarvis.core.routines.runner import RoutineRunner
+from jarvis.core.routines.state import RoutineState
+from jarvis.core.routines.triggers import builtin
 from jarvis.core.workflow.store import WorkflowStore
 from jarvis.files.policy import FilePolicy
 from jarvis.knowledge.harvest import GraphHarvester
@@ -41,6 +45,7 @@ from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.windows import WindowsBackend, register_windows
 
 MATRIX_FILE = "permissions.json"
+ROUTINE_FILE = "routines.json"
 
 
 @dataclass(frozen=True)
@@ -56,6 +61,7 @@ class Workbench:
     knowledge: KnowledgeStore
     harvester: GraphHarvester
     workflows: WorkflowStore
+    routines: RoutineRunner
     browser_host: BrowserHost
     files: FilePolicy
     mail_session: MailSession
@@ -100,6 +106,16 @@ def build(
     audit = AuditLog(config.data_dir / "audit.sqlite3")
     approvals = ApprovalStore()
     engine = PermissionEngine(registry, approvals, audit)
+    # Background work is composed here like everything else, and starts switched off. The
+    # runner is given the registry, the engine and the journal - never approval authority.
+    routines = RoutineRunner(
+        registry,
+        engine,
+        workflows,
+        RoutineState(Path(config.data_dir) / ROUTINE_FILE),
+        SuggestionQueue(),
+        builtin(files.roots[0] if files.roots else None),
+    )
     return Workbench(
         registry=registry,
         engine=engine,
@@ -110,6 +126,7 @@ def build(
         knowledge=knowledge,
         harvester=harvester,
         workflows=workflows,
+        routines=routines,
         browser_host=host,
         files=files,
         mail_session=session,

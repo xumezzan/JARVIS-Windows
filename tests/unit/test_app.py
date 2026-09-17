@@ -47,3 +47,15 @@ def test_commands_are_not_silently_accepted(capsys: pytest.CaptureFixture[str]) 
         main(["open", "notepad"])
     assert error.value.code == 2
     assert "unrecognized arguments" in capsys.readouterr().err
+
+
+def test_the_application_has_an_icon_of_its_own() -> None:
+    """A program the owner cannot find in the taskbar is a program that is not there."""
+    from jarvis.ui.theme import ICON
+
+    data = ICON.read_bytes()
+    assert ICON.name == "jarvis.ico" and data[:4] == b"\x00\x00\x01\x00"
+    count = int.from_bytes(data[4:6], "little")
+    sizes = {data[6 + index * 16] or 256 for index in range(count)}
+    # Windows picks a different size for the taskbar, the Start menu and Alt-Tab.
+    assert {16, 32, 48, 256} <= sizes

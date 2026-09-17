@@ -1,12 +1,12 @@
 """Validated non-secret settings; environment files are not loaded implicitly."""
 
 import os
-import re
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from jarvis.core.planner.identifiers import valid_model
 from jarvis.files.policy import FilePolicy, default_roots
 from jarvis.security.browser_policy import DEFAULT_ORIGINS, NetworkPolicy
 from jarvis.tools.base import ToolError
@@ -25,7 +25,7 @@ class AppConfig:
 
     def __post_init__(self) -> None:
         for name, model in (("planner", self.planner_model), ("fast", self.fast_model)):
-            if model and not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}", model):
+            if model and not valid_model(model):
                 raise ValueError(f"Invalid {name} model identifier.")
         try:
             NetworkPolicy(self.browser_origins)

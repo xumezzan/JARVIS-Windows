@@ -67,6 +67,12 @@ def test_exact_ui_approval_only(qtbot: QtBot, tmp_path: Path, approve: bool) -> 
                 dialog.accept()  # A generic dialog acceptance has no approval authority.
         assert result.args == ["finished" if approve else "error"]
         assert window.outbox.count == int(approve)
+        # The window ends by saying what it did, not only how the engine finished.
+        report = window.output.toPlainText()
+        if approve:
+            assert "Готово." in report and "Добавил тестовое сообщение." in report
+        else:
+            assert "Не добавил тестовое сообщение — подтверждения не было." in report
     finally:
         window.shutdown()
 

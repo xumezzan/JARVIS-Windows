@@ -13,6 +13,17 @@ from typing import Any, Literal
 from jarvis.voice.contracts import MAX_AUDIO_BYTES, AudioClip, Transcript, VoiceError
 
 PIPE_LIMIT = MAX_AUDIO_BYTES * 2 + 16384
+READY = b'{"ready":true}'
+
+
+def is_ready(line: bytes) -> bool:
+    """The recorder's handshake, whatever line ending the platform gave it.
+
+    Comparing raw bytes cost the whole microphone on Windows: text mode there ends a line
+    with a carriage return, the handshake never matched, and the recorder read it as the
+    answer instead of lighting up the indicator.
+    """
+    return line.strip() == READY
 
 
 async def exchange(
@@ -59,7 +70,7 @@ async def exchange(
             if released is not None:
                 release_task = asyncio.create_task(release())
             raw = await process.stdout.readuntil(b"\n")
-            if raw == b'{"ready":true}\n':
+            if is_ready(raw):
                 if ready is not None:
                     ready()
                 raw = await process.stdout.readuntil(b"\n")

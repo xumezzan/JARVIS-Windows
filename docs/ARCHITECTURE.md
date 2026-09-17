@@ -42,13 +42,18 @@ OAuth connect/disconnect — отдельный UI-only setup через QThread
 | `permissions/approvals.py` | Immutable Action, opaque token, UI issuer, TTL, атомарный consume |
 | `permissions/engine.py` | Prepare/execute/cancel, bounded pending requests, тайм-аут и audit gateway |
 | `observability/audit.py` | SQLite audit, metadata без содержимого и bearer tokens |
-| `ui/approval_dialog.py` | Read-only полный preview; token только из обработчика кнопки |
+| `ui/approval_dialog.py` | Read-only полный preview; token из кнопки или из совпавшей контрольной детали |
 | `ui/permission_workbench.py` | Ручная проверка, режим, outcome, local outbox count, audit view |
 | `ui/tool_worker.py` | Один `asyncio.run(engine.execute(...))` внутри QThread |
 | `core/planner` | Provider protocol, offline recipes, OpenAI strict calls, bounded Runner |
 | `ui/planner_window.py`, `ui/planner_worker.py` | Текстовая команда, отдельный QThread, prompts и stop |
 | `security/credentials.py`, `platforms/credentials.py` | Killable credential pipe и явный OS backend |
+| `security/cloud_consent.py` | Разрешение на облако и ID модели между запусками; повреждённый файл = нет согласия |
+| `core/planner/identifiers.py` | Одно правило ID модели для настроек, окна согласия и провайдера |
 | `voice`, `memory` | Локальный push-to-talk и явно управляемые метки |
+| `core/routines` | Фоновые наблюдения, очередь предложений, выключатели и дневной бюджет |
+| `core/report.py` | Что именно сделано: текст для экрана и для голоса из снимка и исхода |
+| `ui/routine_panel.py` | Вкладка «Рутины»: выключатели, предложения, то же окно подтверждения |
 | `mail`, `tools/outlook.py`, `ui/mail_panel.py` | MSAL/helper, Graph, RAM drafts/attachments, typed mail tools и UI |
 
 ## Снимок и подтверждение
@@ -255,9 +260,48 @@ pipe за срок до 8 секунд; cancellation завершает и со�
 исключают одновременные capture/STT/TTS. Аудио не сохраняется и не отправляется по сети.
 
 Transcript → редактируемая команда PlannerWindow → ручной запуск → существующий Runner
-→ PermissionEngine. Voice не получает ApprovalAuthority. Голосовые кнопки в approval и
-clarification умеют только отменить задачу. После завершения Runner опционально озвучивает
-короткую сводку из engine outcomes. Dashboard microphone только открывает планировщик.
+→ PermissionEngine. Voice не получает ApprovalAuthority: `voice/approval.py` выбирает из
+снимка одну произносимую контрольную деталь и возвращает вердикт по расшифровке, а token
+по-прежнему выдаёт `ApprovalDialog` через UI-owned authority и записывает канал
+(`Channel.UI` / `Channel.VOICE`) в audit. Инструмент без детали голосового канала не имеет.
+После завершения Runner опционально озвучивает короткую сводку из engine outcomes.
+Dashboard microphone только открывает планировщик.
+
+## Отчёт о сделанном
+
+`core/report.py` — единственное место, где собирается фраза «что я сделал». Источников
+ровно два: снимок действия (`Step.payload`, та же нормализованная строка, которую владелец
+видел в подтверждении) и исход движка. Ответы инструментов и сервисов туда не попадают,
+как и напечатанный текст, тело письма и любые секреты; каждое поле ограничено по длине.
+
+`written()` идёт в главное окно и в вывод планировщика и может называть адрес, путь и хост.
+`spoken()` уходит в голос и опускает то, что русский локальный синтез не произнесёт, а также
+ограничивает число перечисленных действий. Инструмент, которого нет в таблице `DEEDS`, не
+превращается в предложение: про него отчёт молчит. Эффект, который мог быть выдан, но не
+подтверждён, называется неподтверждённым.
+
+## Рутины фазы B
+
+`core/routines/contracts.py` задаёт рутину как доверенный код: `observe` возвращает
+очередное фиксированное наблюдение, `notice` — предложения с ограниченным текстом и
+точными аргументами. Модель в фоне не участвует вовсе, поэтому ответ сервиса не может стать
+именем инструмента, аргументом или расписанием.
+
+`core/routines/runner.py` выполняет цикл как обычный run: `WorkflowStore.start`, журнал,
+`step_key`, движок разрешений и audit. Наблюдение допускается только `SAFE`; обратимое
+действие выполняется, лишь когда владелец разрешил это конкретной рутине; `CONFIRM` не
+выполняется никогда и попадает в очередь. `ApprovalAuthority` рутине не передаётся.
+`already_issued` смотрит последние запуски журнала, поэтому уже выданный эффект не
+повторяется и после перезапуска процесса.
+
+`core/routines/state.py` хранит три выключателя, время последнего запуска и дневной счётчик
+в `routines.json`; нечитаемый файл означает «всё выключено». `core/routines/proposals.py` —
+очередь в памяти: TTL 30 минут, не более 20 поводов, повторный повод не дублируется, а
+пропавший из последнего наблюдения удаляется.
+
+`ui/routine_panel.py` владеет таймером (30 секунд), выполняет цикл в `QThread` и открывает
+предложение через `engine.prepare` в тот же `ApprovalDialog`. Уведомлений нет: панель просто
+перерисовывается.
 
 ## Память этапа 7
 

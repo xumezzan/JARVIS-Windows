@@ -11,7 +11,13 @@ from uuid import uuid4
 import pytest
 
 from jarvis.observability.audit import AuditEvent, AuditKind, AuditLog, ErrorCode
-from jarvis.permissions.approvals import Action, ApprovalAuthority, ApprovalStore, ApprovalToken
+from jarvis.permissions.approvals import (
+    Action,
+    ApprovalAuthority,
+    ApprovalStore,
+    ApprovalToken,
+    Channel,
+)
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Mode, Risk, Status
 from jarvis.tools.base import ExecutionContext, ToolModel, ToolSpec
@@ -368,6 +374,38 @@ def test_registry_discovery_duplicates_and_sealing(tmp_path: Path) -> None:
     registry.seal()
     with pytest.raises(ValueError):
         registry.register(replace(probe.spec(), name="test.another"))
+
+
+@pytest.mark.asyncio
+# Ids are the member names: a parametrisation id of "voice" would read as the opt-in
+# microphone marker and skip this test.
+@pytest.mark.parametrize("channel", list(Channel), ids=[channel.name for channel in Channel])
+async def test_the_channel_is_recorded_and_changes_nothing_else(
+    harness: Harness, channel: Channel
+) -> None:
+    action = harness.prepare()
+    token = harness.authority.approve(action, channel)
+    approvals = [
+        json.loads(record)
+        for record in harness.audit.recent()
+        if json.loads(record)["event"] == "approved"
+    ]
+    assert [record["actor"] for record in approvals] == ["user_" + channel.value]
+    assert token.channel is channel
+    result = await harness.engine.execute(action, token)
+    # A spoken approval is the same capability: exact, expiring and used exactly once.
+    assert result.status is Status.SUCCESS and harness.probe.calls == 1
+    assert not harness.store.is_valid(token, action)
+    assert (await harness.engine.execute(harness.prepare(), token)).status is Status.DENIED
+
+
+def test_an_unknown_channel_issues_nothing(harness: Harness) -> None:
+    action = harness.prepare()
+    with pytest.raises(ValueError):
+        harness.authority.approve(action, "voice")  # type: ignore[arg-type]
+    assert not [
+        record for record in harness.audit.recent() if json.loads(record)["event"] == "approved"
+    ]
 
 
 def test_issuer_is_not_a_registered_tool_and_cannot_be_reclaimed(harness: Harness) -> None:

@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import json
 import os
 import sys
 from pathlib import Path
@@ -18,7 +19,7 @@ from jarvis.platforms import audio
 from jarvis.platforms.audio import NOISE_BLOCKS, QUIET_BLOCKS, SPEECH_BLOCKS, Segmenter
 from jarvis.ui.voice_panel import installed_model, wake_command
 from jarvis.voice.contracts import MAX_AUDIO_BYTES, AudioClip, Transcript, VoiceError, spoken_result
-from jarvis.voice.local import exchange
+from jarvis.voice.local import exchange, is_ready
 
 
 @pytest.mark.parametrize(
@@ -46,10 +47,11 @@ def test_spoken_result_excludes_all_content() -> None:
     outcome = Outcome(uuid4(), Status.SUCCESS, result_json='{"secret":"private payload"}')
     result = PlanResult("finished", (Step("private tool name", outcome),))
     speech = spoken_result(result)
-    assert "Проверено выполненных действий: 1" in speech
-    assert "private" not in speech and "secret" not in speech
-    assert "Реальные действия не выполнялись" in spoken_result(PlanResult("simulated"))
-    assert "Результат не подтверждён" in spoken_result(PlanResult("no_action"))
+    # The voice now says what was done, and still never a tool name or a tool's answer.
+    assert speech.startswith("Готово.") and "только посмотрел" in speech
+    assert "private" not in speech and "secret" not in speech and "tool" not in speech
+    assert "симуляция" in spoken_result(PlanResult("simulated"))
+    assert "ничего не сделал" in spoken_result(PlanResult("no_action"))
 
 
 def test_no_sensitive_repr_or_exception() -> None:
@@ -219,6 +221,49 @@ def test_a_pause_inside_a_phrase_does_not_cut_it() -> None:
     assert not blocks(segmenter, 9000, 2)  # Speaking again resets the pause.
     assert not blocks(segmenter, 20, QUIET_BLOCKS - 1)
     assert segmenter.feed(20)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [b'{"ready":true}\n', b'{"ready":true}\r\n', b'{"ready":true}', b' {"ready":true} \n'],
+)
+def test_the_handshake_is_recognised_whatever_ends_the_line(line: bytes) -> None:
+    assert is_ready(line)
+
+
+@pytest.mark.parametrize("line", [b'{"ready":false}\n', b'{"pcm":"AA=="}\n', b"", b"ready\n"])
+def test_nothing_else_is_taken_for_the_handshake(line: bytes) -> None:
+    assert not is_ready(line)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("helper", ["jarvis.platforms.audio", "jarvis.platforms.elevenlabs"])
+async def test_helper_lines_end_the_way_the_parent_reads_them(helper: str) -> None:
+    """A carriage return here cost the whole microphone on Windows once already."""
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-I",
+        "-m",
+        helper,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    assert process.stdin is not None and process.stdout is not None
+    try:
+        process.stdin.write(b'{"operation":"fixture"}\n')
+        await process.stdin.drain()
+        raw = await asyncio.wait_for(process.stdout.readuntil(b"\n"), 30)
+    finally:
+        process.stdin.close()
+        if process.returncode is None:
+            process.kill()
+        await process.wait()
+        # Drain to EOF like the real caller does, so no pipe transport outlives the test.
+        while await process.stdout.read(65536):
+            pass
+    assert raw.endswith(b"}\n") and b"\r" not in raw
+    assert json.loads(raw)["error"] == "voice_failed"
 
 
 def test_the_installed_model_comes_from_the_slot_in_use(

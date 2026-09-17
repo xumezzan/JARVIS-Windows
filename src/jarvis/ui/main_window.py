@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (
 from jarvis.browser.host import BrowserHost
 from jarvis.config import AppConfig
 from jarvis.core.planner.contracts import Step
+from jarvis.core.planner.identifiers import valid_model
+from jarvis.core.report import written
 from jarvis.observability.events import EVENT_TEXT, ShellEvent
 from jarvis.observability.logging import ShellLog
 from jarvis.security.browser_policy import NetworkPolicy
@@ -598,6 +600,8 @@ class MainWindow(QMainWindow):
         dialog = QDialog(self)
         dialog.setWindowTitle("Отправка команды в DeepSeek и OpenAI")
         dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        # Wide enough that the consent line is never cut off mid-sentence.
+        dialog.setMinimumWidth(760)
         body = QVBoxLayout(dialog)
         body.addWidget(
             label(
@@ -627,25 +631,49 @@ class MainWindow(QMainWindow):
                 "в команду или журнал."
             )
         )
+        # Short enough to be read whole at this width; who takes over when is said above.
         consent = QCheckBox(
-            "Разрешаю отправку команды, уточнений и результатов в DeepSeek, "
-            "а для сложных задач — в OpenAI"
+            "Разрешаю отправлять команду, уточнения и результаты в DeepSeek и OpenAI"
         )
         body.addWidget(consent)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        hint = label("")
+        body.addWidget(hint)
+        buttons = QDialogButtonBox()
+        # Built by hand so the confirming button can be held shut until the answer is complete.
+        confirm = QPushButton("OK")
+        confirm.setDefault(True)
+        buttons.addButton(confirm, QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         body.addWidget(buttons)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+
+        def gate() -> None:
+            """Say what is still missing here, rather than refusing after the window closes."""
+            typed = model.toPlainText().strip()
+            ready = valid_model(typed) and consent.isChecked()
+            confirm.setEnabled(ready)
+            if not typed:
+                hint.setText("Укажите модель OpenAI — например, gpt-5.4-mini.")
+            elif not valid_model(typed):
+                hint.setText("Идентификатор пишется без пробелов: gpt-5.4-mini, не gpt 5.4 mini.")
+            elif not consent.isChecked():
+                hint.setText("Отметьте согласие выше — без него команда в облако не уйдёт.")
+            else:
+                hint.setText("Спрошу только один раз: снять разрешение можно в планировщике.")
+
+        consent.toggled.connect(gate)
+        model.textChanged.connect(gate)
+        gate()
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        identifier = model.toPlainText().strip()
+        if valid_model(identifier):
+            # Kept even when consent was withheld, so the next dialog opens already filled in.
+            planner.model.setText(identifier)
+            planner.remember_cloud()
+        if not accepted:
             self.validation_label.setText("Облачный режим не подтверждён.")
             return False
-        identifier = model.toPlainText().strip()
-        if not consent.isChecked() or not identifier:
-            self.validation_label.setText("Нужны согласие на передачу и идентификатор модели.")
-            return False
-        planner.model.setText(identifier)
         planner.cloud_consent.setChecked(True)
         return True
 
@@ -704,9 +732,15 @@ class MainWindow(QMainWindow):
         self._reset()
         self._set_state(state)
         result = self.planner_window.last_result if self.planner_window is not None else None
-        rows = [result.summary if result is not None else EVENT_TEXT[event]]
+        # The report first: this window is where the owner reads what happened, not a log.
+        rows = [*written(result)] if result is not None else [EVENT_TEXT[event]]
         if result is not None and result.error in ERROR_ADVICE:
             rows.append(ERROR_ADVICE[result.error])
+        if result is not None:
+            rows.extend(
+                f"{index}. {step.tool}: {step.outcome.status.value}"
+                for index, step in enumerate(result.steps, 1)
+            )
         self.action_label.setText("\n".join(rows))
         self._record(event)
         self._request_id = None

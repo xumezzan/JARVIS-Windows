@@ -1,8 +1,10 @@
 """Trusted confirmation boundary. Opening/accepting a dialog alone cannot grant approval."""
 
 import json
+from contextlib import suppress
 
 from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -13,8 +15,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from jarvis.permissions.approvals import Action, ApprovalAuthority, ApprovalToken
+from jarvis.permissions.approvals import Action, ApprovalAuthority, ApprovalToken, Channel
 from jarvis.permissions.policies import Mode
+from jarvis.ui.voice_panel import VoicePanel
+from jarvis.voice.approval import CONFIRMATION_TEXT, Confirmation, control_detail
 
 
 class ApprovalDialog(QDialog):
@@ -25,11 +29,18 @@ class ApprovalDialog(QDialog):
         action: Action,
         authority: ApprovalAuthority,
         parent: QWidget | None = None,
+        *,
+        voice: VoicePanel | None = None,
     ) -> None:
         super().__init__(parent)
         self.action = action
         self._authority = authority
         self.token: ApprovalToken | None = None
+        # Voice is offered only for an action that carries a detail the owner can repeat;
+        # for anything else the button stays the only channel.
+        self.detail = control_detail(action) if voice is not None else None
+        self.voice = voice if self.detail is not None else None
+        self.armed = False
         self.setWindowTitle("Подтверждение точного действия")
         self.setWindowModality(Qt.WindowModality.WindowModal)
         self.resize(720, 560)
@@ -71,6 +82,23 @@ class ApprovalDialog(QDialog):
             )
         )
         layout.addWidget(self.preview)
+        self.listen_button: QPushButton | None = None
+        if self.voice is not None and self.detail is not None:
+            # The word is shown at the same moment it is spoken: the owner confirms what is
+            # on screen, and a general «да» is never one of the answers.
+            detail = QLabel(
+                f"Голосом: произнесите {self.detail.label} — «{self.detail.word}». "
+                "Общее «да» не подтверждает. «Отмена» отказывает."
+            )
+            detail.setTextFormat(Qt.TextFormat.PlainText)
+            detail.setWordWrap(True)
+            layout.addWidget(detail)
+            self.listen_button = QPushButton("Слушать подтверждение голосом")
+            self.listen_button.setAutoDefault(False)
+            self.listen_button.clicked.connect(self._listen)
+            layout.addWidget(self.listen_button)
+            self.voice.confirmation.connect(self._heard)
+            self.finished.connect(self._release_voice)
         self.error_label = QLabel("Подтверждение действует до 60 секунд с подготовки действия.")
         self.error_label.setWordWrap(True)
         layout.addWidget(self.error_label)
@@ -85,11 +113,56 @@ class ApprovalDialog(QDialog):
         buttons.addWidget(self.approve_button)
         layout.addLayout(buttons)
 
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        # Standing capture is already the owner's visible choice, so the confirmation can arm
+        # itself. Otherwise the microphone opens only on their press of the button below.
+        if self.voice is not None and self.detail is not None and self.voice.hands_free:
+            self._listen()
+
+    @Slot()
+    def _listen(self) -> None:
+        if self.voice is None or self.detail is None or self.armed or self.token is not None:
+            return
+        self.armed = True
+        if self.listen_button is not None:
+            self.listen_button.setEnabled(False)
+        self.voice.confirm(self.detail)
+
+    @Slot(str)
+    def _heard(self, outcome: str) -> None:
+        # The panel has one voice for the whole session, so an answer belongs to whichever
+        # confirmation asked for it. A dialog that armed nothing confirms nothing.
+        if self.voice is None or self.detail is None or self.token is not None or not self.armed:
+            return
+        self.armed = False
+        if self.listen_button is not None:
+            self.listen_button.setEnabled(True)
+        verdict = Confirmation(outcome)
+        if verdict is Confirmation.CONFIRMED:
+            self._grant(Channel.VOICE)
+        elif verdict is Confirmation.REFUSED:
+            self.reject()
+        else:
+            self.error_label.setText(CONFIRMATION_TEXT[verdict])
+
+    @Slot()
+    def _release_voice(self) -> None:
+        """The decision is made; no later transcript may reach a dialog that is closing."""
+        voice, self.voice = self.voice, None
+        if voice is not None:
+            with suppress(RuntimeError):
+                voice.confirmation.disconnect(self._heard)
+            voice.stop_confirming()
+
     @Slot()
     def _approve(self) -> None:
+        self._grant(Channel.UI)
+
+    def _grant(self, channel: Channel) -> None:
         self.approve_button.setEnabled(False)
         try:
-            self.token = self._authority.approve(self.action)
+            self.token = self._authority.approve(self.action, channel)
         except Exception:
             self.error_label.setText(
                 "Подтверждение недоступно или истекло. Подготовьте действие заново."

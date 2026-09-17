@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import re
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
@@ -10,6 +9,7 @@ import aiohttp
 
 from jarvis.browser.network import tls_context
 from jarvis.core.planner.contracts import PlannerInput, Proposal, ProviderError
+from jarvis.core.planner.identifiers import valid_model
 from jarvis.security.credentials import load_api_key
 
 INSTRUCTIONS = """You propose one next action for Jarvis, a local Windows assistant.
@@ -119,7 +119,7 @@ class OpenAIProvider:
     def __init__(
         self, model: str, *, transport: Callable[[dict[str, Any]], Awaitable[bytes]] = request
     ) -> None:
-        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}", model):
+        if not valid_model(model):
             raise ValueError("Specify a Responses API model identifier.")
         self.model = model
         self.transport = transport

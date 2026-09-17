@@ -35,10 +35,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     from PySide6.QtCore import QTimer
+    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
     from jarvis.observability.logging import ShellLog
     from jarvis.ui.main_window import MainWindow
+    from jarvis.ui.theme import ICON
 
     try:
         log = ShellLog(config.data_dir / "logs")
@@ -48,9 +50,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    if sys.platform == "win32":
+        import ctypes
+
+        # Without its own identity Windows files the window under the interpreter that
+        # started it: a Python icon in the taskbar, and nothing called Jarvis to find.
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Jarvis.Desktop")
     application = QApplication(["jarvis"])
     application.setApplicationName("Jarvis")
     application.setOrganizationName("Jarvis")
+    application.setWindowIcon(QIcon(str(ICON)))
     window = MainWindow(config, log)
     application.aboutToQuit.connect(window.shutdown)
     smoke_result = 1

@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Lock
 from uuid import UUID, uuid4
 
-from jarvis.permissions.approvals import Action
+from jarvis.permissions.approvals import Action, Channel
 from jarvis.permissions.policies import Decision, Mode, Risk, Status
 
 
@@ -103,7 +103,9 @@ class AuditLog:
         with self._lock, self._connection:
             self._connection.execute("INSERT INTO events(record) VALUES (?)", (json.dumps(record),))
 
-    def approved(self, action: Action) -> None:
+    def approved(self, action: Action, channel: Channel) -> None:
+        # The channel is recorded because voice is the weakest of them: an approval that
+        # arrived by microphone has to be distinguishable afterwards from a button press.
         self.write(
             AuditEvent(
                 AuditKind.APPROVED,
@@ -112,7 +114,7 @@ class AuditLog:
                 action.risk,
                 action.mode,
                 Decision.REQUIRE_APPROVAL,
-                actor="user_ui",
+                actor="user_" + channel.value,
             )
         )
 

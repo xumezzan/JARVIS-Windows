@@ -151,12 +151,43 @@ fixed endpoints and no retries. It accepts only preview/trusted summary text, ne
 The explicit repository installer may download its reviewed Russian model; ordinary
 application startup and recording never download models. JARVIS_VOSK_MODEL is a local path.
 A finished transcript submits the command directly from the main window: this is the
-owner's explicit choice, and the recognised text stays visible. Voice still only commands and
-cancels, never approves: approval tokens come from the autonomy setting or the approval button.
+owner's explicit choice, and the recognised text stays visible. Voice commands, cancels and
+confirms, and a confirmation is never a spoken yes: the assistant names one control detail of
+the exact snapshot - the file, the subject - shows it at the same moment, and accepts only
+that word back, said as a short answer. An uncertain transcript, a different word, a whole
+sentence, an expired or changed snapshot confirm nothing, and a cancel word refuses. The token
+is still issued by the UI-owned authority with every property it already had, and carries the
+channel it came from so the audit can tell a spoken approval from a pressed one. An action
+whose snapshot holds no speakable detail has no voice channel at all; the button stays. The
+microphone is opened by the owner's press, or by standing capture they already switched on -
+never by a dialog appearing.
 Preserve bounded PCM/pipes/timeouts, no audio/transcript persistence, no simultaneous
 recording and speech, and deterministic spoken summaries from engine outcomes.
+The end of a task is reported in the owner's own words, and `core/report.py` is the only
+place that composes it. It reads the action snapshot the owner caused - the one they already
+saw in the confirmation - together with the outcome the engine verified, and nothing else: no
+model text, no tool or service answer, no typed text, message body or secret, every field
+bounded. An effect that may have landed is reported as unconfirmed rather than as done. The
+spoken version drops what the local Russian voice cannot pronounce, such as an address or a
+path; the written one may keep it, because the owner reads it on their own screen.
 Ordinary tests use fixtures; real microphone/speaker checks require --run-voice, a native
 visible window and the user's hold gesture. Never claim hardware verified from fixtures.
+
+## Routine boundary (background work)
+
+A routine is trusted code with a fixed list of observations, not a plan and not a model:
+nothing a service answers becomes a tool name, an argument or a schedule, and no model runs
+in the background at all. Three switches gate it, each off by default and each persisted:
+routines as a whole, the routine, and that routine's permission to carry out reversible work
+unattended. Observation is SAFE only, and a cycle that is asked to observe anything else is
+refused. A routine never executes CONFIRM under any setting and is never given approval
+authority: what needs confirming is queued and waits for the owner. A cycle is an ordinary
+run with its own run id, journal and idempotency keys, so an effect already issued is not
+repeated after a restart. The day has a durable budget of cycles; exhausting it stops the
+routine until tomorrow. A routine that found no reason produces no notification at all.
+Suggestions live in memory, expire, are bounded, and disappear when the latest look no
+longer sees the reason; acting on one prepares the action afresh and confirms it in the
+usual dialog, by button or by the spoken control detail.
 
 ## Memory boundary (milestone 7)
 

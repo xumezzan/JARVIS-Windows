@@ -26,16 +26,19 @@ from jarvis.core.planner.deepseek_provider import DeepSeekProvider
 from jarvis.core.planner.offline import OfflineProvider
 from jarvis.core.planner.openai_provider import OpenAIProvider
 from jarvis.core.planner.routing import EscalatingRouter
+from jarvis.core.report import written
 from jarvis.mail.session import MailSession
 from jarvis.memory.store import MemoryFailure, MemoryStore
 from jarvis.permissions.approvals import Action
 from jarvis.permissions.policies import Mode
+from jarvis.security.cloud_consent import CloudConsent
 from jarvis.security.credentials import setup_command
 from jarvis.tools.windows import WindowsBackend
 from jarvis.ui.approval_dialog import ApprovalDialog
 from jarvis.ui.mail_panel import MailPanel
 from jarvis.ui.memory_panel import MemoryPanel
 from jarvis.ui.planner_worker import PlannerWorker, Prompt
+from jarvis.ui.routine_panel import RoutinePanel
 from jarvis.ui.voice_panel import VoicePanel
 
 
@@ -130,7 +133,9 @@ class PlannerWindow(QDialog):
         layout.addWidget(self.provider_choice)
         self.cloud_box = QWidget()
         cloud = QVBoxLayout(self.cloud_box)
-        self.model = QLineEdit(config.planner_model)
+        # An answer given once holds; a setting from the environment still outranks it.
+        self.cloud_memory = CloudConsent(config.data_dir / "cloud-consent.json")
+        self.model = QLineEdit(config.planner_model or self.cloud_memory.model)
         self.model.setPlaceholderText("Модель OpenAI для сложных задач, например gpt-5.4-mini")
         self.model.setMaxLength(100)
         cloud.addWidget(self.model)
@@ -156,6 +161,10 @@ class PlannerWindow(QDialog):
                 "store=false не означает отсутствие хранения у провайдера."
             )
         )
+        self.cloud_consent.setChecked(self.cloud_memory.granted and bool(self.model.text()))
+        # Connected after the stored answer is restored, so reading it is not a fresh answer.
+        self.cloud_consent.toggled.connect(self.remember_cloud)
+        self.model.editingFinished.connect(self.remember_cloud)
         layout.addWidget(self.cloud_box)
         self.cloud_box.hide()
         self.provider_choice.currentIndexChanged.connect(
@@ -201,6 +210,15 @@ class PlannerWindow(QDialog):
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         layout.addWidget(self.output, 1)
+        # Routines need the voice panel, so their tab joins once the panel exists. They are
+        # off until the owner switches them on, and this window only hosts the surface.
+        self.routines = RoutinePanel(
+            self.bench.routines, self.engine, self.authority, self.audit, voice=self.voice
+        )
+        routines_scroll = QScrollArea()
+        routines_scroll.setWidgetResizable(True)
+        routines_scroll.setWidget(self.routines)
+        self.tabs.addTab(routines_scroll, "Рутины")
         self.memory.busy_changed.connect(
             lambda value: self._voice_busy(self.voice.worker is not None)
         )
@@ -227,6 +245,11 @@ class PlannerWindow(QDialog):
         self.stop_button.setEnabled(value)
         self.voice.set_planning(value)
         self._voice_busy(self.voice.worker is not None)
+
+    @Slot()
+    def remember_cloud(self) -> None:
+        """Keep the last answer for the next launch. Unticking here is how it is taken back."""
+        self.cloud_memory.remember(self.model.text().strip(), self.cloud_consent.isChecked())
 
     def _voice_busy(self, value: bool) -> None:
         busy = value or self.voice.planning or self.mail.busy
@@ -341,7 +364,11 @@ class PlannerWindow(QDialog):
                 self._approve_without_review(prompt.id, prompt.value)
                 return
             self.status.setText("Ожидается подтверждение точного действия.")
-            dialog = ApprovalDialog(prompt.value, self.authority, self.prompt_parent)
+            # The voice panel adds the spoken channel: the same authority, the same snapshot,
+            # reached by repeating one detail of it instead of by a click.
+            dialog = ApprovalDialog(
+                prompt.value, self.authority, self.prompt_parent, voice=self.voice
+            )
             self.approval_dialog = dialog
             dialog_layout = dialog.layout()
             assert dialog_layout is not None
@@ -437,6 +464,8 @@ class PlannerWindow(QDialog):
                 dialog.reject()
         self.worker = None
         self.last_result = worker.outcome
+        # What was done, in the owner's words, above the engine's own account of it.
+        self.output.appendPlainText("\n".join(written(worker.outcome)))
         self.status.setText(worker.outcome.summary)
         self._busy(False)
         self.voice.finish_plan(worker.outcome)
@@ -450,6 +479,7 @@ class PlannerWindow(QDialog):
         self.voice.shutdown()
         self.memory.shutdown()
         self.mail.shutdown()
+        self.routines.shutdown()
         if self.worker is not None:
             self.stop()
             self.worker.wait()
