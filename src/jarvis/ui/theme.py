@@ -88,13 +88,15 @@ QPlainTextEdit#commandInput { background: transparent; border: none; padding: 8p
     font-size: 14px; }
 QPlainTextEdit#transcript { background: $canvas; border: 1px solid $border;
     font-size: 12px; padding: 8px; }
-QWidget#memoryPanel QCheckBox::indicator, QWidget#memoryPanel QListWidget::indicator {
+/* Every checkbox draws its own box: consent the owner cannot see is consent they cannot give. */
+QCheckBox::indicator, QWidget#memoryPanel QListWidget::indicator {
     width: 16px; height: 16px; border: 1px solid $muted; border-radius: 3px;
     background: $canvas; }
-QWidget#memoryPanel QCheckBox::indicator:checked,
+QCheckBox::indicator:hover { border: 1px solid $primary; }
+QCheckBox::indicator:checked,
 QWidget#memoryPanel QListWidget::indicator:checked { background: $primary;
     border: 2px solid $foreground; }
-QWidget#memoryPanel QCheckBox:focus { border: 1px solid $focus; }
+QCheckBox:focus { border: 1px solid $focus; }
 QListWidget#activity { background: transparent; border: none; padding: 0; outline: none; }
 QListWidget::item { padding: 16px 4px; border-bottom: 1px solid #232e3a; }
 QListWidget::item:selected { background: #1b2b3f; border-radius: 8px; }
