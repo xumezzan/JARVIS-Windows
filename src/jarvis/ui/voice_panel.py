@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from jarvis.core.planner.contracts import PlanResult
+from jarvis.ui import workers
 from jarvis.ui.elevenlabs_dialog import ElevenLabsDialog
 from jarvis.ui.voice_worker import VoiceWorker
 from jarvis.voice.approval import CONFIRMATION_TEXT, Confirmation, ControlDetail, check
@@ -449,7 +450,7 @@ class VoicePanel(QWidget):
         self.busy_changed.emit(True)
         worker.phase.connect(self._phase)
         worker.finished.connect(self._finished)
-        worker.start()
+        workers.start(worker)
 
     def _phase(self, phase: str) -> None:
         if self.worker is None or self.worker.cancelled.is_set() or self.closed:

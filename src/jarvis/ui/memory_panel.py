@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from jarvis.memory.models import APPS, KINDS, PROFILE_TTL, Entry, Hint, MemoryContext
 from jarvis.memory.session import SessionContext
 from jarvis.memory.store import MemoryFailure, MemoryStore
+from jarvis.ui import workers
 
 
 def note(text: str) -> QLabel:
@@ -229,7 +230,7 @@ class MemoryPanel(QWidget):
         worker = MemoryWorker(operation)
         self.worker = worker
         worker.finished.connect(self._done)
-        worker.start()
+        workers.start(worker)
 
     def _controls(self, enabled: bool) -> None:
         for widget in (
