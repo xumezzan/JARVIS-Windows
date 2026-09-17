@@ -162,8 +162,16 @@ Real model checks require --run-model and JARVIS_PLANNER_MODEL; do not claim ver
 Push-to-talk stays visible and bound to a held UI gesture. Hands-free standing capture is
 the owner's explicit choice and is not background capture: it is off by default, switched on
 only from a visible control, shows a recording indicator the whole time, ends each phrase on
-silence, and stops on switch-off, device failure, window close and shutdown. It acts only on
-a phrase that names the assistant; anything else is dropped without leaving the helper.
+silence, and stops on switch-off, device failure, window close and shutdown. It is gated by
+a local wake listener: while it is armed nothing is recorded or recognised, because the
+listener runs on a two-outcome grammar - the name, or not the name - and answers with one
+boolean. Only after the name is heard does the ordinary recorder start, and only then is a
+phrase recognised at all; the phrase itself need not repeat the name. The decision is taken
+on finalised segments and on the recognised word's own confidence, never on a partial
+hypothesis, because a grammar that small offers its only known word while a phrase is still
+in flight. A listener that cannot run switches standing listening off and never falls back
+to recording the room. A dedicated indicator says what the microphone is doing in every
+state, armed included.
 Segmentation reads block loudness only, never content. Release stops a held recording; focus
 loss, Stop, Escape and close cancel and dispose helpers. Local
 Vosk model paths only, explicit native TTS drivers, no model downloads or cloud audio.

@@ -55,3 +55,29 @@ class VoiceFixture:
             await asyncio.sleep(self.speech_delay)
         finally:
             self.speech_closed.set()
+
+
+class WakeFixture:
+    """A standing listener under the test's control: it hears the name only when told to."""
+
+    local_only = True
+
+    def __init__(self) -> None:
+        self.cycles = 0
+        self.armed = Event()
+        self.heard = Event()
+        self.silence = Event()
+        self.error = ""
+
+    async def listen(self, released: Event, ready: Callable[[], None]) -> bool:
+        self.cycles += 1
+        self.armed.set()
+        ready()
+        try:
+            while not released.is_set() and not self.heard.is_set() and not self.silence.is_set():
+                await asyncio.sleep(0.005)
+            if self.error:
+                raise VoiceError(self.error)
+            return self.heard.is_set()
+        finally:
+            self.armed.clear()
