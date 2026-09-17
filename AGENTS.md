@@ -212,6 +212,22 @@ Suggestions live in memory, expire, are bounded, and disappear when the latest l
 longer sees the reason; acting on one prepares the action afresh and confirms it in the
 usual dialog, by button or by the spoken control detail.
 
+## MCP boundary (breadth)
+
+An MCP server describes itself, so its self-description is data, never authority. A tool
+never assigns itself a level: the owner reads the manifest in the interface and sets
+ROUTINE, CONFIRM or BLOCKED per tool, with CONFIRM as the default and SAFE not offered.
+Only tools inside a reviewed manifest are registered at all, and the review is pinned by a
+hash over the names, descriptions and argument names the owner read - not over the levels,
+which are theirs to change. A server that changed any of that returns for review, both in
+the file and in a check made before the first call of a session; a listing that cannot be
+made fails that check rather than passing it. Reach servers only over https through the
+shared transport, with a per-server key in the OS credential store; the stdio transport,
+sessions and event streams stay unimplemented. Never compile a server's JSON Schema into
+types: arguments are one strict flat map, restricted to the reviewed field names by the
+pure policy hook. A server's answer is bounded text data, `isError` is a failure and not a
+result, and nothing a server says changes a level, a name or an argument.
+
 ## Memory boundary (milestone 7)
 
 Only explicit user edits create profile/session labels. Do not ingest commands, transcripts,

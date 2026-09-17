@@ -1,5 +1,7 @@
 """Manual text planning surface with opt-in cloud disclosure and exact step approvals."""
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
@@ -19,7 +21,7 @@ from PySide6.QtWidgets import (
 
 from jarvis.browser.host import BrowserHost
 from jarvis.config import AppConfig
-from jarvis.core.composition import build
+from jarvis.core.composition import MCP_FILE, build
 from jarvis.core.context.assembly import assemble
 from jarvis.core.planner.contracts import Limits, PlanResult, Provider, Step
 from jarvis.core.planner.deepseek_provider import DeepSeekProvider
@@ -37,6 +39,7 @@ from jarvis.tools.windows import WindowsBackend
 from jarvis.ui import workers
 from jarvis.ui.approval_dialog import ApprovalDialog
 from jarvis.ui.mail_panel import MailPanel
+from jarvis.ui.mcp_panel import McpPanel
 from jarvis.ui.memory_panel import MemoryPanel
 from jarvis.ui.planner_worker import PlannerWorker, Prompt
 from jarvis.ui.routine_panel import RoutinePanel
@@ -119,6 +122,11 @@ class PlannerWindow(QDialog):
         mail_scroll.setWidgetResizable(True)
         mail_scroll.setWidget(self.mail)
         self.tabs.addTab(mail_scroll, "Outlook")
+        self.mcp = McpPanel(Path(config.data_dir) / MCP_FILE)
+        mcp_scroll = QScrollArea()
+        mcp_scroll.setWidgetResizable(True)
+        mcp_scroll.setWidget(self.mcp)
+        self.tabs.addTab(mcp_scroll, "Серверы MCP")
         layout = QVBoxLayout(task)
         layout.addWidget(
             note(
@@ -488,6 +496,7 @@ class PlannerWindow(QDialog):
         self.voice.shutdown()
         self.memory.shutdown()
         self.mail.shutdown()
+        self.mcp.shutdown()
         self.routines.shutdown()
         if self.worker is not None:
             self.stop()

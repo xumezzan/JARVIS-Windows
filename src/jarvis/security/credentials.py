@@ -2,6 +2,7 @@
 
 import asyncio
 import getpass
+import re
 import sys
 from contextlib import suppress
 
@@ -17,12 +18,25 @@ SERVICES = {
 }
 SERVICE = SERVICES["openai"]
 VENDORS = {"openai": "OpenAI", "deepseek": "DeepSeek", "fireflies": "Fireflies"}
+# An MCP server is named by the owner, so its entry is a pattern rather than a fixed
+# name - but a pattern in trusted code, which an argument still cannot step outside.
+MCP = re.compile(r"mcp_[a-z][a-z0-9_]{0,31}")
 
 
 def service_of(provider: str) -> str:
-    if provider not in SERVICES:
-        raise ProviderError("credentials")
-    return SERVICES[provider]
+    if provider in SERVICES:
+        return SERVICES[provider]
+    if MCP.fullmatch(provider):
+        return "Jarvis/MCP/" + provider.removeprefix("mcp_")
+    raise ProviderError("credentials")
+
+
+def vendor_of(provider: str) -> str:
+    return VENDORS.get(provider) or "MCP " + provider.removeprefix("mcp_")
+
+
+def known(provider: str) -> bool:
+    return provider in SERVICES or MCP.fullmatch(provider) is not None
 
 
 def setup_command(provider: str = "") -> str:
@@ -116,13 +130,13 @@ def main() -> int:
 
         store = native_store()
         arguments = sys.argv[1:]
-        provider = arguments[1] if len(arguments) == 2 and arguments[1] in SERVICES else "openai"
+        provider = arguments[1] if len(arguments) == 2 and known(arguments[1]) else "openai"
         if arguments[:1] == ["set"] and len(arguments) <= 2 and console(sys.stdin, True):
-            key = getpass.getpass(f"{VENDORS[provider]} API key (скрытый ввод): ")
+            key = getpass.getpass(f"{vendor_of(provider)} API key (скрытый ввод): ")
             if not valid_key(key):
                 raise ValueError
-            store.set_password(SERVICES[provider], ACCOUNT, key)
-            print(f"Ключ {VENDORS[provider]} сохранён в системном хранилище.")
+            store.set_password(service_of(provider), ACCOUNT, key)
+            print(f"Ключ {vendor_of(provider)} сохранён в системном хранилище.")
             return 0
         if (
             arguments[:1] == ["--pipe"]
@@ -130,7 +144,7 @@ def main() -> int:
             and not console(sys.stdin, True)
             and not console(sys.stdout, False)
         ):
-            key = store.get_password(SERVICES[provider], ACCOUNT) or ""
+            key = store.get_password(service_of(provider), ACCOUNT) or ""
             if not valid_key(key):
                 return 1
             sys.stdout.write(key + "\n")
@@ -138,7 +152,8 @@ def main() -> int:
     except Exception:
         pass
     if sys.argv[1:2] != ["--pipe"]:
-        print("Ключ недоступен. Настройка: " + setup_command("[openai|deepseek|fireflies]"))
+        vendors = "[openai|deepseek|fireflies|mcp_<имя>]"
+        print("Ключ недоступен. Настройка: " + setup_command(vendors))
     return 1
 
 

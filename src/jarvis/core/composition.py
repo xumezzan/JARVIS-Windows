@@ -18,6 +18,9 @@ from jarvis.connectors.base import ConnectorRegistry
 from jarvis.connectors.fireflies.connector import FirefliesConnector
 from jarvis.connectors.fireflies.mapping import MAPPERS as FIREFLIES_MAPPERS
 from jarvis.connectors.fireflies.tools import register_fireflies
+from jarvis.connectors.mcp.connector import McpConnector
+from jarvis.connectors.mcp.manifest import Server, load_servers
+from jarvis.connectors.mcp.tools import register_mcp
 from jarvis.connectors.microsoft.calendar import CalendarConnector
 from jarvis.connectors.microsoft.mapping import MAPPERS as CALENDAR_MAPPERS
 from jarvis.connectors.microsoft.tools import register_calendar
@@ -48,6 +51,20 @@ from jarvis.tools.windows import WindowsBackend, register_windows
 
 MATRIX_FILE = "permissions.json"
 ROUTINE_FILE = "routines.json"
+MCP_FILE = "mcp.json"
+
+
+def reviewed_servers(path: Path) -> tuple[Server, ...]:
+    """Only servers whose tool set the owner passed through exist for the planner.
+
+    An unreviewed server, a server that changed its tools, and a file that cannot be
+    read all lead to the same place: no tools. The panel tells the owner why; the
+    session simply does not gain a surface nobody approved.
+    """
+    try:
+        return tuple(server for server in load_servers(path) if server.current)
+    except ValueError:
+        return ()
 
 
 @dataclass(frozen=True)
@@ -109,6 +126,13 @@ def build(
     fireflies = FirefliesConnector()
     register_fireflies(registry, fireflies, matrix)
     connectors.add(fireflies)
+    for server in reviewed_servers(Path(config.data_dir) / MCP_FILE):
+        try:
+            mcp = McpConnector(server)
+            register_mcp(registry, mcp, matrix)
+        except ValueError:
+            continue  # One unusable server must not cost the session the others.
+        connectors.add(mcp)
     audit = AuditLog(config.data_dir / "audit.sqlite3")
     approvals = ApprovalStore()
     engine = PermissionEngine(registry, approvals, audit)
