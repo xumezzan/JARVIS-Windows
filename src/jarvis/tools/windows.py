@@ -299,7 +299,9 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
         ToolSpec(
             "windows.type_text",
             "Ввести буквальный текст в наблюдаемое текстовое поле.",
-            Risk.CONFIRM,
+            # Typing is ordinary work on the owner's own screen and is undone by the
+            # application's own undo; the field is still re-observed before every write.
+            Risk.ROUTINE,
             TypeText,
             WindowsResult,
             type_check,

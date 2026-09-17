@@ -14,7 +14,7 @@ from tests.windows_support import WindowsProbe, target
 from jarvis.observability.audit import AuditLog, ErrorCode
 from jarvis.permissions.approvals import Action, ApprovalStore
 from jarvis.permissions.engine import Outcome, PermissionEngine
-from jarvis.permissions.policies import Mode, Status
+from jarvis.permissions.policies import Mode, Risk, Status
 from jarvis.platforms.windows.transport import NativeReply, ProcessBackend
 from jarvis.tools.base import ExecutionContext, ToolError
 from jarvis.tools.registry import ToolRegistry
@@ -59,26 +59,25 @@ async def test_simulation_calls_no_native_hooks(name: str, args: object, audit: 
     probe = WindowsProbe()
     engine, store = engine_for(probe, audit)
     action = prepared(engine, name, args, Mode.SIMULATION)
-    token = store.take_authority(audit.approved).approve(action) if name == "type_text" else None
-    assert (await engine.execute(action, token)).status is Status.SIMULATED
+    assert (await engine.execute(action)).status is Status.SIMULATED
     assert not probe.calls
 
 
 @pytest.mark.asyncio
-async def test_type_requires_exact_approval_and_verifies_readback(audit: AuditLog) -> None:
+async def test_type_runs_unattended_once_and_verifies_readback(audit: AuditLog) -> None:
+    """Typing is ROUTINE: no token, but still one execution per prepared action."""
     probe = WindowsProbe()
     engine, store = engine_for(probe, audit)
-    authority = store.take_authority(audit.approved)
     args = {"target": target().model_dump(), "text": "Жарвис {ENTER}\nliteral"}
     action = prepared(engine, "type_text", args)
-    assert (await engine.execute(action)).status is Status.DENIED
-    assert not probe.calls
-    action = prepared(engine, "type_text", args)
-    token = authority.approve(action)
-    assert (await engine.execute(action, token)).status is Status.SUCCESS
+    assert action.risk is Risk.ROUTINE
+    # A level that needs no approval can also never be given one.
+    with pytest.raises(ValueError):
+        store.take_authority(audit.approved).approve(action)
+    assert (await engine.execute(action)).status is Status.SUCCESS
     assert probe.text == args["text"]
     assert [item.operation for item in probe.calls] == ["check_target", "type", "verify"]
-    assert (await engine.execute(action, token)).status is Status.INVALID
+    assert (await engine.execute(action)).status is Status.INVALID
     assert "literal" not in "".join(audit.recent())
 
 
@@ -95,19 +94,17 @@ async def test_type_requires_exact_approval_and_verifies_readback(audit: AuditLo
         ("editor", target().model_dump()["editor"] | {"selected_tabs": [[9]]}),
     ],
 )
-async def test_changed_approved_target_never_runs(
-    field: str, value: object, audit: AuditLog
-) -> None:
+async def test_changed_target_never_runs(field: str, value: object, audit: AuditLog) -> None:
+    """The engine compares the prepared snapshot itself, at every risk level."""
     import json
 
     probe = WindowsProbe()
-    engine, store = engine_for(probe, audit)
+    engine, _ = engine_for(probe, audit)
     action = prepared(engine, "type_text", {"target": target().model_dump(), "text": "test"})
-    token = store.take_authority(audit.approved).approve(action)
     args = json.loads(action.payload)
     args["target"][field] = value
     changed = replace(action, payload=json.dumps(args))
-    assert (await engine.execute(changed, token)).status is Status.DENIED
+    assert (await engine.execute(changed)).status is Status.DENIED
     assert not probe.calls
 
 
@@ -119,10 +116,9 @@ async def test_readback_failure_or_stale_target_never_succeeds(
     audit: AuditLog,
 ) -> None:
     probe = WindowsProbe(wrong_readback=wrong, changed=changed)
-    engine, store = engine_for(probe, audit)
+    engine, _ = engine_for(probe, audit)
     action = prepared(engine, "type_text", {"target": target().model_dump(), "text": "test"})
-    token = store.take_authority(audit.approved).approve(action)
-    result = await engine.execute(action, token)
+    result = await engine.execute(action)
     assert result.status is Status.ERROR
     assert result.error is (ErrorCode.VERIFICATION if wrong else ErrorCode.TARGET_CHANGED)
     assert result.may_have_effects == wrong

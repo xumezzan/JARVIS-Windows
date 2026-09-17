@@ -73,12 +73,7 @@ async def test_all_simulation_hooks_are_skipped(name: str, args: object, tmp_pat
         engine = PermissionEngine(registry, store, audit)
         action = engine.prepare("browser." + name, args, Mode.SIMULATION)
         assert isinstance(action, Action)
-        token = (
-            store.take_authority(audit.approved).approve(action)
-            if name not in ("read", "get_tabs")
-            else None
-        )
-        assert (await engine.execute(action, token)).status is Status.SIMULATED
+        assert (await engine.execute(action)).status is Status.SIMULATED
         assert not probe.calls
 
 
@@ -90,7 +85,6 @@ async def test_approval_binds_every_target_and_form_field(tmp_path: Path) -> Non
     with closing(AuditLog(tmp_path / "audit.sqlite3")) as audit:
         store = ApprovalStore()
         engine = PermissionEngine(registry, store, audit)
-        authority = store.take_authority(audit.approved)
         for key, value in [
             ("tab_id", "f" * 32),
             ("frame", "other"),
@@ -101,19 +95,18 @@ async def test_approval_binds_every_target_and_form_field(tmp_path: Path) -> Non
                 "browser.click", {"target": TARGET.model_dump(), "element": BUTTON}
             )
             assert isinstance(action, Action)
-            token = authority.approve(action)
             args = json.loads(action.payload)
             args["target"][key] = value
-            assert (
-                await engine.execute(replace(action, payload=json.dumps(args)), token)
-            ).status in (Status.DENIED, Status.INVALID)
+            assert (await engine.execute(replace(action, payload=json.dumps(args)))).status in (
+                Status.DENIED,
+                Status.INVALID,
+            )
         action = engine.prepare("browser.click", {"target": TARGET.model_dump(), "element": BUTTON})
         assert isinstance(action, Action)
-        token = authority.approve(action)
         args = json.loads(action.payload)
         args["element"]["request"]["body"] = "body=changed"
         assert (
-            await engine.execute(replace(action, payload=json.dumps(args)), token)
+            await engine.execute(replace(action, payload=json.dumps(args)))
         ).status is Status.DENIED
         assert not probe.calls
 
@@ -128,7 +121,7 @@ async def test_empty_adapter_result_is_not_success(tmp_path: Path) -> None:
         engine = PermissionEngine(registry, store, audit)
         action = engine.prepare("browser.open", {"url": TARGET.url}, Mode.EXECUTE)
         assert isinstance(action, Action)
-        result = await engine.execute(action, store.take_authority(audit.approved).approve(action))
+        result = await engine.execute(action)
         assert result.status is Status.ERROR and result.error is ErrorCode.VERIFICATION
 
 

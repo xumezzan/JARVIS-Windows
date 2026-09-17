@@ -15,7 +15,7 @@ from pathlib import Path
 from jarvis.connectors.base import NAME, Capability
 from jarvis.permissions.policies import Risk
 
-ORDER = (Risk.SAFE, Risk.CONFIRM, Risk.CRITICAL, Risk.BLOCKED)
+ORDER = (Risk.SAFE, Risk.ROUTINE, Risk.CONFIRM, Risk.CRITICAL, Risk.BLOCKED)
 WILDCARD = "*"
 FIELDS = {"allowed", "risk"}
 MAX_BYTES = 65536
