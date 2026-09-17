@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 from jarvis.browser.host import BrowserHost
 from jarvis.config import AppConfig
 from jarvis.core.planner.contracts import Step
+from jarvis.core.report import written
 from jarvis.observability.events import EVENT_TEXT, ShellEvent
 from jarvis.observability.logging import ShellLog
 from jarvis.security.browser_policy import NetworkPolicy
@@ -704,9 +705,15 @@ class MainWindow(QMainWindow):
         self._reset()
         self._set_state(state)
         result = self.planner_window.last_result if self.planner_window is not None else None
-        rows = [result.summary if result is not None else EVENT_TEXT[event]]
+        # The report first: this window is where the owner reads what happened, not a log.
+        rows = [*written(result)] if result is not None else [EVENT_TEXT[event]]
         if result is not None and result.error in ERROR_ADVICE:
             rows.append(ERROR_ADVICE[result.error])
+        if result is not None:
+            rows.extend(
+                f"{index}. {step.tool}: {step.outcome.status.value}"
+                for index, step in enumerate(result.steps, 1)
+            )
         self.action_label.setText("\n".join(rows))
         self._record(event)
         self._request_id = None

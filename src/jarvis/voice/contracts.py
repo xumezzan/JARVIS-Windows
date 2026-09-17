@@ -7,7 +7,7 @@ from threading import Event
 from typing import Protocol
 
 from jarvis.core.planner.contracts import PlanResult
-from jarvis.permissions.policies import Status
+from jarvis.core.report import spoken
 
 SAMPLE_RATE = 16000
 MAX_SECONDS = 30
@@ -103,22 +103,10 @@ class Speaker(Protocol):
 
 
 def spoken_result(result: PlanResult) -> str:
-    """Speak only deterministic engine statuses, never model/tool text or secret content."""
-    titles = {
-        "finished": "Планировщик завершил работу.",
-        "simulated": "Симуляция завершена. Реальные действия не выполнялись.",
-        "no_action": "Действия не выполнены. Результат не подтверждён.",
-        "error": "Выполнение остановлено с ошибкой.",
-        "cancelled": "Задача отменена.",
-        "timeout": "Истекло время задачи.",
-        "limit": "Достигнут предел шагов или уточнений.",
-    }
-    text = titles[result.status]
-    verified = sum(step.outcome.status is Status.SUCCESS for step in result.steps)
-    if verified:
-        text += f" Проверено выполненных действий: {verified}."
-    if result.status in {"error", "cancelled", "timeout", "limit"} and any(
-        step.outcome.may_have_effects for step in result.steps
-    ):
-        text += " Уже выданные действия не отозваны. Проверьте результат на экране."
-    return text
+    """Speak what was done, assembled by trusted code in `core/report.py`.
+
+    The rule it keeps is the one this module always kept: nothing a model wrote and nothing
+    a service answered is ever spoken. What is new is that the sentence is about the owner's
+    task rather than about the planner's own statuses.
+    """
+    return spoken(result)

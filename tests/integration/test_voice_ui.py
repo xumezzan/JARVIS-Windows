@@ -202,7 +202,7 @@ def test_no_tts_microphone_feedback(qtbot: QtBot, tmp_path: Path) -> None:
         QTest.mousePress(window.voice.hold, Qt.MouseButton.LeftButton)
         QTest.mouseRelease(window.voice.hold, Qt.MouseButton.LeftButton)
         assert fixture.captures == 0 and not window.run_button.isEnabled()
-        assert "Симуляция" in fixture.spoken[0]
+        assert "симуляция" in fixture.spoken[0]
         window.stop()
         qtbot.waitUntil(lambda: window.voice.worker is None)
     finally:

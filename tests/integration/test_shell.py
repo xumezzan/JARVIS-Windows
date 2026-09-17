@@ -81,6 +81,8 @@ def test_simulated_command_reports_facts(qtbot: QtBot, window: MainWindow) -> No
     assert states[0] == "thinking" and states[-1] == "success"
     assert "executing" in states
     assert window.transcript.toPlainText() == "проверь систему дважды"
+    # The report comes first, the engine's own account of the steps after it.
+    assert window.action_label.text().startswith("Это была симуляция")
     assert "local.check: SIMULATED" in window.action_label.text()
     assert not window.running
     assert window.submit_button.isEnabled()
@@ -102,6 +104,10 @@ def test_real_execution_runs_the_tool_without_blocking_the_ui(
     assert len(ticks) >= 3
     assert result.args == ["finished"]
     assert window.state == UiState.SUCCESS
+    # Two checks change nothing in the world, and the assistant says exactly that.
+    assert window.action_label.text().startswith(
+        "Готово." + "\n" + "Ничего не менял — только посмотрел."
+    )
     assert "local.check: SUCCESS" in window.action_label.text()
     assert (window.config.data_dir / "audit.sqlite3").exists()
 

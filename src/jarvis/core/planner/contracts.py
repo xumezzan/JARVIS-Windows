@@ -34,6 +34,9 @@ class Proposal(ToolModel):
 class Step:
     tool: str
     outcome: Outcome
+    # The exact arguments the engine normalised, kept so the assistant can say what it did.
+    # Providers receive tool, status and result only; this field never reaches them.
+    payload: str = field(default="", repr=False)
 
 
 @dataclass(frozen=True)

@@ -247,7 +247,7 @@ class Runner:
             self.notify("executing", action.tool)
             outcome = await self.engine.execute(action, token)
             self.active = None
-            step = Step(action.tool, outcome)
+            step = Step(action.tool, outcome, action.payload)
             self.steps.append(step)
             self.notify("tool", step)
             if self.harvester is not None and outcome.status is Status.SUCCESS:

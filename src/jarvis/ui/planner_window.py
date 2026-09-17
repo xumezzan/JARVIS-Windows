@@ -26,6 +26,7 @@ from jarvis.core.planner.deepseek_provider import DeepSeekProvider
 from jarvis.core.planner.offline import OfflineProvider
 from jarvis.core.planner.openai_provider import OpenAIProvider
 from jarvis.core.planner.routing import EscalatingRouter
+from jarvis.core.report import written
 from jarvis.mail.session import MailSession
 from jarvis.memory.store import MemoryFailure, MemoryStore
 from jarvis.permissions.approvals import Action
@@ -451,6 +452,8 @@ class PlannerWindow(QDialog):
                 dialog.reject()
         self.worker = None
         self.last_result = worker.outcome
+        # What was done, in the owner's words, above the engine's own account of it.
+        self.output.appendPlainText("\n".join(written(worker.outcome)))
         self.status.setText(worker.outcome.summary)
         self._busy(False)
         self.voice.finish_plan(worker.outcome)

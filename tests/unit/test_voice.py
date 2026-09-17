@@ -45,10 +45,11 @@ def test_spoken_result_excludes_all_content() -> None:
     outcome = Outcome(uuid4(), Status.SUCCESS, result_json='{"secret":"private payload"}')
     result = PlanResult("finished", (Step("private tool name", outcome),))
     speech = spoken_result(result)
-    assert "Проверено выполненных действий: 1" in speech
-    assert "private" not in speech and "secret" not in speech
-    assert "Реальные действия не выполнялись" in spoken_result(PlanResult("simulated"))
-    assert "Результат не подтверждён" in spoken_result(PlanResult("no_action"))
+    # The voice now says what was done, and still never a tool name or a tool's answer.
+    assert speech.startswith("Готово.") and "только посмотрел" in speech
+    assert "private" not in speech and "secret" not in speech and "tool" not in speech
+    assert "симуляция" in spoken_result(PlanResult("simulated"))
+    assert "ничего не сделал" in spoken_result(PlanResult("no_action"))
 
 
 def test_no_sensitive_repr_or_exception() -> None:

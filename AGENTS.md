@@ -163,6 +163,13 @@ microphone is opened by the owner's press, or by standing capture they already s
 never by a dialog appearing.
 Preserve bounded PCM/pipes/timeouts, no audio/transcript persistence, no simultaneous
 recording and speech, and deterministic spoken summaries from engine outcomes.
+The end of a task is reported in the owner's own words, and `core/report.py` is the only
+place that composes it. It reads the action snapshot the owner caused - the one they already
+saw in the confirmation - together with the outcome the engine verified, and nothing else: no
+model text, no tool or service answer, no typed text, message body or secret, every field
+bounded. An effect that may have landed is reported as unconfirmed rather than as done. The
+spoken version drops what the local Russian voice cannot pronounce, such as an address or a
+path; the written one may keep it, because the owner reads it on their own screen.
 Ordinary tests use fixtures; real microphone/speaker checks require --run-voice, a native
 visible window and the user's hold gesture. Never claim hardware verified from fixtures.
 
