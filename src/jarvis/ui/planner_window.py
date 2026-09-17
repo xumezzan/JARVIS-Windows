@@ -29,6 +29,8 @@ from jarvis.core.planner.offline import OfflineProvider
 from jarvis.core.planner.openai_provider import OpenAIProvider
 from jarvis.core.planner.routing import EscalatingRouter
 from jarvis.core.report import written
+from jarvis.core.workflow.journal import RunJournal
+from jarvis.core.workflow.store import WorkflowFailure
 from jarvis.mail.session import MailSession
 from jarvis.memory.store import MemoryFailure, MemoryStore
 from jarvis.permissions.approvals import Action
@@ -77,7 +79,7 @@ class PlannerWindow(QDialog):
         self.config = config
         self.override_provider = provider
         self.router: EscalatingRouter | None = None
-        self.limits = limits or Limits()
+        self.limits = limits or Limits.long()
         # One composition root owns what exists in this session; the window only uses it.
         self.bench = build(
             config,
@@ -336,18 +338,21 @@ class PlannerWindow(QDialog):
         self.last_result = None
         self.voice.was_cancelled = False
         self._busy(True)
+        mode = Mode.SIMULATION if self.simulation.isChecked() else Mode.EXECUTE
+        limits, journal = self._durable(command, mode)
         self.worker = PlannerWorker(
             self.registry,
             self.engine,
             provider,
             command,
-            Mode.SIMULATION if self.simulation.isChecked() else Mode.EXECUTE,
-            self.limits,
+            mode,
+            limits,
             memory,
             context.knowledge,
             context.derived,
             self.bench.harvester,
             self.bench.learner,
+            journal,
         )
         self.worker.progress_event.connect(self._event)
         self.worker.prompt.connect(self._prompt)
@@ -355,12 +360,33 @@ class PlannerWindow(QDialog):
         self.memory.consume_selection()
         workers.start(self.worker)
 
+    def _durable(self, command: str, mode: Mode) -> tuple[Limits, RunJournal | None]:
+        """Open the run this task will be carried by, or say why it has to stay short.
+
+        The long bounds are only honest while a journal records what was issued, so an
+        unusable store costs the task its length rather than its safety: it runs under the
+        short bounds, without resumption, and the owner is told that on screen.
+        """
+        if not self.limits.durable:
+            return self.limits, None
+        try:
+            record = self.bench.workflows.start(command, mode)
+        except WorkflowFailure:
+            self.output.appendPlainText(
+                "Журнал задач недоступен: задача идёт короткой и не переживёт перезапуск."
+            )
+            return Limits(), None
+        return self.limits, RunJournal(self.bench.workflows, record.id)
+
     @Slot(str, object)
     def _event(self, kind: str, value: object) -> None:
         if self._closing or self.worker is None:
             return
         self.progress_event.emit(kind, value)
-        if kind == "thinking":
+        if kind == "budget" and isinstance(value, tuple):
+            spent, ceiling = value
+            self.status.setText(f"Обращений к модели: {spent} из {ceiling}.")
+        elif kind == "thinking":
             self.status.setText(f"Подготовка следующего шага ({value})…")
         elif kind == "executing":
             self.status.setText("Выполняется: " + str(value))

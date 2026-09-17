@@ -6,7 +6,7 @@ Kept as a narrow protocol so the planner depends on three verbs rather than on a
 from threading import Event
 from typing import Protocol
 
-from jarvis.core.workflow.models import StepRecord, step_key
+from jarvis.core.workflow.models import Phase, StepRecord, step_key
 from jarvis.core.workflow.store import WorkflowFailure, WorkflowStore
 from jarvis.permissions.engine import Outcome
 
@@ -19,6 +19,8 @@ class Journal(Protocol):
     def issue(self, index: int, tool: str, key: str) -> None: ...
 
     def complete(self, key: str, outcome: Outcome) -> None: ...
+
+    def phase(self, phase: Phase) -> None: ...
 
 
 class RunJournal:
@@ -61,6 +63,15 @@ class RunJournal:
             outcome.may_have_effects,
             self.cancelled,
         )
+
+    def phase(self, phase: Phase) -> None:
+        """Where the run stands now, so a restart finds it in the state it stopped in.
+
+        A cancelled store makes this fail like any other write. The caller treats that as
+        losing the note, not as losing the task: an unfinished run is the safe appearance,
+        because it is offered for resumption instead of being believed to be done.
+        """
+        self.store.phase(self.run_id, phase, self.cancelled)
 
 
 __all__ = ["Journal", "RunJournal", "step_key"]

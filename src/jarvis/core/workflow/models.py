@@ -28,7 +28,10 @@ from jarvis.tools.base import ToolModel
 MAX_STEPS = 64
 MAX_REQUEST = 4000
 
-Phase = Literal["running", "waiting", "done", "failed", "cancelled"]
+# A waiting run says what it waits for, because the two waits are answered by different
+# things: an approval is the owner's authority over one exact action, an input is data the
+# task is missing. After a restart the owner sees which of the two the run stopped on.
+Phase = Literal["running", "waiting_approval", "waiting_input", "done", "failed", "cancelled"]
 State = Literal["issued", "finished"]
 FINISHED: tuple[Phase, ...] = ("done", "failed", "cancelled")
 
