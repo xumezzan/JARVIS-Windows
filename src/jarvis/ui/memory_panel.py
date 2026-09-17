@@ -349,7 +349,7 @@ class MemoryPanel(QWidget):
         worker = DerivedWorker(self.derived_store, operation)
         self.derived_worker = worker
         worker.finished.connect(self._learned_done)
-        worker.start()
+        workers.start(worker)
 
     def _learned_controls(self, enabled: bool) -> None:
         for widget in (self.learned_list, self.forget_button, self.clear_learned_button):
