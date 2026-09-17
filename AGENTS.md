@@ -9,6 +9,27 @@ See `docs/ROADMAP.md` for verification status and the next prompt.
 Work on the milestone requested by the user; do not implement later stages early.
 Inspect existing instructions and changes before edits and preserve unrelated work.
 
+## Branches, commits and pull requests
+
+The owner works on this repository from several sessions at once, so the repository - not a
+chat - is where the work lives. Everything done is committed and pushed before the session
+ends; nothing waits in a working copy for a chat that may never come back.
+
+One branch per change, always cut from the current `main`, and its pull request opens against
+`main`. Never base a branch on another open branch. A stacked pull request merges into its
+base rather than into `main`, so the work stops reaching the product while every review looks
+finished - that already happened here to six changes at once. When a change genuinely needs
+another one first, land the first in `main` and branch again.
+
+Before starting, fetch and check out `main`, and look at what another session may have pushed
+in the meantime. Never commit onto a branch this session did not create: if the working copy
+is sitting on one, move the commit to its own branch and restore the other branch to its
+published state.
+
+Name a branch `feat/`, `fix/` or `chore/` plus a short kebab description of the change. Say
+in the commit message what changed for the owner and why. Delete a branch once its pull
+request is merged; `main` is the only long-lived branch.
+
 ## Target installation workflow (milestone 9 requirement)
 
 Development takes place on Mac. The final delivery must let the user open this repository
