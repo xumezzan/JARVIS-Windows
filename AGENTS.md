@@ -85,8 +85,9 @@ Do not treat fixture checks or a shown shell as completion of the full MVP scena
   A new capability starts at CONFIRM and is lowered only by a deliberate decision.
 - CONFIRM requires an exact, expiring, single-use approval from a verified UI event.
   Bind service/account/target/content/attachments and invalidate on any change or cancellation.
-- CRITICAL stays disabled until decision Р5 in `docs/AGENT_PLAN.md` is taken and its
-  reinforced confirmation exists; BLOCKED never executes.
+- CRITICAL stays disabled until the reinforced confirmation of decision Р5 exists in
+  code and has been verified; the owner took that decision on 2026-09-17, which
+  authorises building it, not running without it. BLOCKED never executes.
 - Simulation runs policy checks but never invokes real execution adapters.
 - Bound tasks, support cancellation, verify results, and audit actual outcomes.
 - No hidden microphone recording. No success claim from a plan alone.
