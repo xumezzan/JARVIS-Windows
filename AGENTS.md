@@ -166,6 +166,22 @@ recording and speech, and deterministic spoken summaries from engine outcomes.
 Ordinary tests use fixtures; real microphone/speaker checks require --run-voice, a native
 visible window and the user's hold gesture. Never claim hardware verified from fixtures.
 
+## Routine boundary (background work)
+
+A routine is trusted code with a fixed list of observations, not a plan and not a model:
+nothing a service answers becomes a tool name, an argument or a schedule, and no model runs
+in the background at all. Three switches gate it, each off by default and each persisted:
+routines as a whole, the routine, and that routine's permission to carry out reversible work
+unattended. Observation is SAFE only, and a cycle that is asked to observe anything else is
+refused. A routine never executes CONFIRM under any setting and is never given approval
+authority: what needs confirming is queued and waits for the owner. A cycle is an ordinary
+run with its own run id, journal and idempotency keys, so an effect already issued is not
+repeated after a restart. The day has a durable budget of cycles; exhausting it stops the
+routine until tomorrow. A routine that found no reason produces no notification at all.
+Suggestions live in memory, expire, are bounded, and disappear when the latest look no
+longer sees the reason; acting on one prepares the action afresh and confirms it in the
+usual dialog, by button or by the spoken control detail.
+
 ## Memory boundary (milestone 7)
 
 Only explicit user edits create profile/session labels. Do not ingest commands, transcripts,

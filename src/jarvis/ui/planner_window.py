@@ -36,6 +36,7 @@ from jarvis.ui.approval_dialog import ApprovalDialog
 from jarvis.ui.mail_panel import MailPanel
 from jarvis.ui.memory_panel import MemoryPanel
 from jarvis.ui.planner_worker import PlannerWorker, Prompt
+from jarvis.ui.routine_panel import RoutinePanel
 from jarvis.ui.voice_panel import VoicePanel
 
 
@@ -201,6 +202,15 @@ class PlannerWindow(QDialog):
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         layout.addWidget(self.output, 1)
+        # Routines need the voice panel, so their tab joins once the panel exists. They are
+        # off until the owner switches them on, and this window only hosts the surface.
+        self.routines = RoutinePanel(
+            self.bench.routines, self.engine, self.authority, self.audit, voice=self.voice
+        )
+        routines_scroll = QScrollArea()
+        routines_scroll.setWidgetResizable(True)
+        routines_scroll.setWidget(self.routines)
+        self.tabs.addTab(routines_scroll, "Рутины")
         self.memory.busy_changed.connect(
             lambda value: self._voice_busy(self.voice.worker is not None)
         )
@@ -454,6 +464,7 @@ class PlannerWindow(QDialog):
         self.voice.shutdown()
         self.memory.shutdown()
         self.mail.shutdown()
+        self.routines.shutdown()
         if self.worker is not None:
             self.stop()
             self.worker.wait()

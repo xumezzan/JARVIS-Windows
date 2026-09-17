@@ -131,7 +131,9 @@ class ApprovalDialog(QDialog):
 
     @Slot(str)
     def _heard(self, outcome: str) -> None:
-        if self.voice is None or self.detail is None or self.token is not None:
+        # The panel has one voice for the whole session, so an answer belongs to whichever
+        # confirmation asked for it. A dialog that armed nothing confirms nothing.
+        if self.voice is None or self.detail is None or self.token is not None or not self.armed:
             return
         self.armed = False
         if self.listen_button is not None:

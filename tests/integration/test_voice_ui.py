@@ -30,6 +30,9 @@ def make_window(qtbot: QtBot, tmp_path: Path, fixture: VoiceFixture) -> PlannerW
     window = PlannerWindow(AppConfig(tmp_path), voice_panel=panel)
     qtbot.addWidget(window)
     window.show()
+    # The memory panel reads its store on the next turn and holds the run button until it
+    # is done; waiting here keeps that start-up out of what these tests are measuring.
+    qtbot.waitUntil(lambda: window.memory.worker is None, timeout=15000)
     return window
 
 
@@ -71,7 +74,10 @@ def test_review_edit_and_explicit_submission(qtbot: QtBot, tmp_path: Path) -> No
         assert window.command.toPlainText() == fixture.text
         assert "неуверенное" in window.voice.status.text()
         window.command.setPlainText("проверь систему дважды")
-        with qtbot.waitSignal(window.task_finished) as result:
+        # Sampling the button once raced with the panels still settling, and a loaded
+        # machine can take longer than the default wait to finish two simulated steps.
+        qtbot.waitUntil(window.run_button.isEnabled, timeout=15000)
+        with qtbot.waitSignal(window.task_finished, timeout=15000) as result:
             QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
         assert result.args == ["simulated"]
         assert window.output.toPlainText().count("local.check:") == 2
@@ -210,7 +216,10 @@ def test_device_errors_allow_text_fallback(qtbot: QtBot, tmp_path: Path, error: 
     window = make_window(qtbot, tmp_path, fixture)
     try:
         record(qtbot, window.voice)
-        assert window.worker is None and window.run_button.isEnabled()
+        assert window.worker is None
+        # Typing stays available after a device failure; other panels of the window may
+        # still be settling, so wait for the button rather than sampling it once.
+        qtbot.waitUntil(window.run_button.isEnabled, timeout=15000)
         assert fixture.record_closed.is_set()
         window.command.setPlainText("проверь систему")
         with qtbot.waitSignal(window.task_finished):
