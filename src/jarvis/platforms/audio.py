@@ -10,6 +10,7 @@ from pathlib import Path
 from threading import Event, Thread
 from typing import Any, cast
 
+from jarvis.platforms.protocol import emit
 from jarvis.voice.contracts import MAX_AUDIO_BYTES, MAX_SECONDS, SAMPLE_RATE, AudioClip, VoiceError
 
 # Hands-free segmentation, in 100 ms blocks of 16 kHz mono audio.
@@ -110,7 +111,7 @@ def capture(pending: bytes = b"", listen: bool = False) -> dict[str, object]:
             blocksize=1600,
             callback=receive,
         ):
-            print('{"ready":true}', flush=True)
+            emit('{"ready":true}')
             if listen and not speech.wait(WAIT_BLOCKS / 10) and not stop.is_set():
                 stop.set()
                 raise VoiceError("silence")
@@ -231,10 +232,10 @@ def main() -> int:
             result = speak(request)
         else:
             raise VoiceError("voice_failed")
-        print(json.dumps(result, ensure_ascii=True), flush=True)
+        emit(json.dumps(result, ensure_ascii=True))
         return 0
     except Exception as exc:
-        print(json.dumps({"error": exc.code if isinstance(exc, VoiceError) else "voice_failed"}))
+        emit(json.dumps({"error": exc.code if isinstance(exc, VoiceError) else "voice_failed"}))
         return 1
 
 
