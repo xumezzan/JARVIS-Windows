@@ -57,7 +57,7 @@ def test_notepad_open_focus_literal_text_and_readback(qtbot: QtBot, tmp_path: Pa
         window.close()
 
 
-@pytest.mark.parametrize("app", ["chrome", "vscode"])
+@pytest.mark.parametrize("app", ["chrome", "code"])
 def test_supported_app_open_focus_or_missing(qtbot: QtBot, tmp_path: Path, app: str) -> None:
     assert QApplication.platformName() == "windows", "Use QT_QPA_PLATFORM=windows"
     window = PermissionWorkbench(tmp_path)
@@ -65,7 +65,12 @@ def test_supported_app_open_focus_or_missing(qtbot: QtBot, tmp_path: Path, app: 
     window.show()
     try:
         window.simulation.setChecked(False)
-        window.app_choice.setCurrentIndex(window.app_choice.findData(app))
+        shortcut = window.app_choice.findData(app)
+        # Say which side is wrong. A missing shortcut leaves the box empty, and an empty
+        # name is refused as an argument, so the gate would otherwise report INVALID and
+        # look like the application failed to open.
+        assert shortcut >= 0, f"The workbench offers no shortcut for {app!r}."
+        window.app_choice.setCurrentIndex(shortcut)
         run_tool(qtbot, window, "windows.open_app")
         if "не найдено" in window.status_label.text():
             pytest.skip(f"Install {app} in a supported location to verify opening and focus.")
