@@ -140,6 +140,9 @@ QToolTip { color: #dce9fa; background: #1b2c40; border: 1px solid #476387; paddi
 """)
 
 
+ICON = Path(__file__).parent / "assets" / "jarvis.ico"
+
+
 def build_stylesheet(theme: str = "Midnight") -> str:
     """Render the same component styles using an explicit named palette."""
     return _QSS.substitute(PALETTES[theme])

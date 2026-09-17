@@ -131,6 +131,9 @@ try {
     & $python -I (Join-Path $PSScriptRoot 'install.py') --root $jarvisRoot
     if ($LASTEXITCODE -ne 0) { throw 'Application setup did not pass. Resolve the reported step and rerun this script.' }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Launch-Jarvis.pyw') -Destination $jarvisRoot -Force
+    # The icon lives beside the launcher rather than inside a slot: slots are retired on
+    # update, and a shortcut pointing into a retired one loses its picture.
+    Copy-Item -LiteralPath (Join-Path $repository 'src\jarvis\ui\assets\jarvis.ico') -Destination $jarvisRoot -Force
     $shell = New-Object -ComObject WScript.Shell
     $programs = [Environment]::GetFolderPath('Programs')
     $shortcut = $shell.CreateShortcut((Join-Path $programs 'Jarvis.lnk'))
@@ -138,6 +141,7 @@ try {
     $shortcut.Arguments = '-I "' + (Join-Path $jarvisRoot 'Launch-Jarvis.pyw') + '"'
     $shortcut.WorkingDirectory = $jarvisRoot
     $shortcut.Description = 'Jarvis - local assistant'
+    $shortcut.IconLocation = (Join-Path $jarvisRoot 'jarvis.ico') + ',0'
     $shortcut.Save()
     Write-Host 'Jarvis window observed; Start menu shortcut created. Native MVP acceptance remains pending.'
 } catch {
