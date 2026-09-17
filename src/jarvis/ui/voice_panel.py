@@ -36,12 +36,25 @@ from jarvis.voice.contracts import (
 )
 from jarvis.voice.elevenlabs import ElevenLabsSpeaker
 from jarvis.voice.local import LocalRecorder, LocalSpeaker, VoskRecognizer
+from jarvis.voice.wake import LocalWake, Wake
 
 # Hands-free acts only on a phrase addressed to the assistant by name. The local model
 # is small, so near-misses of the same name are accepted; anything else is ignored.
 WAKE_WORDS = frozenset(
     {"джарвис", "джарвес", "джарвиз", "жарвис", "джавис", "ярвис", "джарис", "jarvis"}
 )
+
+
+# What the owner can see at a glance, in every state the microphone can be in. Standing
+# listening must never be invisible, so this line is separate from ordinary messages and
+# is the one thing that always says whether something is listening.
+MICROPHONE = {
+    "off": "○ Микрофон выключен.",
+    "armed": "◉ Жду обращения «Джарвис». Слушается только имя, речь не распознаётся.",
+    "recording": "● Идёт запись.",
+    "transcribing": "◐ Микрофон выключен, идёт распознавание.",
+    "speaking": "♪ Микрофон выключен, идёт озвучивание.",
+}
 
 
 def wake_command(text: str) -> str:
@@ -142,11 +155,13 @@ class VoicePanel(QWidget):
         recorder: Recorder | None = None,
         recognizer: Recognizer | None = None,
         speaker: Speaker | None = None,
+        wake: Wake | None = None,
     ) -> None:
         super().__init__()
         self.recorder = recorder or LocalRecorder()
         self.recognizer = recognizer
         self.speaker = speaker or LocalSpeaker()
+        self.wake = wake
         self.cloud_selection: tuple[str, str] | None = None
         self.settings_dialog: ElevenLabsDialog | None = None
         self.worker: VoiceWorker | None = None
@@ -157,6 +172,8 @@ class VoicePanel(QWidget):
         self.voice_task = False
         self.hands_free = False
         self.listening = False
+        self.armed = False
+        self.woken = False
         self.confirming: ControlDetail | None = None
         self.confirm_stage = ""
         self.capture_button: HoldButton | None = None
@@ -201,6 +218,11 @@ class VoicePanel(QWidget):
         )
         hint.setWordWrap(True)
         body.addWidget(hint)
+        self.indicator = QLabel(MICROPHONE["off"])
+        self.indicator.setTextFormat(Qt.TextFormat.PlainText)
+        self.indicator.setWordWrap(True)
+        self.indicator.setAccessibleName("Индикатор микрофона")
+        body.addWidget(self.indicator)
         self.status = QLabel("Микрофон выключен.")
         self.status.setTextFormat(Qt.TextFormat.PlainText)
         self.status.setWordWrap(True)
@@ -258,18 +280,18 @@ class VoicePanel(QWidget):
         button.interrupted.connect(lambda: self.cancel() if self.capture_button is button else None)
 
     def set_hands_free(self, enabled: bool) -> None:
-        """Standing capture is an explicit, visible mode; it is never turned on by default."""
+        """Standing listening is an explicit, visible mode; it is never on by default."""
         self.hands_free = enabled
         if enabled:
             self.listen()
             return
-        if self.listening:
+        if self.listening or self.armed:
             self.cancel()
         else:
             self.message.emit("Свободные руки выключены. Микрофон выключен.")
 
     def listen(self) -> None:
-        """Start one standing capture that ends by itself on silence."""
+        """Arm the listener. It waits for the name and recognises nothing until it hears it."""
         if (
             not self.hands_free
             or self.closed
@@ -285,6 +307,15 @@ class VoicePanel(QWidget):
         self.was_cancelled = False
         self.capture_button = None
         self.cancel_only = False
+        self.woken = False
+        self.armed = True
+        self.voice_task = False
+        self._launch("", wake=True)
+
+    def _record_phrase(self) -> None:
+        """The name was heard, so the ordinary standing capture runs, exactly as before."""
+        self.armed = False
+        self.woken = True
         self.listening = True
         self.voice_task = True
         self._launch("", listen=True)
@@ -425,19 +456,23 @@ class VoicePanel(QWidget):
         self.message.emit("Микрофон запускается… Дождитесь надписи «Идёт запись».")
         self._launch("")
 
-    def _launch(self, speech: str, cloud: bool = True, listen: bool = False) -> None:
+    def _launch(
+        self, speech: str, cloud: bool = True, listen: bool = False, wake: bool = False
+    ) -> None:
         speaker = self.speaker
         if speech and cloud and self.cloud_selection is not None:
             voice_id, account = self.cloud_selection
             self._clear_cloud()
             speaker = ElevenLabsSpeaker(voice_id, account, speech)
+        model = Path(self.model_path.text())
         try:
             worker = VoiceWorker(
                 self.recorder,
-                self.recognizer or VoskRecognizer(Path(self.model_path.text())),
+                self.recognizer or VoskRecognizer(model),
                 speaker,
                 speech=speech,
                 listen=listen,
+                wake=(self.wake or LocalWake(model)) if wake else None,
             )
         except ValueError:
             self.message.emit("Облачный голос не подключён. Выберите локальный адаптер.")
@@ -452,9 +487,22 @@ class VoicePanel(QWidget):
         worker.finished.connect(self._finished)
         workers.start(worker)
 
+    def _indicate(self, state: str) -> None:
+        """The one line that always says what the microphone is doing."""
+        self.indicator.setText(MICROPHONE[state])
+
     def _phase(self, phase: str) -> None:
         if self.worker is None or self.worker.cancelled.is_set() or self.closed:
             return
+        if phase in ("waiting", "armed"):
+            self._indicate("armed")
+            if phase == "armed":
+                self.message.emit(
+                    "Свободные руки: жду обращения «Джарвис». Команда записывается "
+                    "только после имени."
+                )
+            return
+        self._indicate(phase)
         if self.confirming is not None:
             self.message.emit(
                 {
@@ -486,6 +534,9 @@ class VoicePanel(QWidget):
     def cancel(self) -> None:
         self._clear_cloud()
         self.listening = False
+        self.armed = False
+        self.woken = False
+        self._indicate("off")
         if self.settings_dialog is not None:
             self.settings_dialog.reject()
         if self.voice_task and not self.planning:
@@ -510,7 +561,13 @@ class VoicePanel(QWidget):
             return
         worker.wait()
         self.worker = None
+        if worker.wake is not None:
+            self._woken(worker)
+            worker.deleteLater()
+            return
         self.capture_button = None
+        # Whatever the outcome, the microphone is closed by now and the line says so.
+        self._indicate("off")
         listening, self.listening = self.listening, False
         self.model_path.setEnabled(not self.planning)
         self.browse.setEnabled(not self.planning)
@@ -564,6 +621,25 @@ class VoicePanel(QWidget):
             self._resume()
         worker.deleteLater()
 
+    def _woken(self, worker: VoiceWorker) -> None:
+        """One listening cycle ended. It either heard the name, or it heard nothing of note."""
+        self.armed = False
+        self._indicate("off")
+        self.busy_changed.emit(False)
+        if self.closed or self.was_cancelled or worker.cancelled.is_set():
+            self.message.emit("Микрофон выключен. Слушание остановлено.")
+            return
+        if worker.error:
+            # A listener that cannot run must not silently fall back to recording the room.
+            self.hands_free = False
+            self.message.emit(ERROR_TEXT[worker.error])
+            return
+        if worker.heard:
+            self.message.emit("Услышал «Джарвис». Говорите команду.")
+            self._record_phrase()
+            return
+        self._resume()
+
     def _addressed(self, transcript: Transcript) -> None:
         """Only a phrase that names the assistant becomes a command; the rest is dropped."""
         if transcript.is_cancel:
@@ -572,6 +648,10 @@ class VoicePanel(QWidget):
             self._resume()
             return
         command = wake_command(transcript.text)
+        if not command and self.woken:
+            # The name was heard by the listener, so repeating it is not asked of the owner.
+            command = transcript.text.strip()
+        self.woken = False
         if not command:
             self.message.emit("Пропущено: обращения «Джарвис» не было. Продолжаю слушать.")
             self.voice_task = False
@@ -604,6 +684,7 @@ class VoicePanel(QWidget):
     def shutdown(self) -> None:
         self.closed = True
         self.hands_free = False
+        self.armed = False
         self.cancel()
         if self.worker is not None:
             self.worker.wait()
