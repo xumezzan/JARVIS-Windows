@@ -32,6 +32,7 @@ from jarvis.tools.base import ToolError
 from jarvis.tools.browser import BrowserResult, register_browser
 from jarvis.tools.local import local_registry
 from jarvis.tools.windows import WindowsBackend, WindowsResult, WindowTarget, register_windows
+from jarvis.ui import workers
 from jarvis.ui.approval_dialog import ApprovalDialog
 from jarvis.ui.browser_controls import BrowserControls
 from jarvis.ui.tool_worker import ToolWorker
@@ -335,7 +336,7 @@ class PermissionWorkbench(QDialog):
         self.worker.finished.connect(self._worker_finished)
         self.status_label.setText("executing — проверка разрешений и выполнение…")
         self.state_changed.emit("executing")
-        self.worker.start()
+        workers.start(self.worker)
 
     @Slot()
     def _worker_finished(self) -> None:

@@ -55,6 +55,8 @@ Do not treat fixture checks or a shown shell as completion of the full MVP scena
 - Route every tool invocation through a deterministic PermissionEngine.
 - No arbitrary model-generated code, unrestricted shell, or fixed-coordinate primary automation.
 - Prefer official APIs, OAuth adapters, Playwright, then Windows UI Automation.
+- Start every Qt worker through `ui/workers.py`. A widget can be deleted while its thread
+  runs, and a running `QThread` that loses its last reference aborts the whole process.
 
 ## Security requirements for later implementation
 

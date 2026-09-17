@@ -28,6 +28,7 @@ from jarvis.observability.audit import AuditLog
 from jarvis.permissions.approvals import Action, ApprovalAuthority, ApprovalToken
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Mode, Risk, Status
+from jarvis.ui import workers
 from jarvis.ui.approval_dialog import ApprovalDialog
 from jarvis.ui.tool_worker import ToolWorker
 from jarvis.ui.voice_panel import VoicePanel
@@ -173,7 +174,7 @@ class RoutinePanel(QWidget):
         self.worker = worker
         self.busy_changed.emit(True)
         worker.finished.connect(self._ticked)
-        worker.start()
+        workers.start(worker)
 
     @Slot()
     def _ticked(self) -> None:
@@ -272,7 +273,7 @@ class RoutinePanel(QWidget):
         worker = ToolWorker(self.engine, action, token)
         self.tool_worker = worker
         worker.finished.connect(self._executed)
-        worker.start()
+        workers.start(worker)
 
     @Slot()
     def _executed(self) -> None:
