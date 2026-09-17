@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,7 +17,7 @@ from jarvis.permissions.engine import Outcome
 from jarvis.permissions.policies import Status
 from jarvis.platforms import audio
 from jarvis.platforms.audio import NOISE_BLOCKS, QUIET_BLOCKS, SPEECH_BLOCKS, Segmenter
-from jarvis.ui.voice_panel import wake_command
+from jarvis.ui.voice_panel import installed_model, wake_command
 from jarvis.voice.contracts import MAX_AUDIO_BYTES, AudioClip, Transcript, VoiceError, spoken_result
 from jarvis.voice.local import exchange, is_ready
 
@@ -263,3 +264,27 @@ async def test_helper_lines_end_the_way_the_parent_reads_them(helper: str) -> No
             pass
     assert raw.endswith(b"}\n") and b"\r" not in raw
     assert json.loads(raw)["error"] == "voice_failed"
+
+
+def test_the_installed_model_comes_from_the_slot_in_use(
+    tmp_path: "Path", monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The installer keeps the previous slot for rollback; its model is not the current one."""
+    root = tmp_path / "JarvisInstall" / "slots"
+    for slot in ("a", "b"):
+        model = root / slot / "models" / "vosk-model-small-ru-0.22"
+        (model / "am").mkdir(parents=True)
+        (model / "am" / "final.mdl").touch()
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+
+    (tmp_path / "JarvisInstall" / "active.json").write_text(
+        '{"slot": "b", "model": "vosk-model-small-ru-0.22"}', encoding="utf-8"
+    )
+    assert "slots" + os.sep + "b" in installed_model()
+
+    # Without a readable pointer any real model is still better than none.
+    (tmp_path / "JarvisInstall" / "active.json").write_text("not json", encoding="utf-8")
+    assert installed_model()
+
+    monkeypatch.delenv("LOCALAPPDATA")
+    assert installed_model() == ""

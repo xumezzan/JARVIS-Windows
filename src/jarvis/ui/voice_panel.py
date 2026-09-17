@@ -4,6 +4,7 @@ Confirming by voice is not a spoken yes: the panel speaks one control detail of 
 action and accepts only that word back. See `voice/approval.py` for why.
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -59,7 +60,17 @@ def installed_model() -> str:
     base = os.environ.get("LOCALAPPDATA")
     if not base:
         return ""
-    for candidate in sorted(Path(base).glob("JarvisInstall/slots/*/models/*")):
+    root = Path(base) / "JarvisInstall"
+    candidates: list[Path] = []
+    # The installer keeps the previous slot for rollback, so the active one is asked first.
+    try:
+        active = json.loads((root / "active.json").read_text(encoding="utf-8")).get("slot")
+        if active in ("a", "b"):
+            candidates.extend(sorted((root / "slots" / str(active) / "models").glob("*")))
+    except (OSError, ValueError, AttributeError):
+        pass
+    candidates.extend(sorted(root.glob("slots/*/models/*")))
+    for candidate in candidates:
         if (candidate / "am" / "final.mdl").is_file():
             return str(candidate)
     return ""
