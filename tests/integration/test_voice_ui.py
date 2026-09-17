@@ -1,6 +1,8 @@
-"""Real Qt gestures with deterministic audio; planner effects still require exact UI approval."""
+"""Real Qt gestures with deterministic audio; planner effects still require exact approval."""
 
+import json
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from PySide6.QtCore import Qt
@@ -12,9 +14,14 @@ from tests.voice_support import VoiceFixture
 from jarvis.config import AppConfig
 from jarvis.core.planner.contracts import Proposal
 from jarvis.core.planner.offline import call
+from jarvis.observability.audit import AuditLog
+from jarvis.permissions.approvals import Action, ApprovalStore, Channel
+from jarvis.permissions.policies import Mode, Risk
+from jarvis.ui.approval_dialog import ApprovalDialog
 from jarvis.ui.planner_window import PlannerWindow
 from jarvis.ui.voice_panel import HoldButton, VoicePanel
 from jarvis.ui.voice_worker import VoiceWorker
+from jarvis.voice.approval import Confirmation
 from jarvis.voice.contracts import ERROR_TEXT
 
 
@@ -302,3 +309,204 @@ def test_hands_free_stops_on_a_device_failure(qtbot: QtBot, tmp_path: Path) -> N
         assert fixture.captures == captures
     finally:
         window.shutdown()
+
+
+def awaiting_approval(
+    qtbot: QtBot,
+    tmp_path: Path,
+    fixture: VoiceFixture,
+    *,
+    subject: str = "Тест разрешений",
+    hands_free: bool = False,
+) -> PlannerWindow:
+    """One real CONFIRM step of a running plan, stopped at its confirmation."""
+    panel = VoicePanel(recorder=fixture, recognizer=fixture, speaker=fixture)
+    window = PlannerWindow(
+        AppConfig(tmp_path),
+        voice_panel=panel,
+        provider=Scripted([call("local.append_message", MESSAGE | {"subject": subject})]),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    # The memory panel reads its store on the next turn; starting before it settles would
+    # measure that start-up instead of the confirmation.
+    qtbot.waitUntil(lambda: window.memory.worker is None, timeout=15000)
+    window.simulation.setChecked(False)
+    if hands_free:
+        # The command itself arrives by voice, the way it does with standing capture on.
+        spoken, fixture.text = fixture.text, "джарвис команда"
+        panel.set_hands_free(True)
+        qtbot.waitUntil(lambda: fixture.listens == 1)
+        fixture.speech_ends.set()
+        qtbot.waitUntil(lambda: window.command.toPlainText() == "команда")
+        fixture.speech_ends.clear()
+        fixture.text = spoken
+    else:
+        window.command.setPlainText("команда")
+    window.start()
+    qtbot.waitUntil(lambda: window.approval_dialog is not None)
+    return window
+
+
+def approvals(window: PlannerWindow) -> list[str]:
+    records = [json.loads(record) for record in window.audit.recent()]
+    return [record["actor"] for record in records if record["event"] == "approved"]
+
+
+def test_the_spoken_detail_approves_the_exact_action(qtbot: QtBot, tmp_path: Path) -> None:
+    fixture = VoiceFixture("разрешений")
+    window = awaiting_approval(qtbot, tmp_path, fixture)
+    try:
+        dialog = window.approval_dialog
+        assert dialog is not None and dialog.detail is not None
+        assert dialog.detail.word.casefold() == "разрешений"
+        # The confirmation appearing on screen never opens the microphone by itself.
+        assert fixture.captures == 0 and dialog.listen_button is not None
+        fixture.speech_ends.set()
+        with qtbot.waitSignal(window.task_finished) as result:
+            QTest.mouseClick(dialog.listen_button, Qt.MouseButton.LeftButton)
+        assert result.args == ["finished"] and window.outbox.count == 1
+        assert dialog.token is not None and dialog.token.channel is Channel.VOICE
+        assert approvals(window) == ["user_voice"]
+    finally:
+        window.shutdown()
+
+
+def test_standing_capture_arms_the_confirmation_and_frees_the_microphone(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    fixture = VoiceFixture("разрешений")
+    window = awaiting_approval(qtbot, tmp_path, fixture, hands_free=True)
+    try:
+        dialog = window.approval_dialog
+        assert dialog is not None
+        # Standing capture is already the owner's visible choice, so it asks without a press.
+        qtbot.waitUntil(lambda: window.voice.confirming is not None)
+        with qtbot.waitSignal(window.task_finished) as result:
+            fixture.speech_ends.set()
+        assert result.args == ["finished"] and window.outbox.count == 1
+        assert dialog.token is not None and dialog.token.channel is Channel.VOICE
+    finally:
+        window.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("text", "confidence", "verdict"),
+    [
+        ("да, подтверждаю", 0.99, Confirmation.MISMATCH),
+        ("договор", 0.99, Confirmation.MISMATCH),
+        ("разрешений", 0.3, Confirmation.UNCERTAIN),
+    ],
+)
+def test_nothing_but_the_detail_reaches_the_authority(
+    qtbot: QtBot, tmp_path: Path, text: str, confidence: float, verdict: str
+) -> None:
+    fixture = VoiceFixture(text, confidence=confidence)
+    window = awaiting_approval(qtbot, tmp_path, fixture)
+    try:
+        dialog = window.approval_dialog
+        assert dialog is not None and dialog.listen_button is not None
+        fixture.speech_ends.set()
+        with qtbot.waitSignal(window.voice.confirmation) as heard:
+            QTest.mouseClick(dialog.listen_button, Qt.MouseButton.LeftButton)
+        assert heard.args == [verdict]
+        assert dialog.token is None and window.outbox.count == 0
+        assert window.approval_dialog is dialog and not approvals(window)
+        # The confirmation stays open, and the button it never replaced still works.
+        assert dialog.listen_button.isEnabled()
+        with qtbot.waitSignal(window.task_finished) as result:
+            QTest.mouseClick(dialog.approve_button, Qt.MouseButton.LeftButton)
+        assert result.args == ["finished"] and window.outbox.count == 1
+        assert approvals(window) == ["user_ui"]
+    finally:
+        window.shutdown()
+
+
+def test_a_spoken_refusal_confirms_nothing_and_leaves_no_effect(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    fixture = VoiceFixture("отмена")
+    window = awaiting_approval(qtbot, tmp_path, fixture)
+    try:
+        dialog = window.approval_dialog
+        assert dialog is not None and dialog.listen_button is not None
+        fixture.speech_ends.set()
+        with qtbot.waitSignal(window.task_finished) as result:
+            QTest.mouseClick(dialog.listen_button, Qt.MouseButton.LeftButton)
+        assert result.args == ["error"] and window.outbox.count == 0
+        assert dialog.token is None and not approvals(window)
+    finally:
+        window.shutdown()
+
+
+def test_the_detail_is_spoken_before_the_microphone_opens(qtbot: QtBot, tmp_path: Path) -> None:
+    fixture = VoiceFixture("разрешений")
+    window = awaiting_approval(qtbot, tmp_path, fixture)
+    try:
+        dialog = window.approval_dialog
+        assert dialog is not None and dialog.listen_button is not None
+        window.voice.speech_enabled.setChecked(True)
+        fixture.speech_ends.set()
+        with qtbot.waitSignal(window.task_finished):
+            QTest.mouseClick(dialog.listen_button, Qt.MouseButton.LeftButton)
+        # What is said is the application's own description plus the word that is on screen.
+        assert "разрешений" in fixture.spoken[0] and "Тестовое сообщение" in fixture.spoken[0]
+        assert window.outbox.count == 1
+    finally:
+        window.shutdown()
+
+
+def test_an_action_without_a_speakable_detail_keeps_only_its_button(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    fixture = VoiceFixture("разрешений")
+    window = awaiting_approval(qtbot, tmp_path, fixture, subject="")
+    try:
+        dialog = window.approval_dialog
+        assert dialog is not None
+        assert dialog.detail is None and dialog.listen_button is None and dialog.voice is None
+        assert fixture.captures == 0
+        with qtbot.waitSignal(window.task_finished) as result:
+            QTest.mouseClick(dialog.approve_button, Qt.MouseButton.LeftButton)
+        assert result.args == ["finished"] and approvals(window) == ["user_ui"]
+    finally:
+        window.shutdown()
+
+
+def test_an_expired_confirmation_cannot_be_spoken_into_a_token(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    clock = [0.0]
+    store = ApprovalStore(clock=lambda: clock[0])
+    audit = AuditLog(tmp_path / "audit.sqlite3")
+    authority = store.take_authority(audit.approved)
+    action = Action(
+        uuid4(),
+        "files.recycle",
+        json.dumps({"path": "D:/Документы/смета.txt"}, ensure_ascii=False),
+        Risk.CONFIRM,
+        Mode.EXECUTE,
+    )
+    store.request(action)
+    fixture = VoiceFixture("смета")
+    panel = VoicePanel(recorder=fixture, recognizer=fixture, speaker=fixture)
+    dialog = ApprovalDialog(action, authority, voice=panel)
+    qtbot.addWidget(panel)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    try:
+        assert dialog.detail is not None and dialog.listen_button is not None
+        clock[0] = 61  # The window this snapshot was prepared in has passed.
+        fixture.speech_ends.set()
+        with qtbot.waitSignal(panel.confirmation) as heard:
+            QTest.mouseClick(dialog.listen_button, Qt.MouseButton.LeftButton)
+        # The word was the right one; the snapshot it belonged to is gone, so nothing issued.
+        assert heard.args == [Confirmation.CONFIRMED]
+        assert dialog.token is None and "истекло" in dialog.error_label.text()
+        assert not [
+            record for record in audit.recent() if json.loads(record)["event"] == "approved"
+        ]
+    finally:
+        panel.shutdown()
+        dialog.close()
+        audit.close()

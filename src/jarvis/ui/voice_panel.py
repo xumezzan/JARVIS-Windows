@@ -1,4 +1,8 @@
-"""Visible push-to-talk and transcript review; speech can cancel but never approve."""
+"""Visible push-to-talk and transcript review; speech commands, cancels and confirms.
+
+Confirming by voice is not a spoken yes: the panel speaks one control detail of the exact
+action and accepts only that word back. See `voice/approval.py` for why.
+"""
 
 import os
 from pathlib import Path
@@ -19,6 +23,7 @@ from PySide6.QtWidgets import (
 from jarvis.core.planner.contracts import PlanResult
 from jarvis.ui.elevenlabs_dialog import ElevenLabsDialog
 from jarvis.ui.voice_worker import VoiceWorker
+from jarvis.voice.approval import CONFIRMATION_TEXT, Confirmation, ControlDetail, check
 from jarvis.voice.contracts import (
     ERROR_TEXT,
     Recognizer,
@@ -116,6 +121,8 @@ class VoicePanel(QWidget):
     cancel_requested = Signal()
     busy_changed = Signal(bool)
     message = Signal(str)
+    # One Confirmation value per finished voice confirmation; the dialog decides what it means.
+    confirmation = Signal(str)
 
     def __init__(
         self,
@@ -138,6 +145,8 @@ class VoicePanel(QWidget):
         self.voice_task = False
         self.hands_free = False
         self.listening = False
+        self.confirming: ControlDetail | None = None
+        self.confirm_stage = ""
         self.capture_button: HoldButton | None = None
         self.deadline = QTimer(self)
         self.deadline.setSingleShot(True)
@@ -284,6 +293,79 @@ class VoicePanel(QWidget):
         if spoken:
             self._launch(spoken, cloud=False)
 
+    def confirm(self, detail: ControlDetail) -> None:
+        """Speak one control detail of the exact action, then capture one short answer.
+
+        The microphone is never opened by the appearance of a dialog: this runs when the
+        owner presses the confirmation control, or while standing capture is already their
+        chosen, visibly indicated mode.
+        """
+        if self.closed or self.settings_dialog is not None or self.confirming is not None:
+            return
+        if self.recognizer is None and not self.model_path.text().strip():
+            self.message.emit(ERROR_TEXT["model"])
+            self.confirmation.emit(Confirmation.STOPPED)
+            return
+        self.confirming = detail
+        self.confirm_stage = ""
+        self.was_cancelled = False
+        if self.worker is not None:
+            # Free the microphone first; the confirmation starts when that capture ends.
+            self.worker.cancel()
+            return
+        self._confirm_next(spoke=False)
+
+    def _confirm_next(self, spoke: bool) -> None:
+        detail = self.confirming
+        if detail is None or self.closed:
+            return
+        if not spoke and self.speech_enabled.isChecked():
+            # Local voice only, and never the one-use cloud consent, which belongs to results.
+            self.confirm_stage = "speaking"
+            self._launch(detail.request, cloud=False)
+        else:
+            self.confirm_stage = "listening"
+            self._launch("", listen=True)
+        if self.worker is None:
+            # The adapter refused to start; the confirmation surface keeps its button.
+            self.confirming = None
+            self.confirm_stage = ""
+            self.confirmation.emit(Confirmation.STOPPED)
+
+    def _confirm_finished(self, worker: VoiceWorker, transcript: Transcript | None) -> None:
+        """Route one finished worker of a confirmation. Only a repeated detail confirms."""
+        detail = self.confirming
+        if detail is None:
+            return
+        listening = self.confirm_stage == "listening"
+        self.confirm_stage = ""
+        if self.closed or self.was_cancelled or (worker.cancelled.is_set() and not listening):
+            self.confirming = None
+            self.confirmation.emit(Confirmation.STOPPED)
+            return
+        if not listening:
+            self._confirm_next(spoke=True)
+            return
+        self.confirming = None
+        if worker.cancelled.is_set():
+            outcome = Confirmation.STOPPED
+        elif worker.error or transcript is None:
+            outcome = Confirmation.UNHEARD
+        else:
+            outcome = check(detail, transcript)
+        self.message.emit(CONFIRMATION_TEXT[outcome])
+        self.confirmation.emit(outcome)
+        self._resume()
+
+    def stop_confirming(self) -> None:
+        """The confirmation surface closed; drop the capture without ending the session."""
+        if self.confirming is None:
+            return
+        self.confirming = None
+        self.confirm_stage = ""
+        if self.worker is not None:
+            self.worker.cancel()
+
     def stop_controls(self, dialog: QWidget) -> QWidget:
         """Keep a visible microphone indicator and Stop accessible in modal prompts."""
         dialog.installEventFilter(self)
@@ -361,6 +443,17 @@ class VoicePanel(QWidget):
     def _phase(self, phase: str) -> None:
         if self.worker is None or self.worker.cancelled.is_set() or self.closed:
             return
+        if self.confirming is not None:
+            self.message.emit(
+                {
+                    "recording": "● Слушаю подтверждение. Произнесите «"
+                    + self.confirming.word
+                    + "».",
+                    "transcribing": "Микрофон выключен. Проверка произнесённого слова…",
+                    "speaking": "Микрофон выключен. Проговариваю действие и контрольное слово…",
+                }[phase]
+            )
+            return
         listening = {
             "recording": "● Слушаю. Скажите «Джарвис» и команду; запись прервётся на паузе.",
             "transcribing": "Микрофон выключен. Распознавание локально…",
@@ -414,6 +507,10 @@ class VoicePanel(QWidget):
         self.busy_changed.emit(False)
         transcript = worker.transcript
         worker.transcript = None
+        if self.confirming is not None:
+            self._confirm_finished(worker, transcript)
+            worker.deleteLater()
+            return
         if worker.cancelled.is_set() or self.closed:
             self.message.emit("Микрофон и озвучивание выключены. Отменено.")
         elif worker.error:

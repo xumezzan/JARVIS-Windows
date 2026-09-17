@@ -151,8 +151,16 @@ fixed endpoints and no retries. It accepts only preview/trusted summary text, ne
 The explicit repository installer may download its reviewed Russian model; ordinary
 application startup and recording never download models. JARVIS_VOSK_MODEL is a local path.
 A finished transcript submits the command directly from the main window: this is the
-owner's explicit choice, and the recognised text stays visible. Voice still only commands and
-cancels, never approves: approval tokens come from the autonomy setting or the approval button.
+owner's explicit choice, and the recognised text stays visible. Voice commands, cancels and
+confirms, and a confirmation is never a spoken yes: the assistant names one control detail of
+the exact snapshot - the file, the subject - shows it at the same moment, and accepts only
+that word back, said as a short answer. An uncertain transcript, a different word, a whole
+sentence, an expired or changed snapshot confirm nothing, and a cancel word refuses. The token
+is still issued by the UI-owned authority with every property it already had, and carries the
+channel it came from so the audit can tell a spoken approval from a pressed one. An action
+whose snapshot holds no speakable detail has no voice channel at all; the button stays. The
+microphone is opened by the owner's press, or by standing capture they already switched on -
+never by a dialog appearing.
 Preserve bounded PCM/pipes/timeouts, no audio/transcript persistence, no simultaneous
 recording and speech, and deterministic spoken summaries from engine outcomes.
 Ordinary tests use fixtures; real microphone/speaker checks require --run-voice, a native

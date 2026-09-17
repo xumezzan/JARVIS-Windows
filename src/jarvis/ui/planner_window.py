@@ -341,7 +341,11 @@ class PlannerWindow(QDialog):
                 self._approve_without_review(prompt.id, prompt.value)
                 return
             self.status.setText("Ожидается подтверждение точного действия.")
-            dialog = ApprovalDialog(prompt.value, self.authority, self.prompt_parent)
+            # The voice panel adds the spoken channel: the same authority, the same snapshot,
+            # reached by repeating one detail of it instead of by a click.
+            dialog = ApprovalDialog(
+                prompt.value, self.authority, self.prompt_parent, voice=self.voice
+            )
             self.approval_dialog = dialog
             dialog_layout = dialog.layout()
             assert dialog_layout is not None

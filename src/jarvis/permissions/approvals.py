@@ -6,6 +6,7 @@ import math
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from threading import RLock
 from time import monotonic
 from uuid import UUID
@@ -31,9 +32,17 @@ class Action:
         return hashlib.sha256(content.encode()).hexdigest()
 
 
+class Channel(StrEnum):
+    """Which verified event issued the approval. Recorded for audit; it grants nothing."""
+
+    UI = "ui"
+    VOICE = "voice"
+
+
 @dataclass(frozen=True)
 class ApprovalToken:
     secret: str = field(repr=False)
+    channel: Channel = Channel.UI
 
 
 @dataclass
@@ -45,11 +54,11 @@ class _Grant:
 class ApprovalAuthority:
     """A capability handed only to trusted UI composition, never to tool discovery/planners."""
 
-    def __init__(self, approve: Callable[[Action], ApprovalToken]) -> None:
+    def __init__(self, approve: Callable[[Action, Channel], ApprovalToken]) -> None:
         self._approve = approve
 
-    def approve(self, action: Action) -> ApprovalToken:
-        return self._approve(action)
+    def approve(self, action: Action, channel: Channel = Channel.UI) -> ApprovalToken:
+        return self._approve(action, channel)
 
 
 class ApprovalStore:
@@ -63,22 +72,24 @@ class ApprovalStore:
         self._lock = RLock()
         self._issuer_taken = False
 
-    def take_authority(self, on_issue: Callable[[Action], None]) -> ApprovalAuthority:
+    def take_authority(self, on_issue: Callable[[Action, Channel], None]) -> ApprovalAuthority:
         """Composition root calls once; issuance must durably audit before returning a token."""
         with self._lock:
             if self._issuer_taken:
                 raise ValueError("Approval issuer already assigned.")
             self._issuer_taken = True
 
-        def issue(action: Action) -> ApprovalToken:
+        def issue(action: Action, channel: Channel) -> ApprovalToken:
             with self._lock:
                 self._purge()
                 pending = self._pending.get(action.request_id)
                 if pending is None or pending[0] != action or action.risk is not Risk.CONFIRM:
                     raise ValueError("Approval request is unavailable or changed.")
-                on_issue(action)
+                if not isinstance(channel, Channel):
+                    raise ValueError("Unknown approval channel.")
+                on_issue(action, channel)
                 self._pending.pop(action.request_id)
-                token = ApprovalToken(secrets.token_urlsafe(32))
+                token = ApprovalToken(secrets.token_urlsafe(32), channel)
                 self._tokens[token.secret] = _Grant(action.signature, pending[1])
                 return token
 

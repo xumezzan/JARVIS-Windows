@@ -42,7 +42,7 @@ OAuth connect/disconnect — отдельный UI-only setup через QThread
 | `permissions/approvals.py` | Immutable Action, opaque token, UI issuer, TTL, атомарный consume |
 | `permissions/engine.py` | Prepare/execute/cancel, bounded pending requests, тайм-аут и audit gateway |
 | `observability/audit.py` | SQLite audit, metadata без содержимого и bearer tokens |
-| `ui/approval_dialog.py` | Read-only полный preview; token только из обработчика кнопки |
+| `ui/approval_dialog.py` | Read-only полный preview; token из кнопки или из совпавшей контрольной детали |
 | `ui/permission_workbench.py` | Ручная проверка, режим, outcome, local outbox count, audit view |
 | `ui/tool_worker.py` | Один `asyncio.run(engine.execute(...))` внутри QThread |
 | `core/planner` | Provider protocol, offline recipes, OpenAI strict calls, bounded Runner |
@@ -255,9 +255,12 @@ pipe за срок до 8 секунд; cancellation завершает и со�
 исключают одновременные capture/STT/TTS. Аудио не сохраняется и не отправляется по сети.
 
 Transcript → редактируемая команда PlannerWindow → ручной запуск → существующий Runner
-→ PermissionEngine. Voice не получает ApprovalAuthority. Голосовые кнопки в approval и
-clarification умеют только отменить задачу. После завершения Runner опционально озвучивает
-короткую сводку из engine outcomes. Dashboard microphone только открывает планировщик.
+→ PermissionEngine. Voice не получает ApprovalAuthority: `voice/approval.py` выбирает из
+снимка одну произносимую контрольную деталь и возвращает вердикт по расшифровке, а token
+по-прежнему выдаёт `ApprovalDialog` через UI-owned authority и записывает канал
+(`Channel.UI` / `Channel.VOICE`) в audit. Инструмент без детали голосового канала не имеет.
+После завершения Runner опционально озвучивает короткую сводку из engine outcomes.
+Dashboard microphone только открывает планировщик.
 
 ## Память этапа 7
 
