@@ -126,3 +126,30 @@ def test_composition_reads_owner_policy_from_the_data_directory(tmp_path: Path) 
     bench = build(AppConfig(tmp_path))
     assert bench.matrix.effective("asana", READ) is Risk.BLOCKED
     bench.shutdown()
+
+
+TYPING = Capability("type_text", "Ввести текст.", Risk.ROUTINE, False, writes=("document",))
+
+
+def test_the_owner_may_raise_a_routine_capability_but_never_lower_a_confirmed_one() -> None:
+    matrix = PermissionMatrix(
+        {
+            "desktop": {
+                "type_text": Rule(risk=Risk.CONFIRM),
+                "create_task": Rule(risk=Risk.ROUTINE),
+                "search_tasks": Rule(risk=Risk.ROUTINE),
+            }
+        }
+    )
+    # Raising the everyday level back to a confirmed one is honoured.
+    assert matrix.effective("desktop", TYPING) is Risk.CONFIRM
+    # Asking for less caution than the connector declared is ignored, as before.
+    assert matrix.effective("desktop", WRITE) is Risk.CONFIRM
+    # Raising a read to the everyday level is still a tightening.
+    assert matrix.effective("desktop", READ) is Risk.ROUTINE
+
+
+def test_a_writing_capability_may_be_routine_but_never_safe() -> None:
+    Capability("type_text", "Ввести текст.", Risk.ROUTINE, False, writes=("document",))
+    with pytest.raises(ValueError):
+        Capability("type_text", "Ввести текст.", Risk.SAFE, False, writes=("document",))

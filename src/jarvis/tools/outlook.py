@@ -132,8 +132,10 @@ def register_outlook(registry: ToolRegistry, session: MailSession) -> None:
     registry.register(
         ToolSpec(
             "outlook.save_draft",
-            "Передать полный черновик в Outlook; CONFIRM.",
-            Risk.CONFIRM,
+            "Передать полный черновик в Outlook; письмо не отправляется.",
+            # A draft reaches nobody: it waits in the mailbox and can be edited or thrown
+            # away. Sending it is a separate action and stays CONFIRM.
+            Risk.ROUTINE,
             SaveInput,
             MailResult,
             check,

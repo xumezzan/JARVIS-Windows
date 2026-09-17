@@ -388,7 +388,9 @@ def register_files(registry: ToolRegistry, policy: FilePolicy, backend: FileBack
         ToolSpec(
             "files.write_text",
             "Создать или заменить текстовый файл.",
-            Risk.CONFIRM,
+            # Inside the owner's own folders, and an existing file is never replaced
+            # unless the caller asked for it.
+            Risk.ROUTINE,
             WriteFile,
             FileReceipt,
             write_check,
@@ -404,7 +406,8 @@ def register_files(registry: ToolRegistry, policy: FilePolicy, backend: FileBack
         ToolSpec(
             "files.rename",
             "Переименовать файл или папку на месте.",
-            Risk.CONFIRM,
+            # Renaming back restores the previous state exactly.
+            Risk.ROUTINE,
             RenameFile,
             FileReceipt,
             rename_check,
@@ -433,7 +436,8 @@ def register_files(registry: ToolRegistry, policy: FilePolicy, backend: FileBack
         ToolSpec(
             "files.open",
             "Открыть документ в его обычном приложении.",
-            Risk.CONFIRM,
+            # Opening shows a document; it does not alter it, and programs are refused.
+            Risk.ROUTINE,
             OpenFile,
             FileReceipt,
             open_check,

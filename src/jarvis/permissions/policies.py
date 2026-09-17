@@ -5,6 +5,10 @@ from enum import StrEnum
 
 class Risk(StrEnum):
     SAFE = "SAFE"
+    # Changes something, but reversibly and without leaving the owner's machine, so it runs
+    # without approval. It is prepared, audited and journalled like every other action, and
+    # the owner's matrix can raise it to CONFIRM.
+    ROUTINE = "ROUTINE"
     CONFIRM = "CONFIRM"
     CRITICAL = "CRITICAL"
     BLOCKED = "BLOCKED"
@@ -32,7 +36,7 @@ class Decision(StrEnum):
 
 
 def decide(risk: Risk) -> Decision:
-    if risk is Risk.SAFE:
+    if risk in (Risk.SAFE, Risk.ROUTINE):
         return Decision.ALLOW
     if risk is Risk.CONFIRM:
         return Decision.REQUIRE_APPROVAL

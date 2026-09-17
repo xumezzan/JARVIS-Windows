@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 from pytestqt.qtbot import QtBot
-from tests.integration.test_planner_ui import click_approval
 from tests.windows_support import WindowsProbe
 
 from jarvis.config import AppConfig
@@ -13,32 +12,27 @@ from jarvis.ui.planner_window import PlannerWindow
 
 @pytest.mark.e2e
 @pytest.mark.parametrize("cancel", [False, True])
-def test_chrome_search_recipe_preserves_browser_confirmation(
+def test_chrome_search_recipe_reaches_no_adapter_in_simulation(
     qtbot: QtBot,
     tmp_path: Path,
     cancel: bool,
 ) -> None:
+    """Both steps are ROUTINE, so nothing pauses; simulation still touches nothing real."""
     probe = WindowsProbe()
     window = PlannerWindow(AppConfig(tmp_path), windows_backend=probe)
     qtbot.addWidget(window)
     window.show()
     try:
         window.command.setPlainText("Открой Chrome и найди OpenAI")
-        window.start()
-        qtbot.waitUntil(lambda: window.approval_dialog is not None)
-        dialog = window.approval_dialog
-        assert dialog is not None
-        assert "OpenAI" in dialog.preview.toPlainText()
-        assert not probe.calls and window.host._thread is None
-        with qtbot.waitSignal(window.task_finished) as result:
+        with qtbot.waitSignal(window.task_finished, timeout=15000) as result:
+            window.start()
             if cancel:
                 window.stop()
-            else:
-                click_approval(window, qtbot)
         assert result.args == ["cancelled" if cancel else "simulated"]
+        assert window.approval_dialog is None
         assert not probe.calls and window.host._thread is None
-        assert "windows.open_app: SIMULATED" in window.output.toPlainText()
         if not cancel:
+            assert "windows.open_app: SIMULATED" in window.output.toPlainText()
             assert "browser.search: SIMULATED" in window.output.toPlainText()
     finally:
         window.shutdown()

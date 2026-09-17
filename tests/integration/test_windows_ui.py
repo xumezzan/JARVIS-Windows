@@ -27,16 +27,11 @@ def test_window_selection_preview_and_readback(qtbot: QtBot, tmp_path: Path) -> 
         assert window.target_choice.count() == 1
         choose(window, "windows.type_text")
         window.body.setPlainText("Jarvis integration test")
-        QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
-        dialog = window.approval_dialog
-        assert dialog is not None and dialog.token is None
         assert probe.text == ""
-        assert not window.target_choice.isEnabled()
-        preview = dialog.preview.toPlainText()
-        for field in ("runtime_id", "pid", "process_started", "selected_tabs", "text", "service"):
-            assert field in preview
+        # Typing is ROUTINE: it runs straight away, into the window just observed.
         with qtbot.waitSignal(window.task_finished):
-            QTest.mouseClick(dialog.approve_button, Qt.MouseButton.LeftButton)
+            QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
+        assert window.approval_dialog is None
         assert "прочитан обратно" in window.status_label.text()
         assert probe.text == "Jarvis integration test"
         assert window.target_choice.count() == 0

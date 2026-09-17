@@ -198,7 +198,10 @@ def register_browser(
             ToolSpec(
                 "browser." + operation,
                 "Изолированный браузер: " + operation,
-                Risk.SAFE if operation in ("read", "get_tabs") else Risk.CONFIRM,
+                # Reading changes nothing; opening, navigating and clicking happen in this
+                # application's own disposable session, under the same origin policy, and
+                # leave nothing behind when the window closes.
+                Risk.SAFE if operation in ("read", "get_tabs") else Risk.ROUTINE,
                 parameters,
                 BrowserResult,
                 check,

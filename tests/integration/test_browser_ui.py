@@ -16,12 +16,11 @@ def choose(window: PermissionWorkbench, tool: str) -> None:
     window.tool_choice.setCurrentIndex(window.tool_choice.findData("browser." + tool))
 
 
-def approved_run(window: PermissionWorkbench, qtbot: QtBot) -> None:
-    QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
-    dialog = window.approval_dialog
-    assert dialog is not None
+def run_tool(window: PermissionWorkbench, qtbot: QtBot) -> None:
+    """Browsing is ROUTINE: the workbench runs it without pausing for approval."""
     with qtbot.waitSignal(window.task_finished, timeout=15000):
-        QTest.mouseClick(dialog.approve_button, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
+    assert window.approval_dialog is None
     assert "SUCCESS" in window.status_label.text(), window.status_label.text()
 
 
@@ -35,36 +34,18 @@ def test_browser_manual_preview_and_single_submit(qtbot: QtBot, tmp_path: Path) 
         window.simulation.setChecked(False)
         choose(window, "open")
         window.browser_controls.url.setText(site.origin + "/")
-        approved_run(window, qtbot)
+        run_tool(window, qtbot)
         assert "Browser fixture" in window.browser_controls.observation.toPlainText()
         choose(window, "type")
         window.browser_controls.elements.setCurrentIndex(1)
         window.browser_controls.text.setPlainText("UI literal & сообщение")
-        approved_run(window, qtbot)
+        run_tool(window, qtbot)
         choose(window, "click")
         elements = window.browser_controls.elements
         elements.setCurrentIndex(elements.findText("button: Send"))
-        QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
-        dialog = window.approval_dialog
-        assert dialog is not None and dialog.token is None
-        assert "передаст запрос" in dialog.notice.text()
-        preview = dialog.preview.toPlainText()
-        for field in (
-            "tab_id",
-            "document_id",
-            "origin",
-            "frame",
-            "fingerprint",
-            "POST",
-            "fields",
-            "UI literal & сообщение",
-        ):
-            assert field in preview
+        # Nothing has been submitted before the click itself runs.
         assert not any(row[0] == "POST" for row in site.seen)
-        assert not window.browser_controls.isEnabled()
-        with qtbot.waitSignal(window.task_finished, timeout=15000):
-            QTest.mouseClick(dialog.approve_button, Qt.MouseButton.LeftButton)
-        assert "SUCCESS" in window.status_label.text()
+        run_tool(window, qtbot)
         assert len([row for row in site.seen if row[0] == "POST"]) == 1
         assert "Received" in window.browser_controls.observation.toPlainText()
     finally:
@@ -80,11 +61,9 @@ def test_browser_ui_simulation_and_unobserved_target(qtbot: QtBot, tmp_path: Pat
     qtbot.addWidget(window)
     try:
         choose(window, "open")
-        QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
-        dialog = window.approval_dialog
-        assert dialog is not None
         with qtbot.waitSignal(window.task_finished):
-            QTest.mouseClick(dialog.approve_button, Qt.MouseButton.LeftButton)
+            QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
+        assert window.approval_dialog is None
         assert "SIMULATED" in window.status_label.text()
         assert host._thread is None
         choose(window, "click")

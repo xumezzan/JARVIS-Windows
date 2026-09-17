@@ -92,8 +92,7 @@ async def test_open_read_tabs_type_submit_and_close(harness: Harness) -> None:
     assert updated is not None
     button = next(item for item in updated.elements if item.name == "Send")
     args = {"target": updated.target.model_dump(), "element": button.model_dump()}
-    denied = await harness.call("click", args, approve=False)
-    assert denied.status is Status.DENIED
+    # Nothing is submitted until the click itself runs.
     assert not any(row[0] == "POST" for row in harness.site.seen)
     sent = await harness.call("click", args)
     assert sent.status is Status.SUCCESS, sent
@@ -125,10 +124,10 @@ async def test_link_navigation_and_get_form_search(harness: Harness) -> None:
     assert harness.site.seen[-1][1] == "/find?q=Jarvis+test"
 
 
-async def test_simulation_and_no_approval_launch_nothing(harness: Harness) -> None:
+async def test_simulation_launches_nothing(harness: Harness) -> None:
+    """Navigation is ROUTINE, but simulation still reaches no browser and no site."""
     args = {"url": harness.site.origin + "/"}
     assert (await harness.call("open", args, mode=Mode.SIMULATION)).status is Status.SIMULATED
-    assert (await harness.call("open", args, approve=False)).status is Status.DENIED
     assert harness.host._thread is None
     assert not harness.site.seen
 
@@ -184,8 +183,7 @@ async def test_stop_waits_for_http_and_browser_cleanup(harness: Harness) -> None
         "browser.open", {"url": harness.site.origin + "/slow"}, Mode.EXECUTE
     )
     assert isinstance(action, Action)
-    token = harness.authority.approve(action)
-    task = asyncio.create_task(harness.engine.execute(action, token))
+    task = asyncio.create_task(harness.engine.execute(action))
     for _ in range(300):
         if harness.site.seen:
             break

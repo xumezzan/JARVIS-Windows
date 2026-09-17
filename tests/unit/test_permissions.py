@@ -108,8 +108,10 @@ async def test_risk_policy(tmp_path: Path, risk: Risk, mode: Mode) -> None:
     prepared = engine.prepare("test.probe", {}, mode)
     result = await engine.execute(prepared) if isinstance(prepared, Action) else prepared
     expected = Status.SIMULATED if mode is Mode.SIMULATION else Status.SUCCESS
-    assert result.status is (expected if risk is Risk.SAFE else Status.DENIED)
-    assert probe.calls == (1 if risk is Risk.SAFE and mode is Mode.EXECUTE else 0)
+    # Without a token only the two levels that need none run; everything else is denied.
+    unattended = risk in (Risk.SAFE, Risk.ROUTINE)
+    assert result.status is (expected if unattended else Status.DENIED)
+    assert probe.calls == (1 if unattended and mode is Mode.EXECUTE else 0)
     assert probe.checks == probe.calls
     assert len(audit.recent()) >= 2
     audit.close()
@@ -474,4 +476,32 @@ async def test_wrong_result_type_is_not_success(tmp_path: Path) -> None:
     result = await engine.execute(action)
     assert result.status is Status.ERROR
     assert probe.verifies == 0
+    audit.close()
+
+
+@pytest.mark.asyncio
+async def test_routine_runs_without_a_token_and_is_still_recorded(tmp_path: Path) -> None:
+    """The everyday level skips approval only; it keeps every other guarantee."""
+    audit = AuditLog(tmp_path / "audit.sqlite3")
+    probe = Probe()
+    registry = ToolRegistry()
+    registry.register(probe.spec(Risk.ROUTINE))
+    store = ApprovalStore()
+    authority = store.take_authority(audit.approved)
+    engine = PermissionEngine(registry, store, audit)
+
+    action = engine.prepare("test.probe", {}, Mode.EXECUTE)
+    assert isinstance(action, Action)
+    # No token exists for it, and none can be minted: approval is not merely skipped.
+    with pytest.raises(ValueError):
+        authority.approve(action)
+    assert (await engine.execute(action)).status is Status.SUCCESS
+    assert probe.calls == 1
+
+    # It is prepared and finished in the audit like any other action, under its own name.
+    recorded = "".join(audit.recent())
+    assert "ROUTINE" in recorded
+    # One execution per prepared action still holds without a token to consume.
+    assert (await engine.execute(action)).status is Status.INVALID
+    assert probe.calls == 1
     audit.close()

@@ -222,16 +222,13 @@ def test_observed_notepad_then_literal_typing(qtbot: QtBot, tmp_path: Path, text
     try:
         window.simulation.setChecked(False)
         window.command.setPlainText("открой блокнот и напиши " + text)
-        window.start()
-        qtbot.waitUntil(lambda: window.approval_dialog is not None)
-        dialog = window.approval_dialog
-        assert dialog is not None and probe.text == ""
-        preview = dialog.preview.toPlainText()
-        assert "selected_tabs" in preview and text.strip("«»") in preview
-        with qtbot.waitSignal(window.task_finished) as result:
-            click_approval(window, qtbot)
+        # Typing is ROUTINE: it runs without pausing, into the field just observed.
+        with qtbot.waitSignal(window.task_finished, timeout=15000) as result:
+            window.start()
+        assert window.approval_dialog is None
         assert result.args == ["finished"] and probe.text == text.strip("«»")
         assert "windows.type_text: SUCCESS" in window.output.toPlainText()
+        assert [item.operation for item in probe.calls].count("type") == 1
     finally:
         window.shutdown()
 
@@ -281,8 +278,8 @@ def test_real_browser_observation_drives_next_registered_step(qtbot: QtBot, tmp_
         window.command.setPlainText("Read the controlled local page")
         with qtbot.waitSignal(window.task_finished, timeout=15000) as result:
             window.start()
-            click_approval(window, qtbot)
         assert result.args == ["finished"]
+        assert window.approval_dialog is None
         assert "browser.read: SUCCESS" in window.output.toPlainText()
         assert "Browser fixture" in window.output.toPlainText()
         assert [row[:2] for row in site.seen] == [("GET", "/")]
