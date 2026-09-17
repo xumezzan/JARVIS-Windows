@@ -2,13 +2,38 @@
 
 ## Текущее состояние
 
-Один Python-пакет, запускаемый через `python -m jarvis` или `jarvis`. Этапы 0–5
-реализовали desktop shell, локальные typed tools, PermissionEngine, approvals и audit.
+Один Python-пакет, запускаемый через `python -m jarvis` или `jarvis`. Этапы 0–9 и фазы
+плана 0.2–0.3 реализовали desktop shell, локальные typed tools, PermissionEngine с пятью
+уровнями, approvals, audit, durable-запуски, граф знаний, коннекторы, рутины и голос со
+словом активации.
 Текстовая команда главного окна запускает планировщик того же сеанса: MainWindow владеет одним PlannerWindow, берёт из него реестр, движок разрешений и audit, и показывает его уточнения и подтверждения в своём окне. Кнопка «Открыть инструменты» открывает
 ручное окно локальных, Windows и браузерных инструментов. Windows UIA изолирован в helper-процессе;
 Playwright имеет отдельный asyncio owner. Отдельное окно планировщика использует offline
 recipes или OpenAI Responses; локальный голос и управляемая память реализованы.
 Outlook подключается явно через MSAL/Graph; настоящая почта ещё не проверена.
+
+## Целевая архитектура
+
+Продукт — компьютерный агент: владелец ставит цель, ассистент выбирает средства.
+Десять компонентов постановки и модули, которые за них отвечают. План и порядок работ —
+[AGENT_PLAN.md](AGENT_PLAN.md).
+
+| Компонент | Модули | Состояние |
+| --- | --- | --- |
+| Voice Input / STT | `voice/`, `platforms/audio.py`, `ui/voice_panel.py` | Есть; оборудование не проверено |
+| AI Brain / LLM | `core/planner/routing.py`, `deepseek_provider.py`, `openai_provider.py` | Есть; Claude как инструмент разбора — нет |
+| Planner | `core/planner/runner.py`, `core/workflow/` | Есть на короткой задаче; длинная задача с возобновлением — фаза 1 |
+| Tool & MCP Layer | `tools/`, `connectors/` | Outlook, календарь, Fireflies, MCP; Asana/Notion/Teams — фаза 2 |
+| Computer Control | `tools/windows.py`, `platforms/windows/` | Открыть, сфокусировать, перечислить, напечатать; клик, клавиши, буфер — фаза 4 |
+| Vision / Screen | — | Нет; дерево интерфейса и снимок окна — фаза 3 |
+| Memory | `memory/`, `knowledge/`, `core/context/` | Есть; способ работы как память — фаза 8 |
+| Permission System | `permissions/`, `voice/approval.py`, `ui/approval_dialog.py` | Есть; `CRITICAL` ждёт решения Р5 |
+| TTS | `voice/local.py`, `voice/elevenlabs.py`, `core/report.py` | Есть; потоковая речь и перебивание — фаза 7 |
+| UI | `ui/main_window.py`, `ui/dashboard.py`, `ui/planner_window.py` | Есть; один экран с чеклистом — фаза 6 |
+
+Три границы, которые новые фазы обязаны сохранить, потому что на них держится всё
+остальное: наблюдение принадлежит задаче (цель действия увидена в ней, а не вспомнена),
+токен подтверждения выдаёт только UI, и любой внешний текст — данные, а не полномочие.
 
 ## Поток инструментов
 
