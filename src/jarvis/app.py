@@ -39,6 +39,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     from PySide6.QtWidgets import QApplication
 
     from jarvis.observability.logging import ShellLog
+    from jarvis.ui import workers
     from jarvis.ui.main_window import MainWindow
     from jarvis.ui.theme import ICON
 
@@ -114,4 +115,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = application.exec()
     finally:
         window.shutdown()
+        # A closed window is not a finished worker: a run whose panel was deleted still
+        # holds its thread, and leaving before it returns would abort the process.
+        workers.drain()
     return smoke_result if args.smoke_test else result

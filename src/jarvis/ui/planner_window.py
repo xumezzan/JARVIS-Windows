@@ -34,6 +34,7 @@ from jarvis.permissions.policies import Mode
 from jarvis.security.cloud_consent import CloudConsent
 from jarvis.security.credentials import setup_command
 from jarvis.tools.windows import WindowsBackend
+from jarvis.ui import workers
 from jarvis.ui.approval_dialog import ApprovalDialog
 from jarvis.ui.mail_panel import MailPanel
 from jarvis.ui.memory_panel import MemoryPanel
@@ -344,7 +345,7 @@ class PlannerWindow(QDialog):
         self.worker.prompt.connect(self._prompt)
         self.worker.finished.connect(self._finished)
         self.memory.consume_selection()
-        self.worker.start()
+        workers.start(self.worker)
 
     @Slot(str, object)
     def _event(self, kind: str, value: object) -> None:

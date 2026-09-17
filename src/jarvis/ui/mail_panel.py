@@ -31,6 +31,7 @@ from jarvis.permissions.approvals import Action, ApprovalAuthority
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Decision, Mode, Risk, Status
 from jarvis.tools.base import ExecutionContext
+from jarvis.ui import workers
 from jarvis.ui.approval_dialog import ApprovalDialog
 from jarvis.ui.tool_worker import ToolWorker
 
@@ -294,7 +295,7 @@ class MailPanel(QWidget):
         worker = MailWorker(audited if connection else work)
         self.worker = worker
         worker.finished.connect(self.finished)
-        worker.start()
+        workers.start(worker)
 
     def reset_account(self) -> None:
         self.engine.cancel_all()
@@ -420,7 +421,7 @@ class MailPanel(QWidget):
                 if code == QDialog.DialogCode.Accepted and dialog.token is not None:
                     self.worker = ToolWorker(self.engine, result, dialog.token)
                     self.worker.finished.connect(self.finished)
-                    self.worker.start()
+                    workers.start(self.worker)
                 else:
                     self.engine.cancel(result)
                     self.action = None
@@ -433,7 +434,7 @@ class MailPanel(QWidget):
         else:
             self.worker = ToolWorker(self.engine, result)
             self.worker.finished.connect(self.finished)
-            self.worker.start()
+            workers.start(self.worker)
 
     def stop(self) -> None:
         if not self.busy:
