@@ -9,6 +9,7 @@ from pytestqt.qtbot import QtBot
 from tests.unit.test_planner import Scripted
 
 from jarvis.config import AppConfig
+from jarvis.memory.derived import DerivedStore
 from jarvis.memory.models import Hint
 from jarvis.ui.memory_panel import MemoryPanel
 from jarvis.ui.planner_window import PlannerWindow
@@ -140,5 +141,60 @@ def test_secret_rejected_and_consent_invalidated_by_edit(qtbot: QtBot, tmp_path:
         QTest.mouseClick(panel.save_button, Qt.MouseButton.LeftButton)
         assert panel.entries[0].value == "Бета"
         assert b"password fixture" not in panel.store.path.read_bytes()
+    finally:
+        window.shutdown()
+
+
+def learned_ready(panel: MemoryPanel, qtbot: QtBot) -> None:
+    qtbot.waitUntil(lambda: panel.derived_worker is None)
+
+
+def test_learned_memory_is_shown_switched_on_and_removed(qtbot: QtBot, tmp_path: Path) -> None:
+    learnt = DerivedStore(tmp_path / "derived.sqlite3")
+    learnt.record("tool", "почту", "outlook.list")
+    learnt.record("entity", "джон", "a" * 32)
+    window = PlannerWindow(AppConfig(tmp_path))
+    qtbot.addWidget(window)
+    window.show()
+    panel = window.memory
+    window.tabs.setCurrentIndex(1)
+    try:
+        qtbot.waitUntil(lambda: panel.derived_worker is None and bool(panel.learned))
+        rows = [panel.learned_list.item(index).text() for index in range(len(panel.learned))]
+        assert any("почту" in row and "outlook.list" in row for row in rows)
+        # A confirmed name is shown as a name; the identifier it carries stays in the store.
+        assert any("джон" in row for row in rows) and not any("a" * 32 in row for row in rows)
+        assert not panel.learning_box.isChecked() and not learnt.learning()
+        panel.learning_box.setChecked(True)
+        learned_ready(panel, qtbot)
+        assert learnt.learning()
+        panel.learned_list.setCurrentRow(0)
+        QTest.mouseClick(panel.forget_button, Qt.MouseButton.LeftButton)
+        qtbot.waitUntil(lambda: panel.derived_worker is None and len(panel.learned) == 1)
+        QTest.mouseClick(panel.clear_learned_button, Qt.MouseButton.LeftButton)
+        qtbot.waitUntil(lambda: panel.derived_worker is None and not panel.learned)
+        assert learnt.read() == () and learnt.learning()
+    finally:
+        window.shutdown()
+
+
+def test_learning_stays_off_until_the_owner_turns_it_on(qtbot: QtBot, tmp_path: Path) -> None:
+    window = PlannerWindow(AppConfig(tmp_path))
+    qtbot.addWidget(window)
+    window.show()
+    panel = window.memory
+    window.tabs.setCurrentIndex(1)
+    try:
+        learned_ready(panel, qtbot)
+        assert not panel.learning_box.isChecked() and not panel.learned
+        with qtbot.waitSignal(window.task_finished):
+            window.command.setPlainText("проверь систему")
+            window.simulation.setChecked(False)
+            window.start()
+        learned_ready(panel, qtbot)
+        panel._reload_learned()
+        learned_ready(panel, qtbot)
+        # A finished run with learning off leaves nothing behind.
+        assert panel.learned == () and DerivedStore(tmp_path / "derived.sqlite3").read() == ()
     finally:
         window.shutdown()

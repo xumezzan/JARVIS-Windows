@@ -365,3 +365,48 @@ def test_a_listed_field_can_be_typed_into_after_approval(qtbot: QtBot, tmp_path:
         assert [item.operation for item in probe.calls].count("type") == 1
     finally:
         window.shutdown()
+
+
+def test_learned_words_are_named_before_they_leave_and_are_written_only_when_asked(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    from jarvis.memory.derived import DerivedStore
+
+    learnt = DerivedStore(tmp_path / "derived.sqlite3")
+    learnt.record("tool", "систему", "local.check")
+    window = PlannerWindow(AppConfig(tmp_path))
+    qtbot.addWidget(window)
+    try:
+        window.command.setPlainText("проверь систему")
+        window.model.setText("test-model")
+        window.provider_choice.setCurrentIndex(1)
+        window.cloud_consent.setChecked(True)
+        window.start()
+        # A learned word is context too, so it needs the same one-task consent.
+        assert "контекста" in window.status.text() and not window.output.toPlainText()
+        window.memory.cloud_consent.setChecked(True)
+        window.start()
+        assert "систему → local.check" in window.output.toPlainText()
+    finally:
+        window.shutdown()
+
+
+def test_a_finished_run_teaches_the_words_it_was_given(qtbot: QtBot, tmp_path: Path) -> None:
+    from jarvis.memory.derived import DerivedStore
+
+    learnt = DerivedStore(tmp_path / "derived.sqlite3")
+    learnt.set_learning(True)
+    window = PlannerWindow(AppConfig(tmp_path))
+    qtbot.addWidget(window)
+    try:
+        window.simulation.setChecked(False)
+        window.command.setPlainText("проверь систему")
+        with qtbot.waitSignal(window.task_finished):
+            window.start()
+        assert window.last_result is not None and window.last_result.status == "finished"
+        assert {(record.phrase, record.target) for record in learnt.read()} == {
+            ("проверь", "local.check"),
+            ("систему", "local.check"),
+        }
+    finally:
+        window.shutdown()

@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from threading import Event
 from uuid import uuid4
 
+from jarvis.core.context.learning import Learner
 from jarvis.core.planner.contracts import (
     Limits,
     PlannerInput,
@@ -21,6 +22,7 @@ from jarvis.core.workflow.models import step_key
 from jarvis.core.workflow.store import WorkflowFailure
 from jarvis.knowledge.harvest import Harvester
 from jarvis.knowledge.models import KnowledgeContext
+from jarvis.memory.derived import DerivedContext
 from jarvis.memory.models import MemoryContext
 from jarvis.permissions.approvals import Action, ApprovalToken
 from jarvis.permissions.engine import Outcome, PermissionEngine
@@ -45,12 +47,15 @@ class Runner:
         limits: Limits | None = None,
         memory: MemoryContext | None = None,
         knowledge: KnowledgeContext | None = None,
+        derived: DerivedContext | None = None,
         journal: Journal | None = None,
         harvester: Harvester | None = None,
+        learner: Learner | None = None,
         notify: Callable[[str, object], None] = lambda kind, value: None,
     ) -> None:
         self.memory = MemoryContext.model_validate(memory or MemoryContext())
         self.knowledge = KnowledgeContext.model_validate(knowledge or KnowledgeContext())
+        self.derived = DerivedContext.model_validate(derived or DerivedContext())
         self.registry = registry
         self.engine = engine
         self.provider = provider
@@ -59,6 +64,7 @@ class Runner:
         self.limits = limits or Limits()
         self.journal = journal
         self.harvester = harvester
+        self.learner = learner
         # One identity for the run, shared by the journal and by what it observes.
         self.run_id = journal.run_id if journal is not None else uuid4().hex
         self.notify = notify
@@ -90,7 +96,9 @@ class Runner:
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if job in done:
-                return await job
+                result = await job
+                self._learn(command, result)
+                return result
             self.cancel()
             job.cancel()
             await asyncio.gather(job, return_exceptions=True)
@@ -112,9 +120,20 @@ class Runner:
                 self.active = None
             self.memory = MemoryContext()
             self.knowledge = KnowledgeContext()
+            self.derived = DerivedContext()
             job.cancel()
             watcher.cancel()
             await asyncio.gather(job, watcher, return_exceptions=True)
+
+    def _learn(self, command: str, result: PlanResult) -> None:
+        """Only a run that finished teaches. A failed one would teach the wrong lesson."""
+        if self.learner is None or result.status != "finished" or self.cancelled.is_set():
+            return
+        try:
+            self.learner.learn(command, result.steps)
+        except Exception:
+            # Noting what worked must never change the outcome of the task itself.
+            return
 
     async def _run(self, command: str, mode: Mode) -> PlanResult:
         answers: list[str] = []
@@ -156,6 +175,7 @@ class Runner:
                         catalog,
                         self.memory,
                         self.knowledge,
+                        self.derived,
                     )
                 )
             proposal = Proposal.model_validate(raw, strict=True)

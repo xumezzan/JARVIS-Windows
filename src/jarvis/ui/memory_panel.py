@@ -20,9 +20,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from jarvis.memory.derived import LEARNED, Derived, DerivedStore
 from jarvis.memory.models import APPS, KINDS, PROFILE_TTL, Entry, Hint, MemoryContext
 from jarvis.memory.session import SessionContext
 from jarvis.memory.store import MemoryFailure, MemoryStore
+
+
+def runs(count: int) -> str:
+    """Russian counts the thing it counts, so the word has to follow the number."""
+    tail = count % 100
+    if 11 <= tail <= 14:
+        return f"{count} запусков"
+    return f"{count} запуск" + {1: "", 2: "а", 3: "а", 4: "а"}.get(count % 10, "ов")
 
 
 def note(text: str) -> QLabel:
@@ -50,19 +59,44 @@ class MemoryWorker(QThread):
             self.error = "storage"
 
 
+class DerivedWorker(QThread):
+    """The learned store is read and written off the Qt loop, exactly like the profile."""
+
+    def __init__(self, store: DerivedStore, operation: Callable[[Event], tuple[Derived, ...]]):
+        super().__init__()
+        self.store = store
+        self.operation = operation
+        self.cancelled = Event()
+        self.records: tuple[Derived, ...] = ()
+        self.learning = False
+        self.error = ""
+
+    def run(self) -> None:
+        try:
+            self.records = self.operation(self.cancelled)
+            self.learning = self.store.learning(self.cancelled)
+        except MemoryFailure as error:
+            self.error = error.code
+        except Exception:
+            self.error = "storage"
+
+
 class MemoryPanel(QWidget):
     changed = Signal()
     busy_changed = Signal(bool)
 
-    def __init__(self, store: MemoryStore):
+    def __init__(self, store: MemoryStore, derived: DerivedStore | None = None):
         super().__init__()
         self.setObjectName("memoryPanel")
-        self.setMinimumSize(800, 820)
+        self.setMinimumSize(800, 980)
         self.store = store
+        self.derived_store = derived
         self.session = SessionContext()
         self.entries: tuple[Entry, ...] = ()
         self._session_rows: tuple[Hint, ...] = ()
         self.worker: MemoryWorker | None = None
+        self.derived_worker: DerivedWorker | None = None
+        self.learned: tuple[Derived, ...] = ()
         self.previous: Entry | None = None
         self.closed = False
         self.available = False
@@ -141,6 +175,30 @@ class MemoryPanel(QWidget):
         layout.addLayout(context_buttons)
         layout.addWidget(
             note(
+                "Выученное · заполняется само из завершённых запусков, пока включён "
+                "переключатель ниже. Хранятся только сопоставления: слово → инструмент или "
+                "приложение, и подтверждённые вами имена. Тексты команд, писем и страниц "
+                "не сохраняются. Записи исчезают через 30 дней после последнего подтверждения."
+            )
+        )
+        self.learned_list = QListWidget()
+        self.learned_list.setAccessibleName("Выученное — выберите запись, чтобы удалить её")
+        layout.addWidget(self.learned_list)
+        learned_buttons = QHBoxLayout()
+        self.learning_box = QCheckBox("Запоминать, что сработало в завершённых запусках")
+        self.forget_button = QPushButton("Удалить выученное")
+        self.clear_learned_button = QPushButton("Очистить выученное")
+        self.forget_button.clicked.connect(self._forget)
+        self.clear_learned_button.clicked.connect(self._clear_learned)
+        self.learning_box.toggled.connect(self._learning)
+        learned_buttons.addWidget(self.forget_button)
+        learned_buttons.addWidget(self.clear_learned_button)
+        layout.addWidget(self.learning_box)
+        layout.addLayout(learned_buttons)
+        self.learned_status = note("Выученного пока нет.")
+        layout.addWidget(self.learned_status)
+        layout.addWidget(
+            note(
                 "Отметьте до 8 записей профиля и нужные метки сеанса. "
                 "Выбор действует на один запуск. Имена и роли не определяют точного адресата."
             )
@@ -153,8 +211,8 @@ class MemoryPanel(QWidget):
         # Covers the selected labels and any known entity the command names: both describe
         # people and work, and both would otherwise leave the machine unannounced.
         self.cloud_consent = QCheckBox(
-            "Разрешаю передать показанные метки и названных знакомых лиц и проектов "
-            "в DeepSeek или OpenAI для одной задачи"
+            "Разрешаю передать показанные метки, названных знакомых лиц и проектов "
+            "и подходящие выученные слова в DeepSeek или OpenAI для одной задачи"
         )
         layout.addWidget(self.cloud_consent)
         self.status = note("Загрузка профиля…")
@@ -167,6 +225,7 @@ class MemoryPanel(QWidget):
         self.timer.timeout.connect(self._expire)
         self.timer.start()
         QTimer.singleShot(0, lambda: self._job(self.store.read) if not self.closed else None)
+        QTimer.singleShot(0, self._reload_learned)
 
     def _kind_changed(self) -> None:
         is_app = self.kind.currentData() == "application"
@@ -276,6 +335,87 @@ class MemoryPanel(QWidget):
         worker.entries = ()
         worker.deleteLater()
 
+    def _reload_learned(self) -> None:
+        if self.derived_store is not None and not self.closed:
+            self._learned_job(self.derived_store.read)
+
+    def _learned_job(self, operation: Callable[[Event], tuple[Derived, ...]]) -> None:
+        if self.derived_store is None or self.derived_worker is not None or self.closed:
+            return
+        self.cloud_consent.setChecked(False)
+        self.busy_changed.emit(True)
+        self._learned_controls(False)
+        worker = DerivedWorker(self.derived_store, operation)
+        self.derived_worker = worker
+        worker.finished.connect(self._learned_done)
+        worker.start()
+
+    def _learned_controls(self, enabled: bool) -> None:
+        for widget in (self.learned_list, self.forget_button, self.clear_learned_button):
+            widget.setEnabled(enabled)
+        self.learning_box.setEnabled(enabled)
+
+    def _learned_done(self) -> None:
+        worker = self.derived_worker
+        if worker is None:
+            return
+        worker.wait()
+        self.derived_worker = None
+        self.learned = () if worker.error else worker.records
+        self._render_learned()
+        # Setting the box must not look like the owner toggling it.
+        self.learning_box.blockSignals(True)
+        self.learning_box.setChecked(worker.learning and not worker.error)
+        self.learning_box.blockSignals(False)
+        self.learned_status.setText(
+            {
+                "": "Выученного пока нет."
+                if not self.learned
+                else "Выученное обновлено. Оно подсказывает, но ничего не решает за вас.",
+                "conflict": "Запись уже изменилась. Список перечитан.",
+                "cancelled": "Операция остановлена. Проверьте список.",
+                "limit": "Выученного слишком много. Очистите список.",
+                "invalid": "Файл выученного повреждён. Очистите список.",
+            }.get(worker.error, "Выученное недоступно. Проверьте локальный файл.")
+        )
+        self._learned_controls(True)
+        self.busy_changed.emit(False)
+        worker.records = ()
+        worker.deleteLater()
+
+    def _render_learned(self) -> None:
+        self.learned_list.clear()
+        for record in self.learned:
+            self.learned_list.addItem(
+                f"{LEARNED[record.kind]} · {record.phrase} → "
+                + ("подтверждённое имя" if record.kind == "entity" else record.target)
+                + f" · {runs(record.runs)}"
+            )
+
+    def _forget(self) -> None:
+        index = self.learned_list.currentRow()
+        store = self.derived_store
+        if store is None or not 0 <= index < len(self.learned):
+            return
+        previous = self.learned[index]
+        self._learned_job(lambda cancel: store.forget(previous, cancel))
+
+    def _clear_learned(self) -> None:
+        store = self.derived_store
+        if store is not None:
+            self._learned_job(store.clear)
+
+    def _learning(self, value: bool) -> None:
+        store = self.derived_store
+        if store is None:
+            return
+
+        def operation(cancel: Event) -> tuple[Derived, ...]:
+            store.set_learning(value, cancel)
+            return store.read(cancel)
+
+        self._learned_job(operation)
+
     @staticmethod
     def _row(widget: QListWidget, hint: Hint) -> None:
         item = QListWidgetItem(f"{KINDS[hint.kind]} · {hint.label}: {hint.value}")
@@ -370,6 +510,8 @@ class MemoryPanel(QWidget):
     def cancel(self) -> None:
         if self.worker is not None:
             self.worker.cancelled.set()
+        if self.derived_worker is not None:
+            self.derived_worker.cancelled.set()
 
     def shutdown(self) -> None:
         self.closed = True
@@ -378,6 +520,9 @@ class MemoryPanel(QWidget):
         if self.worker is not None:
             self.worker.wait()
             self._done()
+        if self.derived_worker is not None:
+            self.derived_worker.wait()
+            self._learned_done()
         self.reset()
         self.entries = ()
         self._render_profile()

@@ -106,7 +106,9 @@ class PlannerWindow(QDialog):
         root.addWidget(self.tabs)
         task = QWidget()
         self.tabs.addTab(task, "Команда")
-        self.memory = MemoryPanel(MemoryStore(config.data_dir / "memory.sqlite3"))
+        self.memory = MemoryPanel(
+            MemoryStore(config.data_dir / "memory.sqlite3"), self.bench.derived
+        )
         memory_scroll = QScrollArea()
         memory_scroll.setWidgetResizable(True)
         memory_scroll.setWidget(self.memory)
@@ -281,7 +283,7 @@ class PlannerWindow(QDialog):
             return
         # Knowledge is selected by the command, so it is assembled here rather than chosen
         # in a panel; it leaves the machine under the same consent as the chosen labels.
-        context = assemble(command, self.bench.knowledge, memory=memory)
+        context = assemble(command, self.bench.knowledge, memory=memory, derived=self.bench.derived)
         if (
             self.provider_choice.currentIndex() == 1
             and not context.empty
@@ -318,6 +320,10 @@ class PlannerWindow(QDialog):
                 for hint in context.knowledge.entities
             )
             self.output.appendPlainText("Контекст задачи: " + named)
+        if not context.derived.empty:
+            # Learned words travel under the same consent, so they are named just as plainly.
+            phrases = ", ".join(f"{hint.phrase} → {hint.means}" for hint in context.derived.phrases)
+            self.output.appendPlainText("Выученное для задачи: " + phrases)
         self.last_result = None
         self.voice.was_cancelled = False
         self._busy(True)
@@ -330,7 +336,9 @@ class PlannerWindow(QDialog):
             self.limits,
             memory,
             context.knowledge,
+            context.derived,
             self.bench.harvester,
+            self.bench.learner,
         )
         self.worker.progress_event.connect(self._event)
         self.worker.prompt.connect(self._prompt)
