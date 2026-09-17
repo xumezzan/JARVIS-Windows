@@ -69,7 +69,7 @@ service/action_type/account/recipient/subject/body/attachments. Изменённ
 
 ## Выполнение и симуляция
 
-SAFE проходит policy без интерактивного согласия. CONFIRM требует capability даже в
+SAFE и ROUTINE проходят policy без интерактивного согласия. CONFIRM требует capability даже в
 simulation. CRITICAL отключён; BLOCKED всегда запрещён. Неизвестный risk не разрешается.
 
 В EXECUTE engine проверяет наличие approval перед preconditions, затем после них повторно
@@ -126,7 +126,7 @@ Python >=3.12, `src` layout, Hatchling; PySide6-Essentials и Pydantic. Верс
 ## Windows Automation, этап 3
 
 `tools/windows.py` содержит portable strict schemas и четыре ToolSpec. `get_open_windows`,
-`open_app`, `focus_app` — SAFE; `type_text` — CONFIRM. Регистрация не импортирует pywinauto.
+`open_app`, `focus_app` — SAFE; `type_text` — ROUTINE. Регистрация не импортирует pywinauto.
 `platforms/windows/transport.py` запускает фиксированный модуль helper через Python `-I`,
 без shell. `worker.py` лениво импортирует `native.py` только на Windows. Pywinauto/psutil
 ограничены dependency marker `sys_platform == 'win32'`.
@@ -173,7 +173,7 @@ compare-and-write. Во время подтверждённого ввода н�
 ## Browser Automation, этап 4
 
 `tools/browser.py` регистрирует восемь strict tools. `read`/`get_tabs` — SAFE;
-`open`/`navigate`/`search`/`click`/`type`/`close` — CONFIRM. Названия `read` и `close`
+`open`/`navigate`/`search`/`click`/`type`/`close` — ROUTINE. Названия `read` и `close`
 соответствуют текущему roadmap; в исходном плане это `read_page` и `close_tab`.
 `ToolSpec.policy` — чистая синхронная проверка во время normalize, до snapshot;
 она работает и в simulation. Она не вызывает browser/DNS/adapters. Prepared snapshots

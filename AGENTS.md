@@ -45,11 +45,6 @@ Do not treat fixture checks or a shown shell as completion of the full MVP scena
   the owner's machine: it runs without approval, cannot be given a token at all, and is
   prepared, snapshot-checked, audited and journalled exactly like every other action.
   A new capability starts at CONFIRM and is lowered only by a deliberate decision.
-- Risk levels run SAFE, ROUTINE, CONFIRM, CRITICAL, BLOCKED, and the matrix may only
-  move a capability up that order. ROUTINE is for a change that is reversible and stays on
-  the owner's machine: it runs without approval, cannot be given a token at all, and is
-  prepared, snapshot-checked, audited and journalled exactly like every other action.
-  A new capability starts at CONFIRM and is lowered only by a deliberate decision.
 - CONFIRM requires an exact, expiring, single-use approval from a verified UI event.
   Bind service/account/target/content/attachments and invalidate on any change or cancellation.
 - CRITICAL is disabled for the MVP; BLOCKED never executes.
@@ -75,7 +70,7 @@ name through the Windows apps folder, Start menu, App Paths and system tools, re
 ambiguous name, and never launch a script host or interpreter by name. A launched window is
 identified by its own executable, never by the requested word. No user text ever becomes a
 path, argument or command line.
-Typing is CONFIRM and reaches only a field the caller observed in this task, in a window
+Typing is ROUTINE and reaches only a field the caller observed in this task, in a window
 identified exactly by process, start time, handle and runtime id. A field is matched by its
 role, class, automation id, name and selected tab, because an application may rebuild the
 control and change its handle without changing the field; an ambiguous or missing match is
@@ -102,8 +97,9 @@ directories. Every path is resolved before it is judged, so a link or a parent s
 cannot lead outside; the decision is a pure policy hook, so simulation refuses exactly what
 execution refuses. Executable and script extensions are never written, renamed into or
 opened. Only plain text is read or written as text, with a size bound. Reading, listing and
-finding are SAFE; writing, renaming, recycling and opening are CONFIRM. Existing content is
-never replaced unless the caller asks, and a write is staged and renamed into place.
+finding are SAFE; writing, renaming and opening are ROUTINE, and recycling stays CONFIRM.
+Existing content is never replaced unless the caller asks, and a write is staged and renamed
+into place.
 Deletion goes to the recycle bin and nowhere else: there is no permanent delete, and folders
 are not removed. An observation returns names, sizes and paths, never a directory tree of
 somewhere else. Do not add shell globbing, path patterns from model output, or an
@@ -183,7 +179,7 @@ browser profile/cookies, generic POST, aliases, shared mailboxes or second servi
 OS credential cache stays in bounded manifest-checked slots via a killable helper; no
 plaintext fallback. Preserve session/home ID/Graph ID/address binding, clear local state on
 switch/disconnect, audit connection lifecycle and mail execution before effects.
-Remote draft and send are CONFIRM; local RAM drafts are SAFE. Bind exact To/Cc/Bcc,
+Remote draft is ROUTINE, send is CONFIRM, and local RAM drafts are SAFE. Bind exact To/Cc/Bcc,
 subject/body and attachment bytes by size/SHA-256/ID. Only explicit UI file selection can
 load small regular files; model inputs never contain paths or file-reading capabilities.
 Send the full approved snapshot, never a mutable remote draft by ID. Verify remote draft
