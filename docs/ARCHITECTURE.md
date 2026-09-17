@@ -48,6 +48,8 @@ OAuth connect/disconnect — отдельный UI-only setup через QThread
 | `core/planner` | Provider protocol, offline recipes, OpenAI strict calls, bounded Runner |
 | `ui/planner_window.py`, `ui/planner_worker.py` | Текстовая команда, отдельный QThread, prompts и stop |
 | `security/credentials.py`, `platforms/credentials.py` | Killable credential pipe и явный OS backend |
+| `security/cloud_consent.py` | Разрешение на облако и ID модели между запусками; повреждённый файл = нет согласия |
+| `core/planner/identifiers.py` | Одно правило ID модели для настроек, окна согласия и провайдера |
 | `voice`, `memory` | Локальный push-to-talk и явно управляемые метки |
 | `core/routines` | Фоновые наблюдения, очередь предложений, выключатели и дневной бюджет |
 | `core/report.py` | Что именно сделано: текст для экрана и для голоса из снимка и исхода |

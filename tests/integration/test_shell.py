@@ -7,6 +7,13 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QDialog,
+    QPlainTextEdit,
+    QPushButton,
+)
 from pytestqt.qtbot import QtBot
 
 from jarvis.config import AppConfig
@@ -270,3 +277,94 @@ def test_theme_and_motion_controls_preserve_task(window: MainWindow, qtbot: QtBo
     assert window.orb._timer.isActive()
     window.hide()
     assert not window.orb._timer.isActive()
+
+
+def cloud_answer(model: str, consent: bool, *, accept: bool = True) -> dict[str, object]:
+    """Answer the modal consent dialog the way a person would; reports how it opened."""
+    seen: dict[str, object] = {}
+
+    def act() -> None:
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, QDialog)
+        field = dialog.findChild(QPlainTextEdit)
+        box = dialog.findChild(QCheckBox)
+        assert field is not None and box is not None
+        confirm = next(b for b in dialog.findChildren(QPushButton) if b.text() == "OK")
+        seen["opened_with"] = field.toPlainText()
+        seen["opened_ticked"] = box.isChecked()
+        field.setPlainText(model)
+        box.setChecked(consent)
+        seen["can_confirm"] = confirm.isEnabled()
+        if accept and confirm.isEnabled():
+            dialog.accept()
+        else:
+            dialog.reject()
+
+    QTimer.singleShot(0, act)
+    return seen
+
+
+def test_cloud_consent_is_asked_once_and_survives_a_restart(qtbot: QtBot, tmp_path: Path) -> None:
+    log = ShellLog(tmp_path / "logs")
+    window = MainWindow(AppConfig(tmp_path), log)
+    qtbot.addWidget(window)
+    planner = window.planner_window
+    assert planner is not None
+    try:
+        # Nothing may be confirmed without the tick, and what was typed is not thrown away.
+        forgot = cloud_answer("gpt-5.4-mini", False)
+        assert not window._cloud_ready(planner)
+        assert forgot == {"opened_with": "", "opened_ticked": False, "can_confirm": False}
+        assert planner.model.text() == "gpt-5.4-mini"
+
+        # An identifier the provider would refuse is refused here, while it can still be fixed.
+        spaced = cloud_answer("gpt 5.4 mini", True)
+        assert not window._cloud_ready(planner)
+        assert spaced["can_confirm"] is False
+        assert planner.model.text() == "gpt-5.4-mini"
+
+        given = cloud_answer("gpt-5.4-mini", True)
+        assert window._cloud_ready(planner)
+        assert given["opened_with"] == "gpt-5.4-mini" and given["can_confirm"] is True
+        # Asked once: a second command never sees the dialog again.
+        assert window._cloud_ready(planner)
+    finally:
+        window.shutdown()
+        window.close()
+
+    restarted = MainWindow(AppConfig(tmp_path), log)
+    qtbot.addWidget(restarted)
+    revived = restarted.planner_window
+    assert revived is not None
+    try:
+        assert revived.cloud_consent.isChecked() and revived.model.text() == "gpt-5.4-mini"
+        assert restarted._cloud_ready(revived)
+        # Unticking in the planner takes the permission back for good.
+        revived.cloud_consent.setChecked(False)
+    finally:
+        restarted.shutdown()
+        restarted.close()
+
+    revoked = MainWindow(AppConfig(tmp_path), log)
+    qtbot.addWidget(revoked)
+    asks_again = revoked.planner_window
+    assert asks_again is not None
+    try:
+        assert not asks_again.cloud_consent.isChecked()
+        # The identifier stays, so taking it back costs one tick rather than a retyped name.
+        assert asks_again.model.text() == "gpt-5.4-mini"
+        cancelled = cloud_answer("gpt-5.4-mini", True, accept=False)
+        assert not revoked._cloud_ready(asks_again)
+        assert cancelled["opened_with"] == "gpt-5.4-mini"
+        assert "не подтверждён" in revoked.validation_label.text()
+    finally:
+        revoked.shutdown()
+        revoked.close()
+
+
+def test_declined_cloud_consent_starts_nothing(qtbot: QtBot, window: MainWindow) -> None:
+    window.provider_mode.setCurrentIndex(1)
+    cloud_answer("gpt-5.4-mini", True, accept=False)
+    start(qtbot, window, "проверь систему")
+    assert not window.running and window.state == UiState.IDLE
+    assert "не подтверждён" in window.validation_label.text()

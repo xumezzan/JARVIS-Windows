@@ -31,6 +31,7 @@ from jarvis.mail.session import MailSession
 from jarvis.memory.store import MemoryFailure, MemoryStore
 from jarvis.permissions.approvals import Action
 from jarvis.permissions.policies import Mode
+from jarvis.security.cloud_consent import CloudConsent
 from jarvis.security.credentials import setup_command
 from jarvis.tools.windows import WindowsBackend
 from jarvis.ui.approval_dialog import ApprovalDialog
@@ -132,7 +133,9 @@ class PlannerWindow(QDialog):
         layout.addWidget(self.provider_choice)
         self.cloud_box = QWidget()
         cloud = QVBoxLayout(self.cloud_box)
-        self.model = QLineEdit(config.planner_model)
+        # An answer given once holds; a setting from the environment still outranks it.
+        self.cloud_memory = CloudConsent(config.data_dir / "cloud-consent.json")
+        self.model = QLineEdit(config.planner_model or self.cloud_memory.model)
         self.model.setPlaceholderText("Модель OpenAI для сложных задач, например gpt-5.4-mini")
         self.model.setMaxLength(100)
         cloud.addWidget(self.model)
@@ -158,6 +161,10 @@ class PlannerWindow(QDialog):
                 "store=false не означает отсутствие хранения у провайдера."
             )
         )
+        self.cloud_consent.setChecked(self.cloud_memory.granted and bool(self.model.text()))
+        # Connected after the stored answer is restored, so reading it is not a fresh answer.
+        self.cloud_consent.toggled.connect(self.remember_cloud)
+        self.model.editingFinished.connect(self.remember_cloud)
         layout.addWidget(self.cloud_box)
         self.cloud_box.hide()
         self.provider_choice.currentIndexChanged.connect(
@@ -238,6 +245,11 @@ class PlannerWindow(QDialog):
         self.stop_button.setEnabled(value)
         self.voice.set_planning(value)
         self._voice_busy(self.voice.worker is not None)
+
+    @Slot()
+    def remember_cloud(self) -> None:
+        """Keep the last answer for the next launch. Unticking here is how it is taken back."""
+        self.cloud_memory.remember(self.model.text().strip(), self.cloud_consent.isChecked())
 
     def _voice_busy(self, value: bool) -> None:
         busy = value or self.voice.planning or self.mail.busy
