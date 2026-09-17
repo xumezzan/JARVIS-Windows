@@ -10,9 +10,13 @@ from jarvis.core.planner.contracts import ProviderError
 ACCOUNT = "default"
 # One entry per vendor, named in full. A key is never shared between providers, and the
 # allowlist keeps an argument from ever becoming an arbitrary credential-store name.
-SERVICES = {"openai": "Jarvis/OpenAI", "deepseek": "Jarvis/DeepSeek"}
+SERVICES = {
+    "openai": "Jarvis/OpenAI",
+    "deepseek": "Jarvis/DeepSeek",
+    "fireflies": "Jarvis/Fireflies",
+}
 SERVICE = SERVICES["openai"]
-VENDORS = {"openai": "OpenAI", "deepseek": "DeepSeek"}
+VENDORS = {"openai": "OpenAI", "deepseek": "DeepSeek", "fireflies": "Fireflies"}
 
 
 def service_of(provider: str) -> str:
@@ -124,7 +128,7 @@ def main() -> int:
     if sys.argv[1:2] != ["--pipe"]:
         print(
             "Ключ недоступен. Настройка: "
-            "python -m jarvis.security.credentials set [openai|deepseek]"
+            "python -m jarvis.security.credentials set [openai|deepseek|fireflies]"
         )
     return 1
 

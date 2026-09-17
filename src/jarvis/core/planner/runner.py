@@ -5,6 +5,7 @@ import json
 import re
 from collections.abc import Awaitable, Callable
 from threading import Event
+from uuid import uuid4
 
 from jarvis.core.planner.contracts import (
     Limits,
@@ -18,12 +19,15 @@ from jarvis.core.planner.contracts import (
 from jarvis.core.workflow.journal import Journal
 from jarvis.core.workflow.models import step_key
 from jarvis.core.workflow.store import WorkflowFailure
+from jarvis.knowledge.harvest import Harvester
 from jarvis.knowledge.models import KnowledgeContext
 from jarvis.memory.models import MemoryContext
 from jarvis.permissions.approvals import Action, ApprovalToken
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Mode, Risk, Status
 from jarvis.tools.registry import ToolRegistry
+
+MICROSOFT = ("outlook.", "calendar.")
 
 Approve = Callable[[Action], Awaitable[ApprovalToken | None]]
 Clarify = Callable[[str], Awaitable[str | None]]
@@ -42,6 +46,7 @@ class Runner:
         memory: MemoryContext | None = None,
         knowledge: KnowledgeContext | None = None,
         journal: Journal | None = None,
+        harvester: Harvester | None = None,
         notify: Callable[[str, object], None] = lambda kind, value: None,
     ) -> None:
         self.memory = MemoryContext.model_validate(memory or MemoryContext())
@@ -53,6 +58,9 @@ class Runner:
         self.clarify = clarify
         self.limits = limits or Limits()
         self.journal = journal
+        self.harvester = harvester
+        # One identity for the run, shared by the journal and by what it observes.
+        self.run_id = journal.run_id if journal is not None else uuid4().hex
         self.notify = notify
         self.cancelled = Event()
         self.active: Action | None = None
@@ -242,6 +250,9 @@ class Runner:
             step = Step(action.tool, outcome)
             self.steps.append(step)
             self.notify("tool", step)
+            if self.harvester is not None and outcome.status is Status.SUCCESS:
+                # Noting what was seen must never decide whether the task continues.
+                self.harvester.record(action.tool, self.run_id, outcome.result_json)
             if journal is not None:
                 try:
                     journal.complete(key, outcome)
@@ -261,11 +272,12 @@ class Runner:
 
     def _observed_target(self, action: Action) -> bool:
         args = json.loads(action.payload)
-        if action.tool.startswith("outlook.") and action.tool != "outlook.account":
+        # Mail and calendar are one account, so either surface may supply the observation.
+        if action.tool.startswith(MICROSOFT) and action.tool != "outlook.account":
             observations = [
                 json.loads(step.outcome.result_json or "{}")
                 for step in self.steps
-                if step.tool.startswith("outlook.") and step.outcome.status is Status.SUCCESS
+                if step.tool.startswith(MICROSOFT) and step.outcome.status is Status.SUCCESS
             ]
             if not any(value.get("account") == args.get("account") for value in observations):
                 return False
@@ -276,6 +288,21 @@ class Runner:
                     if value.get("state") == "listed"
                     for row in json.loads(value.get("data", "[]"))
                     if isinstance(row, dict)
+                )
+            if action.tool in ("calendar.get", "calendar.update", "calendar.cancel"):
+                # A meeting is addressable only after this task has seen it listed, read
+                # or created; an identifier the model supplies on its own is refused.
+                listed = any(
+                    row.get("id") == args.get("event_id")
+                    for value in observations
+                    if value.get("state") == "listed"
+                    for row in json.loads(value.get("data", "[]"))
+                    if isinstance(row, dict)
+                )
+                return listed or any(
+                    value.get("event_id") == args.get("event_id")
+                    for value in observations
+                    if value.get("event_id")
                 )
             return True
         if "target" not in args or not action.tool.startswith(("browser.", "windows.")):

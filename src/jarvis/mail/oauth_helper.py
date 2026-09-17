@@ -11,7 +11,8 @@ from uuid import UUID
 from keyring.backend import KeyringBackend
 
 SERVICE = "Jarvis/Outlook"
-SCOPES = ["User.Read", "Mail.ReadWrite", "Mail.Send"]
+# One account, one consent: the calendar rides on the same token as the mailbox.
+SCOPES = ["User.Read", "Mail.ReadWrite", "Mail.Send", "Calendars.ReadWrite"]
 CHUNKS = 64
 
 

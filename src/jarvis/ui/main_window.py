@@ -608,14 +608,21 @@ class MainWindow(QMainWindow):
                 "отдельно. store=false не означает отсутствие хранения у провайдера."
             )
         )
-        body.addWidget(label("Идентификатор модели Responses API:"))
+        body.addWidget(
+            label(
+                "Обычные задачи ведёт DeepSeek — его модель берётся из настроек. "
+                "Ниже укажите модель OpenAI: на неё планировщик переходит, когда задача "
+                "оказывается многослойной, поэтому идентификатор нужен заранее."
+            )
+        )
         model = QPlainTextEdit(planner.model.text() or self.config.planner_model)
         model.setFixedHeight(46)
         body.addWidget(model)
         body.addWidget(
             label(
-                "Ключ вводите сами в терминале: python -m jarvis.security.credentials set — "
-                "он хранится в Windows Credential Locker и не попадает в команду или журнал."
+                "Ключи вводите сами в терминале, по одному на поставщика: "
+                "python -m jarvis.security.credentials set deepseek и то же самое с openai. "
+                "Они хранятся в Windows Credential Locker и не попадают в команду или журнал."
             )
         )
         consent = QCheckBox(
