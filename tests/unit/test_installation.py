@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+import shutil
 import stat
 import subprocess
 import sys
@@ -297,6 +298,44 @@ def test_atomic_pointer_failure_keeps_previous_version(
     with pytest.raises(PermissionError):
         setup.atomic_json(path, {"slot": "b"})
     assert setup.active_slot(tmp_path) == "a"
+
+
+def test_a_slot_held_open_names_the_running_application(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Setup leaves Jarvis running on purpose, so the next one meets its own leftover."""
+    slot = tmp_path / "slots" / "b"
+    slot.mkdir(parents=True)
+    (slot / ".jarvis-slot").write_text("1", encoding="ascii")
+
+    def held(*args: Any, **kwargs: Any) -> None:
+        raise PermissionError(13, "in use")
+
+    monkeypatch.setattr(shutil, "rmtree", held)
+    with pytest.raises(SetupError, match="Close every open Jarvis window"):
+        setup.prepare_slot(tmp_path, tmp_path, "b", {"directory": "model"})
+    # The slot the installer could not replace is left exactly as it was.
+    assert (slot / ".jarvis-slot").is_file()
+
+
+def test_an_unexpected_failure_reports_its_kind_not_a_step_never_shown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise PermissionError(13, "in use")
+
+    monkeypatch.setattr(setup, "install", fail)
+    monkeypatch.setattr(setup, "supported_host", lambda: True)
+    monkeypatch.setattr(sys, "argv", ["setup", "--root", str(tmp_path)])
+    assert setup.main() == 1
+    reported = capsys.readouterr().err
+    assert "PermissionError 13" in reported
+    assert "Close open Jarvis windows" in reported
+    # The old text promised a step that a failure before the first one never printed.
+    assert "displayed step" not in reported
 
 
 def test_download_redirects_are_not_followed() -> None:
