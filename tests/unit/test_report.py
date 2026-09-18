@@ -171,10 +171,26 @@ def test_every_ending_has_words_of_its_own(status: str) -> None:
     assert said and said[0].isupper() and said.endswith(".")
 
 
-def test_speech_stays_short_when_a_lot_happened() -> None:
+def test_speech_says_the_point_and_the_screen_keeps_the_protocol() -> None:
+    """Five steps used to be five sentences read aloud by a slow voice. One is the point."""
     steps = tuple(
         step("files.open", {"path": f"D:/Документы/Файл{index}.txt"}) for index in range(5)
     )
     said = spoken(PlanResult("finished", steps))
-    assert said.count("Открыл файл") == 3 and "И ещё действий: 2." in said
+    assert said.count("Открыл файл") == 1
+    assert "Файл4" in said, "the last deed is the one the task was for"
+    # Nothing is concealed: the owner reads the whole list while this is being said.
     assert len(written(PlanResult("finished", steps))) == 6
+
+
+def test_what_failed_is_spoken_even_when_more_of_it_worked() -> None:
+    """The successes can wait for the screen. A failure cannot."""
+    failure = Step(
+        "files.open",
+        Outcome(uuid4(), Status.ERROR, ErrorCode.FILE_MISSING),
+        json.dumps({"path": "D:/Документы/Пропал.txt"}),
+    )
+    result = PlanResult("error", (step("files.open", {"path": "D:/Документы/Есть.txt"}), failure))
+    said = spoken(result)
+    assert "Не открыл файл Пропал.txt" in said and "файла нет" in said
+    assert "Есть.txt" not in said
