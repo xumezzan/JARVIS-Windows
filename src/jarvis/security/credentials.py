@@ -16,6 +16,7 @@ SERVICES = {
     "deepseek": "Jarvis/DeepSeek",
     "fireflies": "Jarvis/Fireflies",
     "asana": "Jarvis/Asana",
+    "notion": "Jarvis/Notion",
 }
 SERVICE = SERVICES["openai"]
 VENDORS = {
@@ -23,6 +24,7 @@ VENDORS = {
     "deepseek": "DeepSeek",
     "fireflies": "Fireflies",
     "asana": "Asana",
+    "notion": "Notion",
 }
 # An MCP server is named by the owner, so its entry is a pattern rather than a fixed
 # name - but a pattern in trusted code, which an argument still cannot step outside.

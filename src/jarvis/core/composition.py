@@ -27,6 +27,9 @@ from jarvis.connectors.mcp.tools import register_mcp
 from jarvis.connectors.microsoft.calendar import CalendarConnector
 from jarvis.connectors.microsoft.mapping import MAPPERS as CALENDAR_MAPPERS
 from jarvis.connectors.microsoft.tools import register_calendar
+from jarvis.connectors.notion.connector import NotionConnector
+from jarvis.connectors.notion.mapping import MAPPERS as NOTION_MAPPERS
+from jarvis.connectors.notion.tools import register_notion
 from jarvis.core.context.learning import MemoryLearner
 from jarvis.core.routines.proposals import SuggestionQueue
 from jarvis.core.routines.runner import RoutineRunner
@@ -115,7 +118,8 @@ def build(
     workflows = WorkflowStore(config.data_dir / "workflows.sqlite3")
     # Each connector says how to read its own answers; the harvester only applies them.
     harvester = GraphHarvester(
-        knowledge, {**CALENDAR_MAPPERS, **FIREFLIES_MAPPERS, **ASANA_MAPPERS}
+        knowledge,
+        {**CALENDAR_MAPPERS, **FIREFLIES_MAPPERS, **ASANA_MAPPERS, **NOTION_MAPPERS},
     )
     host = browser_host or BrowserHost(NetworkPolicy(config.browser_origins))
     registry, outbox = local_registry()
@@ -134,6 +138,9 @@ def build(
     asana = AsanaConnector()
     register_asana(registry, asana, matrix)
     connectors.add(asana)
+    notion = NotionConnector()
+    register_notion(registry, notion, matrix)
+    connectors.add(notion)
     for server in reviewed_servers(Path(config.data_dir) / MCP_FILE):
         try:
             mcp = McpConnector(server)
