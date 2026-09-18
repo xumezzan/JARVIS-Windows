@@ -1,0 +1,62 @@
+name: checks
+
+# Every push and every pull request, on the platform this product ships to. Until now the
+# gates ran only on whichever machine happened to be doing the work, so "the tests pass"
+# meant "they passed for me". A Windows runner is the point: the defects this repository
+# has actually hit - a redirector process, an environment-variable ceiling, a file held
+# open, a path with Cyrillic in it - none of them reproduce anywhere else.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      # The suite is headless by default; a runner has no desktop to show a window on.
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install the project and its development tools
+        run: python -m pip install -e ".[dev,voice]"
+
+      - name: Install the browser the integration tests drive
+        run: python -m playwright install chromium
+
+      - name: Tests
+        run: python -m pytest -q
+
+      - name: Lint
+        run: python -m ruff check .
+
+      - name: Format
+        run: python -m ruff format --check .
+
+      - name: Types
+        run: python -m mypy
+
+      - name: Dependencies agree with each other
+        run: python -m pip check
+
+      - name: The application starts
+        run: python -m jarvis --smoke-test
+
+      - name: The package builds
+        run: python -m build
