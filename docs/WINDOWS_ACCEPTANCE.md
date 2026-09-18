@@ -17,7 +17,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Installation did not pass' }
 Get-Content -LiteralPath "$env:LOCALAPPDATA\JarvisInstall\installation-report.json"
 ```
 
-Проверить настоящее окно и запуск **Jarvis** из «Пуск» после закрытия тестового окна.
+Проверить настоящее окно и запуск **Jarvis** с рабочего стола и из «Пуск» после закрытия
+тестового окна.
 Runtime готовится автоматически. Скрипт не повышает права, не меняет PATH, associations,
 постоянную execution policy, микрофонные разрешения и credentials. CMD задаёт
 `-ExecutionPolicy Bypass` только собственному процессу PowerShell для локального проверенного
