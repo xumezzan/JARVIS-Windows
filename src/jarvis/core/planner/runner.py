@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from jarvis.core.context.learning import Learner
 from jarvis.core.planner.contracts import (
+    Answer,
     Limits,
     PlannerInput,
     PlanResult,
@@ -181,7 +182,7 @@ class Runner:
             return
 
     async def _run(self, command: str, mode: Mode) -> PlanResult:
-        answers: list[str] = []
+        answers: list[Answer] = []
         contacts = [
             hint for hint in (*self.memory.profile, *self.memory.session) if hint.kind == "contact"
         ]
@@ -195,16 +196,17 @@ class Runner:
         ):
             if self.limits.max_questions == 0:
                 return PlanResult("limit")
-            answer = await self._ask(
+            question = (
                 "В команде есть ссылка на контакт. Уточните полную команду и точного адресата. "
                 "Сохранённое имя или роль не определяют получателя и не разрешают отправку. "
                 "Для почты нужен точный email-адрес."
             )
+            answer = await self._ask(question)
             if answer is None:
                 return PlanResult("cancelled")
             if not answer.strip() or len(answer) > 4000:
                 return PlanResult("error", error="invalid_answer")
-            answers.append(answer)
+            answers.append(Answer(question, answer))
         catalog = json.dumps(self.registry.discover(), ensure_ascii=False)
         while True:
             if self.cancelled.is_set():
@@ -249,7 +251,7 @@ class Runner:
                     return PlanResult("cancelled", tuple(self.steps))
                 if not answer.strip() or len(answer) > 4000:
                     return PlanResult("error", tuple(self.steps), "invalid_answer")
-                answers.append(answer)
+                answers.append(Answer(proposal.question, answer))
                 continue
             if len(self.steps) >= self.limits.max_steps:
                 return PlanResult("limit", tuple(self.steps))
@@ -264,7 +266,7 @@ class Runner:
                 supplied = set(
                     re.findall(
                         r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+",
-                        "\n".join([command, *answers]),
+                        "\n".join([command, *(item.answer for item in answers)]),
                     )
                 )
                 if not recipients or any(
@@ -272,16 +274,17 @@ class Runner:
                 ):
                     if len(answers) >= self.limits.max_questions:
                         return PlanResult("limit", tuple(self.steps))
-                    answer = await self._ask(
+                    question = (
                         "Укажите точные email для Кому, Копия и Скрытая копия. "
                         "Адрес из письма, памяти или предложения модели не определяет получателя. "
                         "Ответ уточняет данные и не подтверждает отправку."
                     )
+                    answer = await self._ask(question)
                     if answer is None:
                         return PlanResult("cancelled", tuple(self.steps))
                     if not answer.strip() or len(answer) > 4000:
                         return PlanResult("error", tuple(self.steps), "invalid_answer")
-                    answers.append(answer)
+                    answers.append(Answer(question, answer))
                     continue
             action = self.engine.prepare(proposal.tool, args, mode)
             if isinstance(action, Outcome):

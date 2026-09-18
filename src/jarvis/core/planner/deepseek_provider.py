@@ -15,6 +15,7 @@ anything runs. A model that answers off-schema therefore produces a finite
 
 import asyncio
 import json
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 
@@ -23,10 +24,35 @@ import aiohttp
 from jarvis.browser.network import tls_context
 from jarvis.core.planner.contracts import PlannerInput, Proposal, ProviderError
 from jarvis.core.planner.openai_provider import INSTRUCTIONS, strict_schema, user_content
+from jarvis.permissions.policies import proposable
 from jarvis.security.credentials import load_api_key
 
 ENDPOINT = "https://api.deepseek.com/chat/completions"
 MAX_BYTES = 262144
+
+# A control answer the model wrapped in an explanation. This vendor is not asked for
+# structured output - its strict mode is documented to return malformed arguments - so the
+# answer arrives as ordinary text, and it often arrives as a written summary with the JSON
+# below it in a Markdown fence. Measured on deepseek-flash, 2026-09-18: a task that had
+# created and read back every file it was asked for was then reported as a provider error,
+# because the sentence in front of the JSON made the whole answer unreadable.
+FENCED = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
+
+
+def control_answer(content: str) -> str:
+    """The JSON of a control answer, whether it arrives bare or inside an explanation.
+
+    Only `clarify` and `finish` can come this way - a call in the text is rejected right
+    after - so being lenient here can ask the owner a question or end a task, and can never
+    carry out an action. The value is still validated strictly afterwards.
+    """
+    text = content.strip()
+    if text.startswith("{"):
+        return text
+    fences = FENCED.findall(text)
+    # The answer is what the model settled on, so the last block wins over any it showed
+    # along the way.
+    return fences[-1] if fences else text
 
 
 async def request(payload: dict[str, Any]) -> bytes:
@@ -86,7 +112,7 @@ class DeepSeekProvider:
         names: dict[str, str] = {}
         tools = []
         for tool in catalog:
-            if tool["risk"] not in ("SAFE", "CONFIRM"):
+            if not proposable(tool["risk"]):
                 continue
             name = tool["name"].replace(".", "__")
             if name in names:
@@ -131,13 +157,23 @@ class DeepSeekProvider:
             message = choice["message"]
             calls = message.get("tool_calls") or []
             if calls:
-                if len(calls) != 1 or calls[0].get("type") != "function":
+                # `parallel_tool_calls: false` is sent and not honoured: asked for three
+                # files, this vendor answers with three calls at once. Measured on
+                # deepseek-flash, 2026-09-18. Refusing the whole answer cost the task its
+                # first action and, with no retries, the task itself.
+                #
+                # The rule the assistant keeps is that exactly one action is taken per step,
+                # and that still holds: the first call is proposed, the rest are dropped
+                # unexecuted. They were written before the model could see any outcome, so
+                # they are guesses about a world it has not observed yet; the next step is
+                # asked for again with the real result in hand.
+                if calls[0].get("type") != "function":
                     raise ValueError
                 function = calls[0]["function"]
                 return Proposal(
                     kind="call", tool=names[function["name"]], arguments=function["arguments"]
                 )
-            proposal = Proposal.model_validate_json(message["content"])
+            proposal = Proposal.model_validate_json(control_answer(message["content"]))
             if proposal.kind == "call":
                 raise ValueError
             return proposal

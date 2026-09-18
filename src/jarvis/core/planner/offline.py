@@ -28,7 +28,7 @@ class OfflineProvider:
             self._answer_count, self._start_step = 0, 0
         if len(data.answers) != self._answer_count:
             self._answer_count, self._start_step = len(data.answers), len(data.steps)
-        command = (data.answers[-1] if data.answers else data.command).strip()
+        command = (data.answers[-1].answer if data.answers else data.command).strip()
         count = len(data.steps) - self._start_step
         typed = re.fullmatch(
             r"открой блокнот и напиши (?:«([\s\S]+)»|([\s\S]+))", command, re.IGNORECASE
