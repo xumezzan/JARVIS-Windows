@@ -152,6 +152,13 @@ somewhere else. Do not add shell globbing, path patterns from model output, or a
 
 ## Browser boundary (milestone 4)
 
+Risk depends on the site as well as on the operation. A password manager's domains are
+refused before the allowlist and before any test capability is considered, so nothing can
+reopen them; money, infrastructure and admin consoles are readable and unwritable until the
+reinforced confirmation of decision Р5 exists. Tier lists name bare domains and cover their
+subdomains, while the allowlist keeps requiring exact origins: a loose permission grants
+more than the owner allowed, a loose refusal only denies more than they named.
+
 Keep browser policy pure and synchronous at registry normalization, including simulation.
 DNS/network/page observations belong only to real execution. Use the owned anonymous
 Chromium context, script-disabled and offline; only exact one-use document grants reach

@@ -145,6 +145,10 @@ def register_browser(
             network_policy.validate(args.target.url)
             if args.target.origin != origin(args.target.url):
                 raise ToolError("network_denied")
+        if isinstance(args, TypeElement) and not network_policy.writable(args.target.url):
+            # Typing is how a page is changed even when the change leaves by some other
+            # route, so a site the owner may only look at accepts no text at all.
+            raise ToolError("network_denied")
         if isinstance(args, ClickElement):
             assert args.element.request is not None
             intent = args.element.request
