@@ -235,3 +235,43 @@ async def test_several_calls_at_once_still_propose_one_action() -> None:
     # The first call is the proposal; the rest are dropped unexecuted, so one step is one action.
     assert proposal.kind == "call" and proposal.tool == "local.check"
     assert json.loads(proposal.arguments) == {"delay_ms": 0, "fail": False}
+
+
+@pytest.mark.asyncio
+async def test_a_control_answer_wrapped_in_an_explanation_still_ends_the_task() -> None:
+    """Measured on deepseek-flash: the summary comes first and the JSON below it, in a fence.
+
+    A task that had created and read back every file it was asked for was reported as a
+    provider error, because the sentence in front of the answer made the whole answer
+    unreadable. Only clarify and finish arrive this way - a call in the text is refused - so
+    reading through the explanation can end a task or ask a question, never act.
+    """
+    written = (
+        "Задача выполнена: три файла созданы и прочитаны.\n\n"
+        '```json\n{"kind": "finish", "question": ""}\n```'
+    )
+
+    async def transport(payload: dict[str, Any]) -> bytes:
+        return json.dumps(
+            {"choices": [{"finish_reason": "stop", "message": {"content": written}}]}
+        ).encode()
+
+    proposal = await DeepSeekProvider("deepseek-flash", transport=transport).propose(context())
+    assert proposal.kind == "finish" and proposal.tool == ""
+
+
+@pytest.mark.asyncio
+async def test_a_call_hidden_in_the_explanation_is_still_refused() -> None:
+    """Leniency about where the JSON sits must not become leniency about what it may say."""
+    written = (
+        "Сейчас напишу файл.\n\n"
+        '```json\n{"kind": "call", "tool": "local.check", "arguments": "{}"}\n```'
+    )
+
+    async def transport(payload: dict[str, Any]) -> bytes:
+        return json.dumps(
+            {"choices": [{"finish_reason": "stop", "message": {"content": written}}]}
+        ).encode()
+
+    with pytest.raises(ProviderError):
+        await DeepSeekProvider("deepseek-flash", transport=transport).propose(context())
