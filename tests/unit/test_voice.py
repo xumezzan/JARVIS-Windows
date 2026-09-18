@@ -13,6 +13,7 @@ from uuid import uuid4
 import pytest
 
 from jarvis.core.planner.contracts import PlanResult, Step
+from jarvis.core.report import HEADLINE, LOOKED
 from jarvis.permissions.engine import Outcome
 from jarvis.permissions.policies import Status
 from jarvis.platforms import audio
@@ -48,10 +49,11 @@ def test_spoken_result_excludes_all_content() -> None:
     result = PlanResult("finished", (Step("private tool name", outcome),))
     speech = spoken_result(result)
     # The voice now says what was done, and still never a tool name or a tool's answer.
-    assert speech.startswith("Готово.") and "только посмотрел" in speech
+    assert any(speech.startswith(line) for line in HEADLINE["finished"])
+    assert any(line in speech for line in LOOKED)
     assert "private" not in speech and "secret" not in speech and "tool" not in speech
     assert "симуляция" in spoken_result(PlanResult("simulated"))
-    assert "ничего не сделал" in spoken_result(PlanResult("no_action"))
+    assert spoken_result(PlanResult("no_action")) in HEADLINE["no_action"]
 
 
 def test_no_sensitive_repr_or_exception() -> None:

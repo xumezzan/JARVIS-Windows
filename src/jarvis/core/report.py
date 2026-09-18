@@ -21,6 +21,7 @@ the sentence that makes the rest of the report worth believing.
 
 import json
 from collections.abc import Callable
+from hashlib import sha256
 
 from jarvis.connectors.instants import parse
 from jarvis.core.planner.contracts import PlanResult, Step
@@ -46,15 +47,35 @@ MONTHS = (
     "декабря",
 )
 
-HEADLINE: dict[str, str] = {
-    "finished": "Готово.",
-    "simulated": "Это была симуляция: ничего на самом деле не выполнялось.",
-    "no_action": "Я ничего не сделал.",
-    "error": "Остановился на ошибке.",
-    "cancelled": "Остановился по вашей команде.",
-    "timeout": "Не уложился по времени.",
-    "limit": "Дошёл до предела шагов или уточнений.",
+# The frame around the facts, in several wordings. The owner heard the same "Готово."
+# after every task and said it sounded like a recording rather than an assistant.
+#
+# Only the frame varies. The deeds below are facts and keep their words; so does the line
+# about simulation, and so do the warnings about an effect that may have landed - a caution
+# that came out differently each time would be a caution the owner stops reading. Nothing
+# here is written by a model: these are the same sentences, chosen by the run itself.
+HEADLINE: dict[str, tuple[str, ...]] = {
+    "finished": ("Готово.", "Сделал.", "Всё, готово.", "Готово, задача закрыта."),
+    "simulated": ("Это была симуляция: ничего на самом деле не выполнялось.",),
+    "no_action": ("Я ничего не сделал.", "Делать было нечего.", "Тут нечего было делать."),
+    "error": ("Остановился на ошибке.", "Не получилось — остановился.", "Прервался на ошибке."),
+    "cancelled": (
+        "Остановился по вашей команде.",
+        "Остановился, как вы сказали.",
+        "Прекратил по вашей команде.",
+    ),
+    "timeout": ("Не уложился по времени.", "Времени не хватило.", "Вышло время."),
+    "limit": (
+        "Дошёл до предела шагов или уточнений.",
+        "Упёрся в предел шагов или уточнений.",
+    ),
 }
+
+LOOKED: tuple[str, ...] = (
+    "Ничего не менял — только посмотрел.",
+    "Ничего не трогал — только посмотрел.",
+    "Только посмотрел, менять ничего не стал.",
+)
 
 # Finite, plain reasons. The engine's own code stays in the technical summary next to this.
 REASON: dict[ErrorCode, str] = {
@@ -77,6 +98,17 @@ REASON: dict[ErrorCode, str] = {
     ErrorCode.VERIFICATION: "результат не совпал с задуманным",
     ErrorCode.REPLAY: "это уже выполнялось",
 }
+
+
+def _variant(options: tuple[str, ...], result: PlanResult) -> str:
+    """One of several wordings, chosen by the run rather than at random.
+
+    The run's own steps decide it, so the screen and the voice always say the same thing,
+    and reading the report twice never rewrites it. Two tasks that did the same work in
+    different requests are phrased differently, which is the whole point.
+    """
+    seed = "|".join(str(step.outcome.request_id) for step in result.steps) or result.status
+    return options[sha256(seed.encode()).digest()[0] % len(options)]
 
 
 def _plain(value: object, limit: int = MAX_DETAIL) -> str:
@@ -218,7 +250,7 @@ def _looked(result: PlanResult) -> bool:
 
 def written(result: PlanResult) -> tuple[str, ...]:
     """The report for the screen: the owner's own addresses, paths and names are fine here."""
-    lines = [HEADLINE.get(result.status, HEADLINE["error"])]
+    lines = [_variant(HEADLINE.get(result.status, HEADLINE["error"]), result)]
     if result.status == "simulated":
         lines.append(f"Шагов в плане: {len(result.steps)}.")
         return tuple(lines)
@@ -226,7 +258,7 @@ def written(result: PlanResult) -> tuple[str, ...]:
     if deeds:
         lines.extend(deeds[:MAX_DEEDS])
     elif _looked(result):
-        lines.append("Ничего не менял — только посмотрел.")
+        lines.append(_variant(LOOKED, result))
     if len(deeds) > MAX_DEEDS:
         lines.append(f"И ещё действий: {len(deeds) - MAX_DEEDS}.")
     if _unresolved(result):
@@ -237,11 +269,12 @@ def written(result: PlanResult) -> tuple[str, ...]:
 def spoken(result: PlanResult) -> str:
     """The report for the voice: only what the local Russian voice can actually pronounce."""
     if result.status == "simulated":
-        return HEADLINE["simulated"]
+        return HEADLINE["simulated"][0]
     deeds = [line for line in (_sentence(step, True) for step in result.steps) if line]
-    parts = [HEADLINE.get(result.status, HEADLINE["error"]), *deeds[:SPOKEN_DEEDS]]
+    headline = _variant(HEADLINE.get(result.status, HEADLINE["error"]), result)
+    parts = [headline, *deeds[:SPOKEN_DEEDS]]
     if not deeds and _looked(result):
-        parts.append("Ничего не менял — только посмотрел.")
+        parts.append(_variant(LOOKED, result))
     if len(deeds) > SPOKEN_DEEDS:
         parts.append(f"И ещё действий: {len(deeds) - SPOKEN_DEEDS}.")
     if _unresolved(result):
