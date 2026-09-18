@@ -14,6 +14,9 @@ from pathlib import Path
 
 from jarvis.browser.host import BrowserHost
 from jarvis.config import AppConfig
+from jarvis.connectors.asana.connector import AsanaConnector
+from jarvis.connectors.asana.mapping import MAPPERS as ASANA_MAPPERS
+from jarvis.connectors.asana.tools import register_asana
 from jarvis.connectors.base import ConnectorRegistry
 from jarvis.connectors.fireflies.connector import FirefliesConnector
 from jarvis.connectors.fireflies.mapping import MAPPERS as FIREFLIES_MAPPERS
@@ -111,7 +114,9 @@ def build(
     derived = DerivedStore(config.data_dir / "derived.sqlite3")
     workflows = WorkflowStore(config.data_dir / "workflows.sqlite3")
     # Each connector says how to read its own answers; the harvester only applies them.
-    harvester = GraphHarvester(knowledge, {**CALENDAR_MAPPERS, **FIREFLIES_MAPPERS})
+    harvester = GraphHarvester(
+        knowledge, {**CALENDAR_MAPPERS, **FIREFLIES_MAPPERS, **ASANA_MAPPERS}
+    )
     host = browser_host or BrowserHost(NetworkPolicy(config.browser_origins))
     registry, outbox = local_registry()
     register_browser(registry, host, host.policy)
@@ -126,6 +131,9 @@ def build(
     fireflies = FirefliesConnector()
     register_fireflies(registry, fireflies, matrix)
     connectors.add(fireflies)
+    asana = AsanaConnector()
+    register_asana(registry, asana, matrix)
+    connectors.add(asana)
     for server in reviewed_servers(Path(config.data_dir) / MCP_FILE):
         try:
             mcp = McpConnector(server)
