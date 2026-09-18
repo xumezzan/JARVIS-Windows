@@ -140,9 +140,11 @@ class ConnectedApps(Panel):
         self.add_button.setAccessibleName("Открыть настройку подключений")
         self.add_button.clicked.connect(self.connect_requested)
         self.body.addWidget(self.add_button, 0, Qt.AlignmentFlag.AlignLeft)
+        self.probed = False
 
     def apply(self, states: dict[str, bool]) -> None:
         """Show what the probe found. A service it could not ask about is not connected."""
+        self.probed = True
         for key, tile in self.tiles.items():
             tile.set_connected(bool(states.get(key)))
         connected = sum(1 for key in self.tiles if states.get(key))
@@ -150,7 +152,15 @@ class ConnectedApps(Panel):
         self.counter.setAccessibleName(f"Подключено {connected} из {len(self.tiles)} приложений")
 
     @property
-    def missing(self) -> int:
+    def missing(self) -> int | None:
+        """How many are unconnected, or nothing at all while the probe is still asking.
+
+        Every tile starts unconnected, because that is the honest way for a tile to wait.
+        Counting them before the probe answered would turn that waiting state into a
+        number, and the counter beside them says «проверяю» at that very moment.
+        """
+        if not self.probed:
+            return None
         return sum(1 for tile in self.tiles.values() if tile.property("connected") == "false")
 
 
@@ -247,7 +257,7 @@ class SummaryCard(Panel):
         row.addWidget(self.text, 1)
         self.body.addLayout(row)
 
-    def summarise(self, events: int, next_event: str, completed: int, missing: int) -> None:
+    def summarise(self, events: int, next_event: str, completed: int, missing: int | None) -> None:
         """Only what is already known here: no model call, and nothing filled in for effect."""
         parts = []
         if next_event:
@@ -259,6 +269,8 @@ class SummaryCard(Panel):
         parts.append(f"выполнено команд за сеанс: {completed}")
         if missing:
             parts.append(f"не подключено сервисов: {missing}")
+        elif missing is None:
+            parts.append("подключения проверяются")
         self.text.setText(" · ".join(parts) + ".")
 
 
