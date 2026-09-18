@@ -25,6 +25,9 @@ from jarvis.connectors.mcp.connector import McpConnector
 from jarvis.connectors.mcp.manifest import Server, load_servers
 from jarvis.connectors.mcp.tools import register_mcp
 from jarvis.connectors.microsoft.calendar import CalendarConnector
+from jarvis.connectors.microsoft.drive.connector import DriveConnector
+from jarvis.connectors.microsoft.drive.mapping import MAPPERS as DRIVE_MAPPERS
+from jarvis.connectors.microsoft.drive.tools import register_drive
 from jarvis.connectors.microsoft.mapping import MAPPERS as CALENDAR_MAPPERS
 from jarvis.connectors.microsoft.tools import register_calendar
 from jarvis.connectors.notion.connector import NotionConnector
@@ -128,6 +131,7 @@ def build(
             **ASANA_MAPPERS,
             **NOTION_MAPPERS,
             **TEAMS_MAPPERS,
+            **DRIVE_MAPPERS,
         },
     )
     host = browser_host or BrowserHost(NetworkPolicy(config.browser_origins))
@@ -155,6 +159,9 @@ def build(
     teams = TeamsConnector(session)
     register_teams(registry, teams, matrix)
     connectors.add(teams)
+    drive = DriveConnector(session)
+    register_drive(registry, drive, matrix)
+    connectors.add(drive)
     for server in reviewed_servers(Path(config.data_dir) / MCP_FILE):
         try:
             mcp = McpConnector(server)
