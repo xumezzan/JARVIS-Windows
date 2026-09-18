@@ -1,13 +1,10 @@
 """Explicit Outlook setup and composition; only the existing approval dialog grants authority."""
 
-import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from threading import Event
-from uuid import uuid4
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -25,16 +22,17 @@ from PySide6.QtWidgets import (
 
 from jarvis.connectors.microsoft.drive.connector import SURFACE as FILES_SURFACE
 from jarvis.connectors.teams.connector import SURFACE as TEAMS_SURFACE
-from jarvis.mail.credentials import MailFailure
 from jarvis.mail.models import Account, Attachment, MailResult, Message
 from jarvis.mail.session import MailSession
-from jarvis.observability.audit import AuditEvent, AuditKind, AuditLog, ErrorCode
+from jarvis.observability.audit import AuditLog
 from jarvis.permissions.approvals import Action, ApprovalAuthority
 from jarvis.permissions.engine import Outcome, PermissionEngine
-from jarvis.permissions.policies import Decision, Mode, Risk, Status
+from jarvis.permissions.policies import Mode, Risk, Status
 from jarvis.tools.base import ExecutionContext
 from jarvis.ui import workers
 from jarvis.ui.approval_dialog import ApprovalDialog
+from jarvis.ui.connection_task import AccountWorker as MailWorker
+from jarvis.ui.connection_task import audited
 from jarvis.ui.tool_worker import ToolWorker
 
 # The Microsoft surfaces this window can ask for, beyond the mailbox it signs in.
@@ -43,46 +41,6 @@ DONE = {
     TEAMS_SURFACE: "Teams разрешён для этого аккаунта: чаты читаются, отправка спрашивает.",
     FILES_SURFACE: "OneDrive разрешён для этого аккаунта: файлы читаются, запись спрашивает.",
 }
-
-
-class MailWorker(QThread):
-    def __init__(self, work: Callable[[ExecutionContext], Awaitable[object]]) -> None:
-        super().__init__()
-        self.work = work
-        self.cancelled = Event()
-        self.result: object = None
-        self.error = ""
-
-    def cancel(self) -> None:
-        self.cancelled.set()
-
-    def run(self) -> None:
-        async def run() -> object:
-            job = asyncio.ensure_future(self.work(ExecutionContext(self.cancelled)))
-
-            async def watch() -> None:
-                while not self.cancelled.is_set():
-                    await asyncio.sleep(0.02)
-
-            watcher = asyncio.create_task(watch())
-            try:
-                done, _ = await asyncio.wait(
-                    (job, watcher), timeout=160, return_when=asyncio.FIRST_COMPLETED
-                )
-                if job in done:
-                    return await job
-                raise MailFailure("mail_cancelled")
-            finally:
-                job.cancel()
-                watcher.cancel()
-                await asyncio.gather(job, watcher, return_exceptions=True)
-
-        try:
-            self.result = asyncio.run(run())
-        except MailFailure as error:
-            self.error = error.code
-        except Exception:
-            self.error = "mail_unavailable"
 
 
 class MailPanel(QWidget):
@@ -264,54 +222,10 @@ class MailPanel(QWidget):
             return
         self.set_busy(True)
         self.status.setText("Выполняется… Остановить можно кнопкой ниже.")
-
-        async def audited(context: ExecutionContext) -> object:
-            request_id = uuid4()
-            try:
-                self.audit.write(
-                    AuditEvent(
-                        AuditKind.STARTED,
-                        request_id,
-                        "outlook.account",
-                        None,
-                        Mode.EXECUTE,
-                        Decision.ALLOW,
-                        actor="user_ui_connection",
-                    )
-                )
-            except Exception:
-                raise MailFailure("mail_audit") from None
-            status = Status.ERROR
-            try:
-                result = await work(context)
-                status = Status.SUCCESS
-                return result
-            except asyncio.CancelledError:
-                status = Status.CANCELLED
-                raise
-            finally:
-                try:
-                    self.audit.write(
-                        AuditEvent(
-                            AuditKind.FINISHED,
-                            request_id,
-                            "outlook.account",
-                            None,
-                            Mode.EXECUTE,
-                            Decision.ALLOW,
-                            status,
-                            error=ErrorCode.NONE
-                            if status is Status.SUCCESS
-                            else ErrorCode.EXECUTION,
-                            may_have_effects=True,
-                            actor="user_ui_connection",
-                        )
-                    )
-                except Exception:
-                    self.session.detach()
-                    raise MailFailure("mail_audit") from None
-
-        worker = MailWorker(audited if connection else work)
+        # Connecting, consenting and disconnecting are audited the same way wherever the
+        # owner presses them, so the records come from one place rather than from each
+        # screen's own idea of what happened.
+        worker = MailWorker(audited(self.audit, work, self.session.detach) if connection else work)
         self.worker = worker
         worker.finished.connect(self.finished)
         workers.start(worker)

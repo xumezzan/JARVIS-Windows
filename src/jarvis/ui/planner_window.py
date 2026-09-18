@@ -139,7 +139,7 @@ class PlannerWindow(QDialog):
         mcp_scroll.setWidgetResizable(True)
         mcp_scroll.setWidget(self.mcp)
         self.tabs.addTab(mcp_scroll, "Серверы MCP")
-        self.connections = ConnectionsPanel()
+        self.connections = ConnectionsPanel(session=self.mail_session, audit=self.audit)
         connections_scroll = QScrollArea()
         connections_scroll.setWidgetResizable(True)
         connections_scroll.setWidget(self.connections)

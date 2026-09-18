@@ -1,24 +1,35 @@
-"""One place that answers "what is connected", and connects what is not.
+"""One screen that answers "what is connected", and connects what is not.
 
 Until now every service but Outlook was connected by opening a terminal and running a
-module by hand. That is a fine way to hand a key to a program and a poor way to ask
-somebody to start using one: the owner has to leave the application to set it up, and
-nothing in the application ever said which services were waiting.
+module by hand, and Outlook itself lived in a tab of another window. That is a fine way to
+hand a key to a program and a poor way to ask somebody to start using one: on a new machine
+the owner met an application that could do nothing and said nothing about why.
 
-The key still never enters this process. Asking, saving and forgetting each go to the same
-short-lived killable helper the rest of the code uses, and it answers with a word - "1",
-"0", "ok" - rather than with a secret. The field here is write-only by construction:
-nothing reads a stored key back, because nothing here has any use for one.
+So this screen lists everything Jarvis can reach, in the order it matters: the model that
+thinks, the Microsoft account that carries mail, calendar, Teams and OneDrive, the services
+with their own tokens, and the voice. Every row says what it gives, whether it is connected,
+and carries the action itself. Nothing here is a wizard: the owner connects what they need,
+in any order, and what they skip stays unconnected and says so.
+
+Passwords are not typed here. A key or a token goes straight to the Windows credential store
+through the same short-lived killable helper the rest of the code uses, which answers with a
+word - "1", "0", "ok" - rather than with a secret; the field is write-only by construction,
+because nothing here has any use for a stored key. A Microsoft password is typed at
+Microsoft, in their own browser window, and never reaches this process at all.
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Literal
+from uuid import UUID
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFrame,
     QGridLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -26,7 +37,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from jarvis.connectors.microsoft.drive.connector import SURFACE as FILES_SURFACE
+from jarvis.connectors.teams.connector import SURFACE as TEAMS_SURFACE
 from jarvis.core.planner.contracts import ProviderError
+from jarvis.mail.session import MailSession
+from jarvis.observability.audit import AuditLog
 from jarvis.security.credentials import (
     SERVICES,
     forget_api_key,
@@ -34,22 +49,18 @@ from jarvis.security.credentials import (
     store_api_key,
     vendor_of,
 )
+from jarvis.tools.base import ExecutionContext
 from jarvis.ui import workers
+from jarvis.ui.connection_task import AccountWorker, audited
+from jarvis.ui.voice_panel import installed_model
 
 Action = Literal["ask", "save", "forget"]
 
-# Connected some other way, each for its own reason, each with its own screen. Naming them
-# here is the point: a list that showed only what this panel can do would read as the whole
-# list of what Jarvis can reach.
-ELSEWHERE = (
-    ("Outlook", "Вход Microsoft во вкладке «Outlook» — почта открывается там же."),
-    (
-        "Teams и OneDrive",
-        "Тот же аккаунт Microsoft, но отдельные согласия: кнопки во вкладке «Outlook».",
-    ),
-    ("Серверы MCP", "Ключ на каждый сервер во вкладке «Серверы MCP», после проверки набора."),
-    ("ElevenLabs", "Голос: кнопка микрофона → «Настроить голос ElevenLabs Free…»."),
-)
+# Which heading a key belongs under. A service missing from this table is still shown, under
+# "Сервисы": a connection that quietly disappeared from the screen is worse than one under
+# the wrong heading.
+GROUPS = ("Модель для задач", "Сервисы")
+PLACE = {"deepseek": GROUPS[0], "openai": GROUPS[0]}
 
 WHAT = {
     "openai": "Сильная модель для многослойных задач.",
@@ -59,11 +70,33 @@ WHAT = {
     "asana": "Проекты и задачи.",
 }
 
+# Connected some other way, each for its own reason. Naming them here is the point: a list
+# that showed only what this screen can do would read as the whole list of what Jarvis has.
+ELSEWHERE = (
+    ("Серверы MCP", "Ключ на каждый сервер во вкладке «Серверы MCP», после проверки набора."),
+    (
+        "Голос ElevenLabs",
+        "Необязательно и на один ответ: кнопка микрофона → «Настроить голос ElevenLabs Free…».",
+    ),
+)
+
+SURFACE_BUTTONS = ((TEAMS_SURFACE, "Разрешить Teams"), (FILES_SURFACE, "Разрешить OneDrive"))
+SURFACE_DONE = {
+    TEAMS_SURFACE: "Teams разрешён: чаты читаются, отправка спрашивает.",
+    FILES_SURFACE: "OneDrive разрешён: файлы читаются, запись спрашивает.",
+}
+
 
 def plain(text: str) -> QLabel:
     label = QLabel(text)
     label.setTextFormat(Qt.TextFormat.PlainText)
     label.setWordWrap(True)
+    return label
+
+
+def heading(text: str) -> QLabel:
+    label = plain(text)
+    label.setObjectName("sectionHint")
     return label
 
 
@@ -96,11 +129,17 @@ class KeyWorker(QThread):
 
 
 class ConnectionsPanel(QWidget):
-    """The services Jarvis can reach, what is connected, and one button to change that."""
+    """The services Jarvis can reach, what is connected, and the buttons that change that."""
 
     busy_changed = Signal(bool)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        session: MailSession | None = None,
+        audit: AuditLog | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setObjectName("connectionsPanel")
         self.worker: KeyWorker | None = None
@@ -109,17 +148,59 @@ class ConnectionsPanel(QWidget):
         self.asked = False
         self.fields: dict[str, QLineEdit] = {}
         self.states: dict[str, QLabel] = {}
+        # The Microsoft section exists only where the account does: a screen without the
+        # session would be offering a sign-in it cannot carry out.
+        self.session = session if audit is not None else None
+        self.audit = audit
+        self.account_worker: AccountWorker | None = None
+        self.surface_buttons: dict[str, QPushButton] = {}
+        self._done_text = ""
         body = QVBoxLayout(self)
         body.addWidget(
             plain(
                 "Ключ вводится здесь и уходит прямо в хранилище Windows — приложение его "
                 "не видит и прочитать обратно не может. Показывается только, подключён "
-                "сервис или нет."
+                "сервис или нет. Пароль Microsoft вводится у Microsoft: Jarvis его не видит."
             )
         )
+        for group in GROUPS:
+            providers = [
+                provider for provider in sorted(SERVICES) if PLACE.get(provider, GROUPS[1]) == group
+            ]
+            if providers:
+                body.addWidget(heading(group))
+                body.addLayout(self._keys(providers))
+            if group == GROUPS[0] and self.session is not None:
+                body.addWidget(heading("Microsoft — почта, календарь, Teams, OneDrive"))
+                body.addLayout(self._account())
+        body.addWidget(heading("Голос"))
+        body.addWidget(
+            plain(
+                "    Модель распознавания — "
+                + (
+                    "установлена установщиком."
+                    if installed_model()
+                    else "не найдена; переустановите Jarvis."
+                )
+            )
+        )
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.HLine)
+        body.addWidget(divider)
+        body.addWidget(plain("Подключаются иначе:"))
+        for name, where in ELSEWHERE:
+            body.addWidget(plain(f"    {name} — {where}"))
+        self.status = plain("")
+        body.addWidget(self.status)
+        self.recheck = QPushButton("Проверить заново")
+        self.recheck.clicked.connect(self.refresh)
+        body.addWidget(self.recheck)
+        body.addStretch(1)
+
+    def _keys(self, providers: list[str]) -> QGridLayout:
         grid = QGridLayout()
         grid.setColumnStretch(3, 1)
-        for row, provider in enumerate(sorted(SERVICES)):
+        for row, provider in enumerate(providers):
             grid.addWidget(plain(vendor_of(provider)), row, 0)
             grid.addWidget(plain(WHAT.get(provider, "")), row, 1)
             state = plain("не проверено")
@@ -138,28 +219,55 @@ class ConnectionsPanel(QWidget):
             forget = QPushButton("Забыть")
             forget.clicked.connect(lambda _, name=provider: self.forget(name))
             grid.addWidget(forget, row, 5)
-        body.addLayout(grid)
+        return grid
 
-        divider = QFrame()
-        divider.setFrameShape(QFrame.Shape.HLine)
-        body.addWidget(divider)
-        body.addWidget(plain("Подключаются иначе:"))
-        for name, where in ELSEWHERE:
-            body.addWidget(plain(f"    {name} — {where}"))
-
-        self.status = plain("")
-        body.addWidget(self.status)
-        self.recheck = QPushButton("Проверить заново")
-        self.recheck.clicked.connect(self.refresh)
-        body.addWidget(self.recheck)
-        body.addStretch(1)
+    def _account(self) -> QVBoxLayout:
+        column = QVBoxLayout()
+        self.account_state = plain("Аккаунт Microsoft: не подключён")
+        self.account_state.setObjectName("state-microsoft")
+        column.addWidget(self.account_state)
+        column.addWidget(
+            plain(
+                "Регистрация Microsoft: Mobile and desktop, redirect http://localhost. "
+                "Вход откроется в системном браузере, пароль вводится только у Microsoft. "
+                "Teams и OneDrive — отдельные согласия на тот же аккаунт."
+            )
+        )
+        row = QHBoxLayout()
+        self.client = QLineEdit()
+        self.client.setMaxLength(36)
+        self.client.setPlaceholderText("Application (client) ID")
+        self.client.setAccessibleName("Application (client) ID")
+        row.addWidget(self.client, 1)
+        self.sign_in = QPushButton("Войти")
+        self.sign_in.clicked.connect(self.connect_account)
+        row.addWidget(self.sign_in)
+        self.sign_out = QPushButton("Отключить")
+        self.sign_out.clicked.connect(self.disconnect_account)
+        row.addWidget(self.sign_out)
+        column.addLayout(row)
+        self.account_consent = QCheckBox("Разрешаю подключить Outlook с указанными правами")
+        column.addWidget(self.account_consent)
+        surfaces = QHBoxLayout()
+        for surface, title in SURFACE_BUTTONS:
+            button = QPushButton(title)
+            button.clicked.connect(lambda _, name=surface: self.allow_surface(name))
+            self.surface_buttons[surface] = button
+            surfaces.addWidget(button)
+        column.addLayout(surfaces)
+        return column
 
     @property
     def busy(self) -> bool:
-        return self.worker is not None
+        return self.worker is not None or self.account_worker is not None
+
+    @property
+    def connected_account(self) -> str:
+        account = self.session.account if self.session is not None else None
+        return account.address if account is not None else ""
 
     def showEvent(self, event: QShowEvent) -> None:
-        """The first look at this tab is when the answer is wanted — and not before.
+        """The first look at this screen is when the answer is wanted — and not before.
 
         A window builds this panel behind a tab. Asking the credential store about every
         service at construction spends one short-lived process per service on a screen
@@ -177,7 +285,20 @@ class ConnectionsPanel(QWidget):
         for state in self.states.values():
             state.setText("проверяю…")
         self.queue.extend(("ask", provider, "") for provider in sorted(SERVICES))
+        self._show_account()
         self._pump()
+
+    def _show_account(self) -> None:
+        if self.session is None:
+            return
+        address = self.connected_account
+        self.account_state.setText(
+            "Аккаунт Microsoft: " + (f"подключён · {address}" if address else "не подключён")
+        )
+        for button in self.surface_buttons.values():
+            button.setEnabled(bool(address) and not self.busy)
+        self.sign_out.setEnabled(bool(address) and not self.busy)
+        self.sign_in.setEnabled(not self.busy)
 
     def save(self, provider: str) -> None:
         key = self.fields[provider].text().strip()
@@ -191,18 +312,102 @@ class ConnectionsPanel(QWidget):
         self.queue.append(("forget", provider, ""))
         self._pump()
 
+    def connect_account(self) -> None:
+        """A sign-in the owner asked for, with the consent they ticked beside it."""
+        session = self.session
+        if session is None or self.busy or self.closed:
+            return
+        if not self.account_consent.isChecked():
+            self.status.setText("Отметьте согласие и укажите Application (client) ID.")
+            return
+        try:
+            client_id = str(UUID(self.client.text().strip()))
+        except ValueError:
+            self.status.setText("Application (client) ID — это UUID из регистрации Microsoft.")
+            return
+        self.account_consent.setChecked(False)
+
+        async def connect(context: ExecutionContext) -> object:
+            return await session.connect(client_id, context)
+
+        self._account_task(connect, "Аккаунт Microsoft подключён.")
+
+    def allow_surface(self, surface: str) -> None:
+        """One more consent on the account already signed in, asked for on its own.
+
+        Teams and OneDrive are separate consents rather than part of the Outlook one: a
+        tenant that refuses chat scopes then costs Jarvis the chats, and the mailbox and the
+        files go on working.
+        """
+        session = self.session
+        account = session.account if session is not None else None
+        if session is None or account is None or self.busy or self.closed:
+            return
+
+        async def allow(context: ExecutionContext) -> object:
+            await session.consent(account, surface, context)
+            return None
+
+        self._account_task(allow, SURFACE_DONE[surface])
+
+    def disconnect_account(self) -> None:
+        session = self.session
+        if session is None or self.busy or self.closed:
+            return
+
+        async def disconnect(context: ExecutionContext) -> object:
+            await session.disconnect()
+            return None
+
+        self._account_task(
+            disconnect,
+            "Аккаунт отключён, локальные токены удалены. Согласие отзывается у Microsoft.",
+        )
+
+    def _account_task(
+        self, work: Callable[[ExecutionContext], Awaitable[object]], done: str
+    ) -> None:
+        session, audit = self.session, self.audit
+        if session is None or audit is None:
+            return
+        self._done_text = done
+        self.status.setText("Обращаюсь к Microsoft…")
+        worker = AccountWorker(audited(audit, work, session.detach))
+        self.account_worker = worker
+        worker.finished.connect(self._account_done)
+        self.busy_changed.emit(True)
+        self._show_account()
+        workers.start(worker)
+
+    def _account_done(self) -> None:
+        worker = self.account_worker
+        if worker is None:
+            return
+        worker.wait()
+        self.account_worker = None
+        self.busy_changed.emit(False)
+        if not self.closed:
+            self.status.setText(
+                "Microsoft: не получилось. Проверьте Application (client) ID и вход."
+                if worker.error
+                else self._done_text
+            )
+            self._show_account()
+        worker.deleteLater()
+        self._pump()
+
     def _pump(self) -> None:
-        if self.worker is not None or self.closed or not self.queue:
+        if self.busy or self.closed or not self.queue:
             return
         action, provider, secret = self.queue.pop(0)
         self.worker = KeyWorker(action, provider, secret)
-        self.worker.finished.connect(self._done)
+        self.worker.finished.connect(self._key_done)
         self.busy_changed.emit(True)
         if action != "ask":
             self.status.setText("Обращаюсь к хранилищу…")
         workers.start(self.worker)
 
-    def _done(self) -> None:
+    def _key_done(self) -> None:
         worker = self.worker
         self.worker = None
         self.busy_changed.emit(False)
@@ -223,6 +428,9 @@ class ConnectionsPanel(QWidget):
     def shutdown(self) -> None:
         self.closed = True
         self.queue.clear()
-        worker = self.worker
-        if worker is not None:
-            worker.wait(5000)
+        account = self.account_worker
+        if account is not None:
+            account.cancel()
+            account.wait(5000)
+        if self.worker is not None:
+            self.worker.wait(5000)
