@@ -373,7 +373,7 @@ async def test_planner_requires_current_account_and_exact_recipient(
 def test_msal_oauth_lifecycle_with_synthetic_library(monkeypatch: pytest.MonkeyPatch) -> None:
     import msal  # type: ignore[import-untyped]
 
-    from jarvis.mail.oauth_helper import SCOPES, authenticate
+    from jarvis.mail.oauth_helper import SURFACES, authenticate
 
     calls: list[str] = []
 
@@ -383,27 +383,74 @@ def test_msal_oauth_lifecycle_with_synthetic_library(monkeypatch: pytest.MonkeyP
             assert kwargs["enable_broker_on_windows"] is False
 
         def acquire_token_interactive(self, **kwargs: Any) -> dict[str, str]:
-            assert kwargs["scopes"] == SCOPES and kwargs["prompt"] == "select_account"
-            calls.append("interactive")
+            if kwargs.get("prompt") == "select_account":
+                # Signing in: the person picks the account, and it is the mailbox's scopes.
+                assert kwargs["scopes"] == SURFACES["mail"]
+                calls.append("interactive")
+            else:
+                # One more surface for the same person, hinted so no other identity signs.
+                assert kwargs["scopes"] == SURFACES["teams"]
+                assert kwargs["login_hint"] == "owner@example.test"
+                calls.append("consent")
             return {"access_token": "synthetic-noncredential"}
 
         def acquire_token_silent(self, scopes: list[str], account: object) -> dict[str, str]:
-            calls.append("silent")
+            calls.append("silent " + scopes[-1])
             return {"access_token": "synthetic-noncredential"}
 
         def get_accounts(self) -> list[dict[str, str]]:
-            return [{"home_account_id": "fixture-home"}]
+            return [{"home_account_id": "fixture-home", "username": "owner@example.test"}]
 
     monkeypatch.setattr(msal, "PublicClientApplication", App)
     store = CacheStore(MemoryKeyring())
     client = "00000000-0000-0000-0000-000000000001"
     assert authenticate("connect", client, "", store)["home_id"] == "fixture-home"
     assert authenticate("silent", client, "fixture-home", store)["home_id"] == "fixture-home"
+    teams = authenticate("consent", client, "fixture-home", store, surface="teams")
+    assert teams["home_id"] == "fixture-home"
+    assert authenticate("silent", client, "fixture-home", store, surface="teams")
     with pytest.raises(ValueError):
         authenticate("silent", client, "changed-home", store)
+    # A surface is added to a sign-in and can never start one: `connect` empties the token
+    # cache first, so allowing it here would cost the owner their mailbox to ask for Teams.
+    with pytest.raises(ValueError):
+        authenticate("connect", client, "", store, surface="teams")
+    with pytest.raises(ValueError):
+        authenticate("consent", client, "fixture-home", store, surface="everything")
     assert authenticate("disconnect", "", "", store) == {}
     assert not store.load()
-    assert calls == ["interactive", "silent"]
+    assert calls == [
+        "interactive",
+        "silent " + SURFACES["mail"][-1],
+        "consent",
+        "silent " + SURFACES["teams"][-1],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_another_surface_rides_on_the_same_sign_in() -> None:
+    credentials, graph = FakeCredentials(), FakeGraph()
+    session = MailSession(credentials, graph)
+    context = ExecutionContext(Event())
+    account = await session.connect("00000000-0000-0000-0000-000000000001", context)
+
+    await session.surface_token(account, "teams", context)
+    assert credentials.surfaces[-1] == "teams"
+    # Mail keeps asking for mail, whatever else was consented on the same account.
+    await session.token(account, context)
+    assert credentials.surfaces[-1] == "mail"
+    await session.consent(account, "teams", context)
+    assert credentials.calls[-1] == "consent"
+
+    # A surface nobody consented to fails; the mailbox goes on working.
+    credentials.refused.add("teams")
+    with pytest.raises(MailFailure):
+        await session.surface_token(account, "teams", context)
+    assert await session.token(account, context)
+
+    session.detach()
+    with pytest.raises(MailFailure):
+        await session.consent(account, "teams", context)
 
 
 def test_oauth_transport_blocks_non_microsoft_authorities() -> None:

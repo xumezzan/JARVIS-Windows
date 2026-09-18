@@ -11,8 +11,16 @@ from uuid import UUID
 from keyring.backend import KeyringBackend
 
 SERVICE = "Jarvis/Outlook"
-# One account, one consent: the calendar rides on the same token as the mailbox.
-SCOPES = ["User.Read", "Mail.ReadWrite", "Mail.Send", "Calendars.ReadWrite"]
+# One account, several surfaces. The mailbox and the calendar share one consent, because
+# they are one product to the owner. Teams asks for its own: a tenant that refuses chat
+# scopes then costs Jarvis the chats and nothing else, and the mailbox keeps working.
+#
+# The names are trusted code, never a value from a caller: an argument selects a surface
+# from this table and can never write a scope.
+SURFACES = {
+    "mail": ["User.Read", "Mail.ReadWrite", "Mail.Send", "Calendars.ReadWrite"],
+    "teams": ["User.Read", "Chat.Read", "ChatMessage.Send"],
+}
 CHUNKS = 64
 
 
@@ -109,17 +117,25 @@ class CacheStore:
             raise ValueError("cache")
 
 
-def authenticate(operation: str, client_id: str, home_id: str, store: CacheStore) -> dict[str, str]:
+def authenticate(
+    operation: str, client_id: str, home_id: str, store: CacheStore, surface: str = "mail"
+) -> dict[str, str]:
     if operation == "disconnect":
         store.clear()
         return {}
     UUID(client_id)
-    if operation not in ("connect", "silent") or len(home_id) > 512:
+    scopes = SURFACES.get(surface)
+    if scopes is None or operation not in ("connect", "silent", "consent") or len(home_id) > 512:
+        raise ValueError("operation")
+    # Signing in is the mailbox's own act, because it starts with an empty cache. Another
+    # surface is only ever added to a sign-in that already exists, so asking for Teams can
+    # never cost the owner the mail token they already had.
+    if operation == "connect" and surface != "mail":
         raise ValueError("operation")
     import msal  # type: ignore[import-untyped]
 
     cache = msal.SerializableTokenCache()
-    if operation == "silent":
+    if operation in ("silent", "consent"):
         record = json.loads(store.load())
         if record["client_id"] != client_id:
             raise ValueError("account")
@@ -140,12 +156,19 @@ def authenticate(operation: str, client_id: str, home_id: str, store: CacheStore
     )
     result: Any
     if operation == "connect":
-        result = app.acquire_token_interactive(scopes=SCOPES, timeout=120, prompt="select_account")
+        result = app.acquire_token_interactive(scopes=scopes, timeout=120, prompt="select_account")
     else:
         accounts = [a for a in app.get_accounts() if a.get("home_account_id") == home_id]
         if len(accounts) != 1:
             raise ValueError("account")
-        result = app.acquire_token_silent(SCOPES, account=accounts[0])
+        if operation == "consent":
+            # The same person, asked for one more thing: the hint keeps the account picker
+            # from offering a different identity to sign the extra scopes with.
+            result = app.acquire_token_interactive(
+                scopes=scopes, timeout=120, login_hint=accounts[0].get("username")
+            )
+        else:
+            result = app.acquire_token_silent(scopes, account=accounts[0])
     if not isinstance(result, dict) or "access_token" not in result:
         raise ValueError("authorization")
     accounts = app.get_accounts()
@@ -165,10 +188,16 @@ def main() -> int:
         raw = sys.stdin.buffer.readline(2049)
         if len(raw) > 2048:
             return 1
-        operation, client_id, home_id = json.loads(raw)
-        if not all(isinstance(v, str) for v in (operation, client_id, home_id)):
+        asked = json.loads(raw)
+        if not isinstance(asked, list) or not 3 <= len(asked) <= 4:
             return 1
-        result = authenticate(operation, client_id, home_id, CacheStore(native_store()))
+        operation, client_id, home_id = asked[:3]
+        surface = asked[3] if len(asked) == 4 else "mail"
+        if not all(isinstance(v, str) for v in (operation, client_id, home_id, surface)):
+            return 1
+        result = authenticate(
+            operation, client_id, home_id, CacheStore(native_store()), surface=surface
+        )
         encoded = json.dumps(result)
         if len(encoded) > 64000:
             return 1

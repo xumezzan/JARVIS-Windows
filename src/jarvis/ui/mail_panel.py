@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from jarvis.connectors.teams.connector import SURFACE as TEAMS_SURFACE
 from jarvis.mail.credentials import MailFailure
 from jarvis.mail.models import Account, Attachment, MailResult, Message
 from jarvis.mail.session import MailSession
@@ -107,7 +108,9 @@ class MailPanel(QWidget):
             self.note(
                 "Регистрация Microsoft: Mobile and desktop, redirect http://localhost. "
                 "Вход откроется в системном браузере. Пароль вводится только у Microsoft. "
-                "Разрешения: профиль, чтение/запись почты и отправка."
+                "Разрешения: профиль, чтение/запись почты и отправка. Teams — отдельная "
+                "кнопка и отдельное согласие на тот же аккаунт: чтение чатов и отправка "
+                "сообщения с подтверждением."
             )
         )
         self.consent = QCheckBox("Разрешаю подключить Outlook с указанными правами")
@@ -115,10 +118,13 @@ class MailPanel(QWidget):
         row = QHBoxLayout()
         self.connect_button = QPushButton("Подключить / сменить аккаунт")
         self.disconnect_button = QPushButton("Отключить и удалить локальные токены")
+        self.teams_button = QPushButton("Разрешить Teams")
         self.connect_button.clicked.connect(self.connect_account)
         self.disconnect_button.clicked.connect(self.disconnect_account)
+        self.teams_button.clicked.connect(self.allow_teams)
         row.addWidget(self.connect_button)
         row.addWidget(self.disconnect_button)
+        row.addWidget(self.teams_button)
         form.addRow(row)
         self.simulation = QCheckBox("Симуляция почтовых инструментов")
         self.simulation.setChecked(True)
@@ -327,6 +333,25 @@ class MailPanel(QWidget):
         self.reset_account()
         self.consent.setChecked(False)
         self.launch(lambda context: self.session.connect(client_id, context), connection=True)
+
+    def allow_teams(self) -> None:
+        """One more consent on the account that is already signed in.
+
+        Teams is asked for separately rather than folded into the Outlook consent: a tenant
+        that refuses chat scopes then costs Jarvis the chats and leaves the mailbox working.
+        """
+        account = self.session.account
+        if self.busy:
+            return
+        if account is None:
+            self.status.setText("Сначала подключите аккаунт Microsoft, потом разрешите Teams.")
+            return
+
+        async def allow(context: ExecutionContext) -> object:
+            await self.session.consent(account, TEAMS_SURFACE, context)
+            return "Teams разрешён для этого аккаунта: чаты читаются, отправка спрашивает."
+
+        self.launch(allow, connection=True)
 
     def disconnect_account(self) -> None:
         if self.busy:
