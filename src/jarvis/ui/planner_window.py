@@ -23,6 +23,7 @@ from jarvis.browser.host import BrowserHost
 from jarvis.config import AppConfig
 from jarvis.core.composition import MCP_FILE, build
 from jarvis.core.context.assembly import assemble
+from jarvis.core.meeting import Briefer
 from jarvis.core.planner.contracts import Limits, PlanResult, Provider, Step
 from jarvis.core.planner.deepseek_provider import DeepSeekProvider
 from jarvis.core.planner.offline import OfflineProvider
@@ -42,6 +43,7 @@ from jarvis.security.credentials import setup_command
 from jarvis.tools.windows import WindowsBackend
 from jarvis.ui import workers
 from jarvis.ui.approval_dialog import ApprovalDialog
+from jarvis.ui.briefing_worker import BriefingWorker
 from jarvis.ui.checklist import Checklist
 from jarvis.ui.connections_panel import ConnectionsPanel
 from jarvis.ui.mail_panel import MailPanel
@@ -100,6 +102,10 @@ class PlannerWindow(QDialog):
         self.engine = self.bench.engine
         self.authority = self.bench.authority
         self.worker: PlannerWorker | None = None
+        # The one thing this window does without a model: the same five reads, always
+        # in the same order, each line of the answer naming where it came from.
+        self.briefer = Briefer(self.registry, self.engine)
+        self.briefing_worker: BriefingWorker | None = None
         self.last_result: PlanResult | None = None
         # The surface that owns approval and clarification dialogs; the main window sets
         # itself here so a command typed there never needs this window on screen.
@@ -241,7 +247,10 @@ class PlannerWindow(QDialog):
         self.stop_button = QPushButton("Остановить")
         self.stop_button.clicked.connect(self.stop)
         self.stop_button.setEnabled(False)
+        self.briefing_button = QPushButton("Подготовить всё к встрече")
+        self.briefing_button.clicked.connect(self.brief)
         buttons.addWidget(self.run_button)
+        buttons.addWidget(self.briefing_button)
         buttons.addWidget(self.stop_button)
         layout.addLayout(buttons)
         self.status = note("Готово. По умолчанию: офлайн-провайдер и симуляция.")
@@ -279,6 +288,7 @@ class PlannerWindow(QDialog):
             self.simulation,
             self.autonomous,
             self.run_button,
+            self.briefing_button,
             self.memory,
             self.mail,
         ):
@@ -297,6 +307,7 @@ class PlannerWindow(QDialog):
     def _voice_busy(self, value: bool) -> None:
         busy = value or self.voice.planning or self.mail.busy
         self.run_button.setEnabled(not busy and self.memory.worker is None)
+        self.briefing_button.setEnabled(not busy and self.memory.worker is None)
         self.command.setEnabled(not busy)
         self.stop_button.setEnabled(busy)
         self.mail.setEnabled(
@@ -307,6 +318,7 @@ class PlannerWindow(QDialog):
     def start(self) -> None:
         if (
             self.worker is not None
+            or self.briefing_worker is not None
             or self.voice.worker is not None
             or self.voice.settings_dialog is not None
             or self.mail.busy
@@ -566,9 +578,61 @@ class PlannerWindow(QDialog):
         return self.worker is not None
 
     @Slot()
+    def brief(self) -> None:
+        """Gather everything the next meeting needs, without a model choosing anything.
+
+        This is the one command in the window that is trusted code from end to end: the
+        same five services, in the same order, and every line of the answer naming the tool
+        and the record it came from. The planner can do this work by choosing tools; this
+        exists so that the answer is the same on a day when it chooses differently.
+        """
+        account = self.mail_session.account
+        if (
+            self.worker is not None
+            or self.briefing_worker is not None
+            or self.voice.worker is not None
+            or self.mail.busy
+            or self._closing
+        ):
+            return
+        if account is None:
+            self.status.setText(
+                "Подключите аккаунт Microsoft во вкладке «Outlook»: встречу берём из календаря."
+            )
+            return
+        self.output.clear()
+        self.status.setText("Собираю: календарь, разговоры, задачи, письма, страница…")
+        worker = BriefingWorker(self.briefer, account.model_dump(mode="json"))
+        self.briefing_worker = worker
+        worker.finished.connect(self._briefed)
+        self._busy(True)
+        workers.start(worker)
+
+    def _briefed(self) -> None:
+        worker = self.briefing_worker
+        if worker is None:
+            return
+        worker.wait()
+        self.briefing_worker = None
+        self._busy(False)
+        briefing = worker.briefing
+        if worker.error or briefing is None:
+            self.status.setText("Сводку собрать не удалось. Проверьте подключения.")
+        else:
+            # Somebody else's words, shown as words. Nothing here becomes an instruction.
+            self.output.setPlainText(briefing.written())
+            self.status.setText("Сводка к встрече собрана. Каждая строка названа источником.")
+            self.voice.announce(briefing.spoken())
+        worker.deleteLater()
+        if self._closing:
+            self.close()
+
     def stop(self) -> None:
         self.voice.cancel()
         self.mail.stop()
+        if self.briefing_worker is not None:
+            # Between two reads it stops; a read already issued already happened.
+            self.briefing_worker.cancel()
         if self.worker is not None:
             self.worker.cancel()
             self.stop_button.setEnabled(False)
@@ -609,6 +673,10 @@ class PlannerWindow(QDialog):
         self.mcp.shutdown()
         self.connections.shutdown()
         self.routines.shutdown()
+        if self.briefing_worker is not None:
+            self.briefing_worker.cancel()
+            self.briefing_worker.wait(5000)
+            self._briefed()
         if self.worker is not None:
             self.stop()
             self.worker.wait()

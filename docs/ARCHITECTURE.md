@@ -23,6 +23,7 @@ Outlook подключается явно через MSAL/Graph; настоящ�
 | Voice Input / STT | `voice/`, `platforms/audio.py`, `ui/voice_panel.py` | Есть; оборудование не проверено |
 | AI Brain / LLM | `core/planner/routing.py`, `deepseek_provider.py`, `openai_provider.py` | Есть; Claude как инструмент разбора — нет |
 | Planner | `core/planner/runner.py`, `core/workflow/` | Есть на короткой задаче; длинная задача с возобновлением — фаза 1 |
+| Briefing | `core/meeting.py` | Сводка к встрече: пять `SAFE`-чтений через движок разрешений, каждая строка с источником |
 | Tool & MCP Layer | `tools/`, `connectors/` | Outlook, календарь, Fireflies, Asana, Notion, чаты Teams, MCP; каналы Teams и Excel/OneDrive — остаток фазы 2 |
 | Computer Control | `tools/windows.py`, `platforms/windows/` | Открыть, сфокусировать, перечислить, напечатать; клик, клавиши, буфер — фаза 4 |
 | Vision / Screen | — | Нет; дерево интерфейса и снимок окна — фаза 3 |
