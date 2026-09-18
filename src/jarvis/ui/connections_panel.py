@@ -15,6 +15,7 @@ import asyncio
 from typing import Literal
 
 from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -101,6 +102,7 @@ class ConnectionsPanel(QWidget):
         self.worker: KeyWorker | None = None
         self.queue: list[tuple[Action, str, str]] = []
         self.closed = False
+        self.asked = False
         self.fields: dict[str, QLineEdit] = {}
         self.states: dict[str, QLabel] = {}
         body = QVBoxLayout(self)
@@ -116,7 +118,7 @@ class ConnectionsPanel(QWidget):
         for row, provider in enumerate(sorted(SERVICES)):
             grid.addWidget(plain(vendor_of(provider)), row, 0)
             grid.addWidget(plain(WHAT.get(provider, "")), row, 1)
-            state = plain("проверяю…")
+            state = plain("не проверено")
             state.setObjectName(f"state-{provider}")
             self.states[provider] = state
             grid.addWidget(state, row, 2)
@@ -147,14 +149,29 @@ class ConnectionsPanel(QWidget):
         self.recheck.clicked.connect(self.refresh)
         body.addWidget(self.recheck)
         body.addStretch(1)
-        self.refresh()
 
     @property
     def busy(self) -> bool:
         return self.worker is not None
 
+    def showEvent(self, event: QShowEvent) -> None:
+        """The first look at this tab is when the answer is wanted — and not before.
+
+        A window builds this panel behind a tab. Asking the credential store about every
+        service at construction spends one short-lived process per service on a screen
+        nobody has opened yet, every time a window appears; on a slow machine that is
+        seconds of work, and it competes with whatever the owner actually asked for.
+        """
+        super().showEvent(event)
+        if not self.asked and not self.closed:
+            self.asked = True
+            self.refresh()
+
     def refresh(self) -> None:
         """Ask about every service, one helper at a time rather than one per service."""
+        self.asked = True
+        for state in self.states.values():
+            state.setText("проверяю…")
         self.queue.extend(("ask", provider, "") for provider in sorted(SERVICES))
         self._pump()
 

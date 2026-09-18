@@ -47,10 +47,33 @@ def settled(qtbot: QtBot, panel: ConnectionsPanel) -> None:
     qtbot.waitUntil(lambda: not panel.busy and not panel.queue, timeout=10000)
 
 
-def test_the_panel_says_which_services_are_connected(qtbot: QtBot, store: FakeStore) -> None:
+def opened(qtbot: QtBot) -> ConnectionsPanel:
+    """The panel as the owner meets it: built behind a tab, then opened."""
     panel = ConnectionsPanel()
     qtbot.addWidget(panel)
+    panel.show()
     settled(qtbot, panel)
+    return panel
+
+
+def test_nothing_is_asked_of_the_store_until_the_tab_is_opened(
+    qtbot: QtBot, store: FakeStore
+) -> None:
+    panel = ConnectionsPanel()
+    qtbot.addWidget(panel)
+    # A window builds this panel behind a tab. Asking about every service at construction
+    # spends one short-lived process per service on a screen nobody has opened, every time
+    # a window appears - and on a slow machine that is seconds taken from the actual task.
+    assert not panel.busy and not panel.queue and not panel.asked
+    assert panel.states["deepseek"].text() == "не проверено"
+    panel.show()
+    settled(qtbot, panel)
+    assert panel.states["deepseek"].text() == "подключён"
+    panel.shutdown()
+
+
+def test_the_panel_says_which_services_are_connected(qtbot: QtBot, store: FakeStore) -> None:
+    panel = opened(qtbot)
     assert panel.states["deepseek"].text() == "подключён"
     for provider in SERVICES:
         if provider != "deepseek":
@@ -61,9 +84,7 @@ def test_the_panel_says_which_services_are_connected(qtbot: QtBot, store: FakeSt
 def test_a_key_typed_here_reaches_the_store_and_leaves_the_screen(
     qtbot: QtBot, store: FakeStore
 ) -> None:
-    panel = ConnectionsPanel()
-    qtbot.addWidget(panel)
-    settled(qtbot, panel)
+    panel = opened(qtbot)
     panel.fields["openai"].setText("synthetic-noncredential")
     panel.save("openai")
     settled(qtbot, panel)
@@ -76,9 +97,7 @@ def test_a_key_typed_here_reaches_the_store_and_leaves_the_screen(
 
 
 def test_the_field_never_shows_what_is_typed_into_it(qtbot: QtBot, store: FakeStore) -> None:
-    panel = ConnectionsPanel()
-    qtbot.addWidget(panel)
-    settled(qtbot, panel)
+    panel = opened(qtbot)
     for field in panel.fields.values():
         assert field.echoMode() is QLineEdit.EchoMode.Password
     panel.shutdown()
@@ -87,9 +106,7 @@ def test_the_field_never_shows_what_is_typed_into_it(qtbot: QtBot, store: FakeSt
 def test_an_empty_field_asks_for_a_key_instead_of_calling_the_store(
     qtbot: QtBot, store: FakeStore
 ) -> None:
-    panel = ConnectionsPanel()
-    qtbot.addWidget(panel)
-    settled(qtbot, panel)
+    panel = opened(qtbot)
     panel.save("fireflies")
     settled(qtbot, panel)
     assert store.saved == []
@@ -98,9 +115,7 @@ def test_an_empty_field_asks_for_a_key_instead_of_calling_the_store(
 
 
 def test_forgetting_a_key_removes_it_and_says_so(qtbot: QtBot, store: FakeStore) -> None:
-    panel = ConnectionsPanel()
-    qtbot.addWidget(panel)
-    settled(qtbot, panel)
+    panel = opened(qtbot)
     panel.forget("deepseek")
     settled(qtbot, panel)
     assert store.forgotten == ["deepseek"]
@@ -112,9 +127,7 @@ def test_forgetting_a_key_removes_it_and_says_so(qtbot: QtBot, store: FakeStore)
 def test_a_store_that_refuses_says_so_and_still_clears_the_field(
     qtbot: QtBot, store: FakeStore
 ) -> None:
-    panel = ConnectionsPanel()
-    qtbot.addWidget(panel)
-    settled(qtbot, panel)
+    panel = opened(qtbot)
     store.fail = True
     panel.fields["fireflies"].setText("synthetic-noncredential")
     panel.save("fireflies")
@@ -127,9 +140,7 @@ def test_a_store_that_refuses_says_so_and_still_clears_the_field(
 def test_rechecking_asks_about_every_service_one_helper_at_a_time(
     qtbot: QtBot, store: FakeStore
 ) -> None:
-    panel = ConnectionsPanel()
-    qtbot.addWidget(panel)
-    settled(qtbot, panel)
+    panel = opened(qtbot)
     store.stored.add("fireflies")
     QTest.mouseClick(panel.recheck, Qt.MouseButton.LeftButton)
     # One errand runs at a time: several helpers at once would be several vault calls at once.
