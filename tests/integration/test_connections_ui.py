@@ -1,12 +1,16 @@
 """Connecting a service in the real window, without a terminal and without a real key."""
 
+from pathlib import Path
+
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QLineEdit
+from PySide6.QtWidgets import QLabel, QLineEdit
 from pytestqt.qtbot import QtBot
 
 from jarvis.core.planner.contracts import ProviderError
+from jarvis.mail.session import MailSession
+from jarvis.observability.audit import AuditLog
 from jarvis.security.credentials import SERVICES
 from jarvis.ui.connections_panel import ConnectionsPanel
 
@@ -148,3 +152,27 @@ def test_rechecking_asks_about_every_service_one_helper_at_a_time(
     settled(qtbot, panel)
     assert panel.states["fireflies"].text() == "подключён"
     panel.shutdown()
+
+
+def test_the_screen_says_excel_needs_a_work_account_before_the_consent(
+    qtbot: QtBot, store: FakeStore, tmp_path: Path
+) -> None:
+    """A platform boundary the owner cannot discover from the refusal it produces.
+
+    Microsoft does not serve the Excel API on a personal OneDrive, so there the workbook is
+    found and every read of its cells is refused. Said next to the button that asks for the
+    consent, it is a choice of account; said afterwards, it looks like a broken connector.
+    """
+    # The Microsoft section exists only where the session does, and so does its consent.
+    panel = ConnectionsPanel(session=MailSession(), audit=AuditLog(tmp_path / "audit.sqlite3"))
+    qtbot.addWidget(panel)
+    panel.show()
+    settled(qtbot, panel)
+    labels = [
+        widget.text()
+        for widget in panel.findChildren(QLabel)
+        if "Excel" in widget.text() or "OneDrive" in widget.text()
+    ]
+    said = [text for text in labels if "рабочем или учебном" in text]
+    assert said, labels
+    assert any("личном OneDrive" in text for text in said)

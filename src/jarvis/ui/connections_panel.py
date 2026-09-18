@@ -85,6 +85,14 @@ SURFACE_DONE = {
     TEAMS_SURFACE: "Teams разрешён: чаты читаются, отправка спрашивает.",
     FILES_SURFACE: "OneDrive разрешён: файлы читаются, запись спрашивает.",
 }
+# Said before the consent, not after the first refusal. Microsoft does not serve the Excel
+# API on a personal OneDrive at all (docs/ONEDRIVE.md), so on such an account the search
+# finds the workbook and every read of its cells is refused - which looks like a defect and
+# is a platform boundary.
+FILES_ACCOUNT = (
+    "Содержимое книг Excel читается только на рабочем или учебном аккаунте. "
+    "На личном OneDrive файлы найдутся, а их ячейки — нет."
+)
 
 
 def plain(text: str) -> QLabel:
@@ -230,7 +238,7 @@ class ConnectionsPanel(QWidget):
             plain(
                 "Регистрация Microsoft: Mobile and desktop, redirect http://localhost. "
                 "Вход откроется в системном браузере, пароль вводится только у Microsoft. "
-                "Teams и OneDrive — отдельные согласия на тот же аккаунт."
+                "Teams и OneDrive — отдельные согласия на тот же аккаунт. " + FILES_ACCOUNT
             )
         )
         row = QHBoxLayout()
@@ -255,6 +263,9 @@ class ConnectionsPanel(QWidget):
             self.surface_buttons[surface] = button
             surfaces.addWidget(button)
         column.addLayout(surfaces)
+        # Next to the button that asks for it, because that is the moment the owner chooses
+        # which account signs the consent.
+        column.addWidget(plain(FILES_ACCOUNT))
         return column
 
     @property
