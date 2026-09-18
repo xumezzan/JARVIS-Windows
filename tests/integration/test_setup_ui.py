@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QLabel
 from pytestqt.qtbot import QtBot
 from tests.mail_support import FakeCredentials, FakeGraph
 
@@ -223,3 +224,63 @@ def test_a_key_the_store_refuses_says_so(
     panel.save("asana")
     settled(qtbot, panel)
     assert panel.fields["asana"].text() == "" and "не подошёл" in panel.status.text()
+
+
+def test_the_screen_reads_as_cards_rather_than_a_form(
+    bench: tuple[SetupWindow, AuditLog],
+) -> None:
+    window, _ = bench
+    # Six entries, and the one this window is is the one that is ticked.
+    assert list(window.nav_buttons) == [
+        "home",
+        "settings",
+        "models",
+        "apps",
+        "commands",
+        "profile",
+    ]
+    assert window.nav_buttons["settings"].isChecked()
+    # Every service has its own chip, and the chip says the same word as the state behind it.
+    for chip in window.panel.states.values():
+        assert chip.property("role") == "chip"
+        assert chip.text() in ("подключён", "не подключён")
+        assert chip.property("state") == ("on" if chip.text() == "подключён" else "off")
+    assert window.panel.account_chip.text() == "не подключён"
+    # The identifier in use is shown where the key is entered, and nowhere is it editable.
+    assert isinstance(window.panel.models, dict)
+
+
+def test_an_entry_that_belongs_to_the_main_window_is_asked_for_rather_than_faked(
+    qtbot: QtBot, bench: tuple[SetupWindow, AuditLog]
+) -> None:
+    window, _ = bench
+    asked: list[str] = []
+    window.navigate.connect(asked.append)
+    window.go("commands")
+    window.go("profile")
+    window.go("home")
+    assert asked == ["commands", "profile", "home"]
+    # The rail does not pretend this screen has those pages: the tick stays where it is.
+    assert window.nav_buttons["settings"].isChecked()
+    # The three that are this window's own move it instead of emitting anything.
+    window.go("models")
+    window.go("apps")
+    assert asked == ["commands", "profile", "home"]
+    assert window.nav_buttons["apps"].isChecked()
+
+
+def test_the_model_identifier_is_shown_beside_its_key(qtbot: QtBot, tmp_path: Path) -> None:
+    session = MailSession(FakeCredentials(), FakeGraph())
+    audit = AuditLog(tmp_path / "audit.sqlite3")
+    try:
+        window = SetupWindow(session, audit, tmp_path, models={"deepseek": "deepseek-flash"})
+        qtbot.addWidget(window)
+        shown = [
+            label.text()
+            for label in window.panel.findChildren(QLabel)
+            if "deepseek-flash" in label.text()
+        ]
+        assert shown and "Модель: deepseek-flash." in shown[0]
+        window.shutdown()
+    finally:
+        audit.close()

@@ -1177,12 +1177,41 @@ class MainWindow(QMainWindow):
             return
         if self.setup_window is None:
             self.setup_window = SetupWindow(
-                planner.mail_session, planner.audit, self.config.data_dir, self
+                planner.mail_session,
+                planner.audit,
+                self.config.data_dir,
+                self,
+                # Shown beside the key, not editable there: the planner owns the identifier.
+                models={
+                    "deepseek": self.config.fast_model,
+                    "openai": planner.model.text().strip() or self.config.planner_model,
+                },
             )
             self.setup_window.finished.connect(self._setup_closed)
+            self.setup_window.navigate.connect(self._from_setup)
+        self.setup_window.setStyleSheet(self.styleSheet())
         self.setup_window.show()
         self.setup_window.raise_()
         self.setup_window.activateWindow()
+
+    @Slot(str)
+    def _from_setup(self, target: str) -> None:
+        """An entry of the setup rail that belongs here: open it, rather than duplicating it."""
+        if self._closing:
+            return
+        self.raise_()
+        self.activateWindow()
+        if target == "commands":
+            # Commands are configured where they are given, next to the command line.
+            self._navigate("settings")
+            self.run_mode.setFocus()
+            return
+        if target == "profile":
+            self._navigate("settings")
+            self.name_input.setFocus()
+            self.name_input.selectAll()
+            return
+        self._navigate("home")
 
     def _setup_closed(self) -> None:
         # Something may have been connected while it was open; the day and the grid of

@@ -80,6 +80,7 @@ def line_icon(name: str, color: str = "#a5afbe", size: int = 24) -> QIcon:
         "list": [[(4, 7), (20, 7)], [(4, 12), (20, 12)], [(4, 17), (14, 17)]],
         "plus": [[(12, 5), (12, 19)], [(5, 12), (19, 12)]],
         "chevron": [[(9, 5), (16, 12), (9, 19)]],
+        "info": [[(12, 11), (12, 17)]],
         "search": [[(15, 15), (21, 21)]],
         "link": [[(8, 12), (16, 12)]],
         "user": [[(4, 21), (5, 17), (9, 15), (15, 15), (19, 17), (20, 21)]],
@@ -106,11 +107,14 @@ def line_icon(name: str, color: str = "#a5afbe", size: int = 24) -> QIcon:
         for point in points[1:]:
             path.lineTo(QPointF(*point))
         painter.drawPath(path)
-    if name in {"clock", "settings", "globe", "orb"}:
+    if name in {"clock", "settings", "globe", "orb", "info"}:
         painter.drawEllipse(QRectF(3, 3, 18, 18))
     if name == "orb":
         painter.setBrush(QColor(color))
         painter.drawEllipse(QRectF(10, 10, 4, 4))
+    if name == "info":
+        painter.setBrush(QColor(color))
+        painter.drawEllipse(QRectF(11, 6.5, 2, 2))
     if name == "settings":
         painter.drawEllipse(QRectF(8, 8, 8, 8))
         for angle in range(0, 360, 45):

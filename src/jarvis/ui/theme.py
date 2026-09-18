@@ -75,18 +75,51 @@ QLabel#inputHint { color: $faint; font-size: 11px; }
 QLabel#avatar { background: $raised; border: 1px solid $border; border-radius: 17px;
     color: $primary; font-size: 15px; font-weight: 600; }
 
+/* ---- Settings: title, rows, chips and the one primary action ---------------------- */
+QLabel#screenTitle { font-size: 26px; font-weight: 600; letter-spacing: 0.2px; }
+QLabel#identityTitle { font-size: 21px; font-weight: 600; }
+QLabel#rowTitle { font-size: 13px; font-weight: 600; }
+QLabel#rowCaption { color: $muted; font-size: 12px; }
+QLabel#quote { color: $faint; font-size: 12px; font-style: italic; }
+QFrame#integration { background: transparent; border: none; }
+QLabel[role="chip"] { color: $faint; background: $raised; border: 1px solid $line;
+    border-radius: 9px; padding: 4px 10px; font-size: 11px; font-weight: 500;
+    min-height: 14px; max-height: 14px; }
+QLabel[role="chip"][state="on"] { color: $success; border-color: $glow; }
+QLabel[role="chip"][state="off"] { color: $faint; }
+QLabel[role="chip"][state="pending"] { color: $primary; border-color: $glow; }
+QPushButton#accent { background: $glow; color: $foreground; border: 1px solid $primary;
+    border-radius: 10px; padding: 8px 16px; font-weight: 500; }
+QPushButton#accent:hover { background: $primary; color: $primary_foreground; }
+QPushButton#accent:focus { border: 2px solid $focus; }
+QPushButton#accent:disabled { background: $surface; color: $faint; border-color: $line; }
+QPushButton#gear { background: transparent; border: 1px solid transparent; border-radius: 9px;
+    padding: 0; }
+QPushButton#gear:hover { background: $raised; border-color: $border; }
+QPushButton#gear:focus { border: 1px solid $focus; }
+QPushButton#gear::menu-indicator { width: 0; height: 0; }
+QPushButton#save { background: $primary; color: $primary_foreground; border: 2px solid $glow;
+    border-radius: 12px; padding: 10px 26px; font-size: 13px; font-weight: 600; }
+QPushButton#save:hover { background: $focus; border-color: $primary; }
+QPushButton#save:focus { border: 2px solid $focus; }
+QMenu { background: $raised; border: 1px solid $border; border-radius: 10px; padding: 6px; }
+QMenu::item { padding: 7px 14px; border-radius: 7px; }
+QMenu::item:selected { background: $hover; }
+
 /* ---- Panels ---------------------------------------------------------------------- */
 QFrame#sidebar, QFrame#card { background: $surface;
     border: 1px solid $border; border-radius: 18px; }
 QFrame#card:focus { border: 1px solid $focus; }
 QFrame#divider { background: $line; border: none; }
+QFrame#inset { background: $raised; border: 1px solid $line; border-radius: 12px; }
+QFrame#inset QLabel { background: transparent; }
 
 /* ---- Navigation rail ------------------------------------------------------------- */
 QPushButton#nav { background: transparent; border: 1px solid transparent; color: $muted;
     text-align: left; padding: 10px 12px; font-size: 13px; font-weight: 500;
     border-radius: 10px; }
 QPushButton#nav:hover { background: $raised; color: $foreground; }
-QPushButton#nav:checked { background: $hover; color: $primary; border-color: $border; }
+QPushButton#nav:checked { background: $glow; color: $foreground; border-color: $primary; }
 QPushButton#nav:focus { border: 1px solid $focus; }
 
 /* ---- Status pill ----------------------------------------------------------------- */
