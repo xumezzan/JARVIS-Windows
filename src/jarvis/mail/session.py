@@ -54,6 +54,21 @@ class MailSession:
         self.detach()
         await self.credentials.call("disconnect", "")
 
+    async def consent(self, account: Account, surface: str, context: ExecutionContext) -> None:
+        """Ask the owner, once, for one more surface on the account already signed in.
+
+        Nothing is kept here: the point is the consent recorded with Microsoft, so that
+        the silent path can get a token for that surface from then on.
+        """
+        with self._lock:
+            if not self.matches(account):
+                raise MailFailure("mail_account_changed")
+            client, home = self._client, self._home
+        credential = await self.credentials.call("consent", client, home, surface)
+        await context.checkpoint()
+        if credential.home_id != home or not self.matches(account):
+            raise MailFailure("mail_account_changed")
+
     def matches(self, account: Account, message: Message | None = None) -> bool:
         with self._lock:
             return self.account == account and (
@@ -100,11 +115,20 @@ class MailSession:
             return tuple(self._drafts.items())
 
     async def token(self, account: Account, context: ExecutionContext) -> str:
+        return await self.surface_token(account, "mail", context)
+
+    async def surface_token(self, account: Account, surface: str, context: ExecutionContext) -> str:
+        """A token for one Microsoft surface of the account that is already signed in.
+
+        The identity is re-verified here exactly as it is for mail, because a second
+        surface is still the same person's data and the account may have changed under us
+        between two steps of a long task.
+        """
         with self._lock:
             if not self.matches(account):
                 raise MailFailure("mail_account_changed")
             client, home = self._client, self._home
-        credential = await self.credentials.call("silent", client, home)
+        credential = await self.credentials.call("silent", client, home, surface)
         await context.checkpoint()
         if credential.home_id != home or not self.matches(account):
             raise MailFailure("mail_account_changed")

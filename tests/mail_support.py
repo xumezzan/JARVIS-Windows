@@ -9,19 +9,25 @@ from jarvis.mail.credentials import Credential, MailFailure
 class FakeCredentials:
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.surfaces: list[str] = []
         self.home = "fixture-home"
         self.fail = False
+        # Surfaces the owner never consented to: asking for one fails the way Microsoft
+        # fails it, rather than quietly handing out a token for scopes nobody granted.
+        self.refused: set[str] = set()
         self.delay = 0.0
 
     async def call(
         self,
-        operation: Literal["connect", "silent", "disconnect"],
+        operation: Literal["connect", "silent", "consent", "disconnect"],
         client_id: str,
         home_id: str = "",
+        surface: str = "mail",
     ) -> Credential:
         self.calls.append(operation)
+        self.surfaces.append(surface)
         await asyncio.sleep(self.delay)
-        if self.fail:
+        if self.fail or surface in self.refused:
             raise MailFailure("mail_credentials")
         return Credential(self.home, "synthetic-noncredential")
 

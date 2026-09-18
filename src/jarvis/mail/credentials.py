@@ -23,21 +23,26 @@ class Credential:
     token: str = field(repr=False)
 
 
+Operation = Literal["connect", "silent", "consent", "disconnect"]
+
+
 class Credentials(Protocol):
     async def call(
         self,
-        operation: Literal["connect", "silent", "disconnect"],
+        operation: Operation,
         client_id: str,
         home_id: str = "",
+        surface: str = "mail",
     ) -> Credential: ...
 
 
 class ProcessCredentials:
     async def call(
         self,
-        operation: Literal["connect", "silent", "disconnect"],
+        operation: Operation,
         client_id: str,
         home_id: str = "",
+        surface: str = "mail",
     ) -> Credential:
         if operation != "disconnect":
             UUID(client_id)
@@ -55,11 +60,15 @@ class ProcessCredentials:
             )
         )
         process: asyncio.subprocess.Process | None = None
+        interactive = operation in ("connect", "consent")
         try:
-            async with asyncio.timeout(150 if operation == "connect" else 15):
+            # A sign-in and a consent both wait for a person; everything else is a machine
+            # answering a machine and has no business taking minutes.
+            async with asyncio.timeout(150 if interactive else 15):
                 process = await asyncio.shield(launch)
                 assert process.stdin is not None and process.stdout is not None
-                process.stdin.write(json.dumps([operation, client_id, home_id]).encode() + b"\n")
+                payload = json.dumps([operation, client_id, home_id, surface])
+                process.stdin.write(payload.encode() + b"\n")
                 await process.stdin.drain()
                 process.stdin.close()
                 raw = await process.stdout.readuntil(b"\n")
@@ -74,7 +83,9 @@ class ProcessCredentials:
                     not 1 <= len(home) <= 512
                     or not 1 <= len(token) <= 32768
                     or any(not 33 <= ord(c) <= 126 for c in token)
-                    or (operation == "silent" and home != home_id)
+                    # Both of these name the account they meant; a token for another one
+                    # is a different person's data, not a smaller problem.
+                    or (operation in ("silent", "consent") and home != home_id)
                 ):
                     raise MailFailure("mail_credentials")
                 return Credential(home, token)

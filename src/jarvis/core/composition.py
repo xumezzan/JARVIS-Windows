@@ -30,6 +30,9 @@ from jarvis.connectors.microsoft.tools import register_calendar
 from jarvis.connectors.notion.connector import NotionConnector
 from jarvis.connectors.notion.mapping import MAPPERS as NOTION_MAPPERS
 from jarvis.connectors.notion.tools import register_notion
+from jarvis.connectors.teams.connector import TeamsConnector
+from jarvis.connectors.teams.mapping import MAPPERS as TEAMS_MAPPERS
+from jarvis.connectors.teams.tools import register_teams
 from jarvis.core.context.learning import MemoryLearner
 from jarvis.core.routines.proposals import SuggestionQueue
 from jarvis.core.routines.runner import RoutineRunner
@@ -119,7 +122,13 @@ def build(
     # Each connector says how to read its own answers; the harvester only applies them.
     harvester = GraphHarvester(
         knowledge,
-        {**CALENDAR_MAPPERS, **FIREFLIES_MAPPERS, **ASANA_MAPPERS, **NOTION_MAPPERS},
+        {
+            **CALENDAR_MAPPERS,
+            **FIREFLIES_MAPPERS,
+            **ASANA_MAPPERS,
+            **NOTION_MAPPERS,
+            **TEAMS_MAPPERS,
+        },
     )
     host = browser_host or BrowserHost(NetworkPolicy(config.browser_origins))
     registry, outbox = local_registry()
@@ -141,6 +150,11 @@ def build(
     notion = NotionConnector()
     register_notion(registry, notion, matrix)
     connectors.add(notion)
+    # One Microsoft account, another surface: Teams rides on the session the Outlook tab
+    # signed in, and asks for its own consent before it can read or send anything.
+    teams = TeamsConnector(session)
+    register_teams(registry, teams, matrix)
+    connectors.add(teams)
     for server in reviewed_servers(Path(config.data_dir) / MCP_FILE):
         try:
             mcp = McpConnector(server)
