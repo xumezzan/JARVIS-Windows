@@ -16,7 +16,12 @@ from jarvis.observability.audit import AuditLog, ErrorCode
 from jarvis.permissions.approvals import Action, ApprovalStore
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Mode, Status
-from jarvis.security.browser_policy import NetworkPolicy, normalized_url
+from jarvis.security.browser_policy import (
+    DEFAULT_READ_ONLY,
+    PASSWORD_MANAGERS,
+    NetworkPolicy,
+    normalized_url,
+)
 from jarvis.tools.base import ExecutionContext, ToolError
 from jarvis.tools.browser import (
     BrowserCommand,
@@ -298,3 +303,87 @@ def test_tls_fallback_preserves_existing_roots(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr("jarvis.browser.network.certifi.where", unexpected_bundle)
     assert tls_context() is context
+
+
+def test_a_password_manager_is_refused_before_anything_else_is_considered() -> None:
+    """The one site an assistant holding the owner's live sessions must never reach."""
+    policy = NetworkPolicy(allowed_origins=("https://my.1password.com", "https://example.com"))
+    # Allowed by the owner's own allowlist and still refused: the denial is checked first,
+    # so no later capability can reopen it.
+    for url in (
+        "https://my.1password.com/",
+        "https://my.1password.com/vaults",
+        "https://start.1password.com/signin",
+        "https://anything.bitwarden.com/",
+    ):
+        with pytest.raises(ToolError):
+            policy.validate(url)
+        assert policy.tier(url) == "blocked"
+    # A name that merely ends with the same letters is a different site.
+    assert policy.tier("https://not1password.com/") == "ordinary"
+    assert policy.tier("https://1password.com.evil.org/") == "ordinary"
+
+
+def test_money_and_admin_consoles_may_be_read_and_not_changed() -> None:
+    """`CRITICAL` is disabled until decision Р5 exists, so these are looked at only."""
+    sites = ("https://qbo.intuit.com", "https://us-east-1.console.aws.amazon.com")
+    policy = NetworkPolicy(allowed_origins=sites)
+    for url in (site + "/" for site in sites):
+        # Reading is navigation, and navigation stays available.
+        assert policy.validate(url) == url
+        assert policy.tier(url) == "read_only" and not policy.writable(url)
+        # Sending anything is not reading, whatever the form says it does.
+        with pytest.raises(ToolError):
+            policy.validate_request(url, "POST", "amount=1000")
+    ordinary = "https://example.com/"
+    assert NetworkPolicy().tier(ordinary) == "ordinary"
+
+
+def test_a_tier_covers_subdomains_and_the_allowlist_still_does_not() -> None:
+    """The asymmetry is deliberate: a loose denial is safe, a loose permission is not."""
+    policy = NetworkPolicy(allowed_origins=("https://example.com",))
+    # Denials reach the subdomains of what they name.
+    assert policy.tier("https://console.aws.amazon.com/billing") == "read_only"
+    assert policy.tier("https://eu-west-2.console.aws.amazon.com/") == "read_only"
+    # Permissions do not.
+    with pytest.raises(ToolError):
+        policy.validate("https://sub.example.com/")
+
+
+def test_a_tier_list_is_bare_lowercase_domains() -> None:
+    for bad in ("https://1password.com", "1Password.com", "example.com/path", "example.com:443"):
+        with pytest.raises(ValueError):
+            NetworkPolicy(blocked_domains=(bad,))
+    assert all(name == name.lower() for name in (*PASSWORD_MANAGERS, *DEFAULT_READ_ONLY))
+
+
+@pytest.mark.parametrize("mode", [Mode.SIMULATION, Mode.EXECUTE])
+def test_typing_into_a_read_only_site_never_prepares(mode: Mode, tmp_path: Path) -> None:
+    """A site the owner may only look at accepts no text, in either mode.
+
+    Typing is how a page is changed even when the change leaves by some other route, so the
+    refusal lands at normalization - before the adapter exists and identically in simulation.
+    """
+    console = PageTarget(
+        tab_id="a" * 32,
+        document_id="b" * 32,
+        url="https://qbo.intuit.com/app/invoice",
+        origin="https://qbo.intuit.com",
+        fingerprint="c" * 64,
+    )
+    probe = Probe()
+    registry = ToolRegistry()
+    register_browser(registry, probe, NetworkPolicy(allowed_origins=("https://qbo.intuit.com",)))
+    with closing(AuditLog(tmp_path / "audit.sqlite3")) as audit:
+        engine = PermissionEngine(registry, ApprovalStore(), audit)
+        typing = engine.prepare(
+            "browser.type",
+            {"target": console.model_dump(), "element": FIELD, "text": "1000"},
+            mode,
+        )
+        assert isinstance(typing, Outcome) and typing.status is Status.INVALID
+        # Reading the same page is still prepared: looking is not changing.
+        reading = engine.prepare("browser.read", {"target": console.model_dump()}, mode)
+        assert not isinstance(reading, Outcome)
+        engine.cancel(reading)
+        assert not probe.calls
