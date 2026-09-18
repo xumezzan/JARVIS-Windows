@@ -61,15 +61,21 @@
 открыть и что в них сделать. Сверка показала, что низ подходит, а недостают длина
 задачи, глаза, руки и настоящий браузер. План: [AGENT_PLAN.md](AGENT_PLAN.md).
 
+**Порядок изменён 19.09.2026.** Владелец назвала состав своего рабочего дня, и больше
+половины его живёт в браузере — включая Omadli, систему, которую они сделали сами и у
+которой API не будет никогда. Фаза 5 поднята сразу после фазы 2, фаза 4 сжата, фаза 3
+опущена в конец. Разбор — в [AGENT_PLAN.md](AGENT_PLAN.md), раздел «Кто владелец и чем
+она пользуется».
+
 | Фаза | Результат | Статус |
 | --- | --- | --- |
-| 0 Реальность | Закрыть пять открытых ворот выше | Не начата |
+| 0 Реальность | Закрыть пять открытых ворот выше | **Идёт**: три ворот закрыты 17–18.09 (установка, живой микрофон, живой DeepSeek). Открыты живой Outlook и полный E2E; чистая ОС и обрыв сети ждут виртуальной машины |
 | 1 Длинная задача | 64 шага и час, durable-запуск с возобновлением, живой чеклист, очередь подтверждений, бюджет | **Сделано 17–18.09**: потолки, журнал, фазы, возобновление, бюджет, чеклист, продолжение прерванной задачи, отсчёт времени на подтверждение. **Прогнана живьём 18.09** на реальной Windows с живой моделью: длинная задача доходит до конца, переживает убийство процесса и не дублирует эффекты; эскалация на сильную модель работает. Открыто: очередь подтверждений — нужно решение владельца (Р7) |
 | 2 Сервисы API | Asana, Notion, Teams, Excel/OneDrive; сценарий «подготовь всё к встрече» | **Идёт**: Asana — четыре чтения и создание задачи ([ASANA.md](ASANA.md)); Notion — три чтения и две записи ([NOTION.md](NOTION.md)); Teams — чаты, черновик и отправка с подтверждением ([TEAMS.md](TEAMS.md)); OneDrive/Excel — файлы, листы, чтение и запись диапазона ([ONEDRIVE.md](ONEDRIVE.md)); сценарий «подготовь всё к встрече» собран кнопкой ([MEETING.md](MEETING.md)). Ни один живой токен и ни один живой прогон сценария ещё не проверены. Остались каналы Teams — согласие администратора тенанта |
-| 3 Глаза | Дерево интерфейса окна, снимок окна, разбор моделью по отдельному согласию | Не начата |
-| 4 Руки | Клик по элементу, ограниченные клавиши, буфер обмена, управление окнами, координаты как последний фолбэк | Не начата |
-| 5 Браузер | Постоянный профиль, JavaScript, вход владельца руками, классифицированный POST, загрузки | Не начата |
-| 6 Один экран | Орб, чеклист, последние действия, календарь, подключения — в одном окне | Не начата |
+| 3 Глаза | Дерево интерфейса окна, снимок окна, разбор моделью по отдельному согласию | Не начата; **понижена 19.09** — в браузере глаза даёт DOM, а настольных программ во владельческом списке нет |
+| 4 Руки | Клик по элементу, ограниченные клавиши, буфер обмена, управление окнами, координаты как последний фолбэк | Не начата; **сжата 19.09** — клик по элементу страницы приходит с фазой 5, здесь остаются настольные программы |
+| 5 Браузер | Постоянный профиль, JavaScript, вход владельца руками, классифицированный POST, загрузки, уровень на домен | **Следующая после фазы 2** (поднята 19.09): там живёт больше половины дня владельца, и Omadli — их собственная система — не откроется иначе |
+| 6 Один экран | Орб, чеклист, последние действия, календарь, подключения — в одном окне | **Частично, вне очереди**: главный экран собран 18.09 по замечанию владельца, что окно выглядит сырым ([MAIN_SCREEN.md](MAIN_SCREEN.md)). Осталось: отдельное окно планировщика по плану должно исчезнуть, а оно живо |
 | 7 Живой голос | Потоковая речь и перебивание; естественный голос как основной путь | Не начата |
 | 8 Способ работы | Одобренная последовательность сохраняется и повторяется | Не начата |
 
@@ -113,6 +119,34 @@ a test that would have caught it. Do not widen a route table to make a call work
 reading the official reference first, and do not claim a live check that did not run.
 ```
 
+### Фаза 5 — настоящий браузер (следующая после живой проверки)
+
+```text
+Build phase 5 of docs/AGENT_PLAN.md: the browser the owner actually works in.
+
+Read AGENTS.md, docs/AGENT_PLAN.md (the section "Кто владелец и чем она пользуется" and
+phase 5), docs/SECURITY.md and src/jarvis/security/browser_policy.py. Preserve all
+existing work, including the anonymous throwaway context, which stays for reading an
+unfamiliar site.
+
+Give the owned Chromium a persistent profile in the application folder with JavaScript
+enabled and tabs that outlive one task. The owner signs in by hand in that window; Jarvis
+never reads, stores or types a credential, and the password manager's domains are BLOCKED
+outright - not reachable by navigation, by a link on a page or by a redirect. Add a risk
+level per domain on top of the level per operation, exactly as the plan's table says:
+their own system is ordinary work, a social post is CONFIRM with the exact snapshot of the
+text and where it goes, and money, infrastructure and admin consoles are read-only until
+the reinforced confirmation of decision Р5 exists.
+
+Gates: a page cannot open a tab and carry consent onto another domain; page text stays
+data; the owner signing out really ends the access; closing the application leaves no live
+browser; a blocked domain is not reachable by any of the three routes above.
+
+Run focused tests, then the full pytest, ruff check, ruff format --check and mypy --strict.
+Browser tests need python -m playwright install chromium. A local Chromium success is not
+Windows acceptance.
+```
+
 ### Фаза 3 — глаза (только по просьбе владельца)
 
 `AGENTS.md` запрещает начинать фазу, о которой не просили. Когда попросят — фаза 3 в
@@ -122,6 +156,11 @@ reading the official reference first, and do not claim a live check that did not
 
 ### Ворота, которые закрываются не здесь
 
-Живой Outlook (нужен личный аккаунт владельца), чистая ОС без Python и обрыв сети (нужна
+Живой Outlook (нужен аккаунт владельца), чистая ОС без Python и обрыв сети (нужна
 виртуальная машина), согласие администратора тенанта для каналов Teams, решение Р7 по
 очереди подтверждений.
+
+Добавилось 19.09 вместе с составом сервисов владельца: её собственный вход в постоянный
+профиль браузера — подписывается на это она, потому что агент унаследует её живые сессии;
+и решение Р5 об усиленном подтверждении, без которого QuickBooks, AWS и Microsoft admin
+остаются доступными только на чтение.
