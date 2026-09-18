@@ -44,7 +44,9 @@ from jarvis.ui.voice_panel import HoldButton, VoicePanel
 
 # Finite planner error categories rendered as advice; never arbitrary text from a tool.
 ERROR_ADVICE: dict[str, str] = {
-    "credentials": ("Ключ модели не найден. В терминале выполните: " + setup_command("deepseek")),
+    "credentials": (
+        "Ключ модели не найден. Откройте планировщик → вкладка «Подключения» и введите ключ там."
+    ),
     "provider_failed": "Модель не ответила. Проверьте ключ, идентификатор модели и сеть.",
     "provider_output": "Ответ модели не соответствует схеме планировщика.",
     "context_limit": "Запрос к модели превысил допустимый размер.",

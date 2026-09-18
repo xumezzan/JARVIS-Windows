@@ -43,6 +43,7 @@ from jarvis.tools.windows import WindowsBackend
 from jarvis.ui import workers
 from jarvis.ui.approval_dialog import ApprovalDialog
 from jarvis.ui.checklist import Checklist
+from jarvis.ui.connections_panel import ConnectionsPanel
 from jarvis.ui.mail_panel import MailPanel
 from jarvis.ui.mcp_panel import McpPanel
 from jarvis.ui.memory_panel import MemoryPanel
@@ -132,6 +133,11 @@ class PlannerWindow(QDialog):
         mcp_scroll.setWidgetResizable(True)
         mcp_scroll.setWidget(self.mcp)
         self.tabs.addTab(mcp_scroll, "Серверы MCP")
+        self.connections = ConnectionsPanel()
+        connections_scroll = QScrollArea()
+        connections_scroll.setWidgetResizable(True)
+        connections_scroll.setWidget(self.connections)
+        self.tabs.addTab(connections_scroll, "Подключения")
         layout = QVBoxLayout(task)
         layout.addWidget(
             note(
@@ -601,6 +607,7 @@ class PlannerWindow(QDialog):
         self.memory.shutdown()
         self.mail.shutdown()
         self.mcp.shutdown()
+        self.connections.shutdown()
         self.routines.shutdown()
         if self.worker is not None:
             self.stop()
