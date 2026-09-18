@@ -90,9 +90,22 @@ ICONS = {
     "fireflies": ("chat", "#e5c07b"),
     "notion": ("document", "#c3ccd8"),
 }
+# Said before the consent, not after the first refusal. Microsoft does not serve the Excel
+# API on a personal OneDrive at all (docs/ONEDRIVE.md), so on such an account the search
+# finds the workbook and every read of its cells is refused - which looks like a defect and
+# is a platform boundary.
+FILES_ACCOUNT = (
+    "Содержимое книг Excel читается только на рабочем или учебном аккаунте. "
+    "На личном OneDrive файлы найдутся, а их ячейки — нет."
+)
 SURFACES = {
     TEAMS_SURFACE: ("Microsoft Teams", "Доступ к чатам и командам.", "chat", "#7fb2f5"),
-    FILES_SURFACE: ("OneDrive", "Доступ к файлам и таблицам.", "document", "#7fd6c0"),
+    FILES_SURFACE: (
+        "OneDrive",
+        "Доступ к файлам и таблицам. " + FILES_ACCOUNT,
+        "document",
+        "#7fd6c0",
+    ),
 }
 SURFACE_BUTTONS = ((TEAMS_SURFACE, "Разрешить Teams"), (FILES_SURFACE, "Разрешить OneDrive"))
 SURFACE_DONE = {

@@ -20,8 +20,9 @@ SERVICE = "Jarvis/Outlook"
 SURFACES = {
     "mail": ["User.Read", "Mail.ReadWrite", "Mail.Send", "Calendars.ReadWrite"],
     "teams": ["User.Read", "Chat.Read", "ChatMessage.Send"],
-    # Files and the workbooks among them. One scope covers both, because Excel has no
-    # narrower one: reading a cell already needs Files.ReadWrite.
+    # Files and the workbooks among them. Microsoft documents Files.Read for Excel reads
+    # and Files.ReadWrite for writes; this surface writes cell ranges, so it asks for the
+    # wider one once rather than holding two consents for one account.
     "files": ["User.Read", "Files.ReadWrite"],
 }
 CHUNKS = 64
