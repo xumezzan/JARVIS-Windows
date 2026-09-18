@@ -241,8 +241,9 @@ def test_planner_entrypoint_and_close_allows_reopen(qtbot: QtBot, window: MainWi
     planner = window.planner_window
     assert planner is not None and planner.command.toPlainText() == "проверь систему дважды"
     assert planner.isVisible() and planner.prompt_parent is planner
-    # The planner's own run button waits for its memory panel to finish its start-up read.
-    qtbot.waitUntil(lambda: planner.memory.worker is None, timeout=15000)
+    # The planner's own run button waits for its memory panel to finish its start-up read,
+    # and that read only begins on the next turn of the event loop.
+    qtbot.waitUntil(lambda: planner.memory.profile_read, timeout=15000)
     with qtbot.waitSignal(planner.task_finished, timeout=15000):
         QTest.mouseClick(planner.run_button, Qt.MouseButton.LeftButton)
     # A run started in the planner is mirrored by the shell it belongs to.

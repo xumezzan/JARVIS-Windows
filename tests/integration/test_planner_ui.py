@@ -412,3 +412,44 @@ def test_a_finished_run_teaches_the_words_it_was_given(qtbot: QtBot, tmp_path: P
         }
     finally:
         window.shutdown()
+
+
+def test_a_run_started_while_the_profile_is_read_says_what_is_happening(
+    qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal that made two voice tests look like a slow machine for three sessions.
+
+    The memory panel reads its store on the next turn of the event loop, and `start` will
+    not assemble a context while that read is in flight. The window has to say that, and a
+    test that waits for "no worker is running" has to wait for the read instead: that
+    answer is True before the read has even begun.
+    """
+    from threading import Event as Flag
+
+    from jarvis.memory.store import MemoryStore
+
+    reading, original = Flag(), MemoryStore.read
+
+    def slow(self: MemoryStore, cancelled: Flag) -> object:
+        reading.wait(15)
+        return original(self, cancelled)
+
+    monkeypatch.setattr(MemoryStore, "read", slow)
+    window = PlannerWindow(AppConfig(tmp_path))
+    qtbot.addWidget(window)
+    window.show()
+    try:
+        qtbot.waitUntil(lambda: window.memory.worker is not None, timeout=15000)
+        assert not window.memory.profile_read
+        window.command.setPlainText("проверь систему дважды")
+        window.start()
+        # Refused, and the reason is the true one: nothing is wrong in the profile.
+        assert window.worker is None and window.last_result is None
+        assert "ещё читается" in window.status.text()
+        reading.set()
+        qtbot.waitUntil(lambda: window.memory.profile_read, timeout=15000)
+        with qtbot.waitSignal(window.task_finished, timeout=15000):
+            window.start()
+    finally:
+        reading.set()
+        window.shutdown()

@@ -244,6 +244,21 @@ Suggestions live in memory, expire, are bounded, and disappear when the latest l
 longer sees the reason; acting on one prepares the action afresh and confirms it in the
 usual dialog, by button or by the spoken control detail.
 
+## Briefing boundary (the meeting summary)
+
+The briefing behind "prepare everything for the meeting" is trusted code, not a plan: the
+same five reads, always in the same order, with no model choosing anything. The calendar is
+read first and the people in the invitation from outside the owner's own mail domain are who
+the other services are then asked about - a client is never taken from a word in a command.
+Every line carries the tool that observed it and the identifier the service gave the thing,
+because a summary whose lines cannot be traced cannot be checked. Observation is SAFE only:
+the level is read from the prepared snapshot, so a capability the owner tightened in their
+matrix is refused here too. One service failing costs its own section and nothing else; only
+a calendar that cannot be read ends the briefing, because then there is nothing to brief
+about. Service words are shown to the owner as words and never become a tool name, an
+argument or an instruction, and what is said out loud carries counts, never addresses or
+record identifiers.
+
 ## MCP boundary (breadth)
 
 An MCP server describes itself, so its self-description is data, never authority. A tool
