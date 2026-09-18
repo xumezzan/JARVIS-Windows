@@ -267,16 +267,48 @@ def written(result: PlanResult) -> tuple[str, ...]:
 
 
 def spoken(result: PlanResult) -> str:
-    """The report for the voice: only what the local Russian voice can actually pronounce."""
+    """The report for the voice: the point of the task, not a protocol of it.
+
+    The screen lists every deed, because a list is read at a glance. Speech is not: it is
+    read out loud, slowly, by a system voice, and there is no skimming it. A task of five
+    steps became five sentences to sit through, and the owner said so - it narrates every
+    step and takes too long.
+
+    So aloud: what went wrong, or, when nothing did, the last thing that was done. Opening
+    an application and focusing it are how a task reaches its point; typing the text is the
+    point. Nothing is concealed by choosing the last one - the written report still carries
+    all of them, in front of the owner, while this is being said.
+
+    Trouble is the exception and stays in full, up to the bound. A failure, or an effect
+    that may have landed without an answer, is exactly what the owner should not have to
+    look at the screen to discover.
+    """
     if result.status == "simulated":
         return HEADLINE["simulated"][0]
-    deeds = [line for line in (_sentence(step, True) for step in result.steps) if line]
     headline = _variant(HEADLINE.get(result.status, HEADLINE["error"]), result)
-    parts = [headline, *deeds[:SPOKEN_DEEDS]]
-    if not deeds and _looked(result):
+    trouble = [
+        sentence
+        for step in result.steps
+        if step.outcome.status is not Status.SUCCESS
+        for sentence in (_sentence(step, True),)
+        if sentence
+    ]
+    done = [
+        sentence
+        for step in result.steps
+        if step.outcome.status is Status.SUCCESS
+        for sentence in (_sentence(step, True),)
+        if sentence
+    ]
+    parts = [headline]
+    if trouble:
+        parts.extend(trouble[:SPOKEN_DEEDS])
+        if len(trouble) > SPOKEN_DEEDS:
+            parts.append(f"И ещё не получилось: {len(trouble) - SPOKEN_DEEDS}.")
+    elif done:
+        parts.append(done[-1])
+    elif _looked(result):
         parts.append(_variant(LOOKED, result))
-    if len(deeds) > SPOKEN_DEEDS:
-        parts.append(f"И ещё действий: {len(deeds) - SPOKEN_DEEDS}.")
     if _unresolved(result):
         parts.append("Уже выданные действия не отменяются.")
     return " ".join(parts)
