@@ -21,6 +21,21 @@ function Assert-PlainDirectory([string]$Path) {
     }
 }
 
+function Test-Marker([string]$Path) {
+    <#
+    Whether the ownership marker is there. The question is asked more than once on purpose:
+    Test-Path answers False both for "not there" and for "could not look", and a scanner
+    holding the file for a moment is enough to turn an ordinary update into "inspect this
+    directory before setup". The invariant is untouched - a directory without the marker
+    still stops the install - and only a momentary inability to see it is retried.
+    #>
+    foreach ($attempt in 1..3) {
+        if (Test-Path -LiteralPath $Path -PathType Leaf) { return $true }
+        Start-Sleep -Milliseconds 250
+    }
+    return $false
+}
+
 function Test-Runtime([string]$Python, [string]$Version) {
     if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { return $false }
     $result = & $Python -I -c 'import sys,struct,ssl,venv,ensurepip; print(chr(46).join(map(str,sys.version_info[:3]))+chr(47)+str(struct.calcsize(chr(80))*8))' 2>$null
@@ -39,7 +54,7 @@ try {
     Assert-PlainDirectory $env:LOCALAPPDATA
     if (Test-Path -LiteralPath $jarvisRoot) {
         Assert-PlainDirectory $jarvisRoot
-        if (-not (Test-Path -LiteralPath (Join-Path $jarvisRoot '.jarvis-install'))) {
+        if (-not (Test-Marker (Join-Path $jarvisRoot '.jarvis-install'))) {
             throw 'Existing JarvisInstall directory has no ownership marker. Inspect it before setup.'
         }
     } else {
@@ -135,15 +150,24 @@ try {
     # update, and a shortcut pointing into a retired one loses its picture.
     Copy-Item -LiteralPath (Join-Path $repository 'src\jarvis\ui\assets\jarvis.ico') -Destination $jarvisRoot -Force
     $shell = New-Object -ComObject WScript.Shell
-    $programs = [Environment]::GetFolderPath('Programs')
-    $shortcut = $shell.CreateShortcut((Join-Path $programs 'Jarvis.lnk'))
-    $shortcut.TargetPath = Join-Path (Split-Path -Parent $python) 'pythonw.exe'
-    $shortcut.Arguments = '-I "' + (Join-Path $jarvisRoot 'Launch-Jarvis.pyw') + '"'
-    $shortcut.WorkingDirectory = $jarvisRoot
-    $shortcut.Description = 'Jarvis - local assistant'
-    $shortcut.IconLocation = (Join-Path $jarvisRoot 'jarvis.ico') + ',0'
-    $shortcut.Save()
-    Write-Host 'Jarvis window observed; Start menu shortcut created. Native MVP acceptance remains pending.'
+    # Both places, and written the same way from one description, so they cannot drift
+    # apart on an update. The Start menu is where Windows expects an application to be;
+    # the desktop is where the owner asked for it, because searching the Start menu for
+    # something you open every day is a small tax paid every day.
+    $target = Join-Path (Split-Path -Parent $python) 'pythonw.exe'
+    $arguments = '-I "' + (Join-Path $jarvisRoot 'Launch-Jarvis.pyw') + '"'
+    $icon = (Join-Path $jarvisRoot 'jarvis.ico') + ',0'
+    foreach ($folder in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Desktop'))) {
+        if (-not $folder -or -not (Test-Path -LiteralPath $folder)) { continue }
+        $shortcut = $shell.CreateShortcut((Join-Path $folder 'Jarvis.lnk'))
+        $shortcut.TargetPath = $target
+        $shortcut.Arguments = $arguments
+        $shortcut.WorkingDirectory = $jarvisRoot
+        $shortcut.Description = 'Jarvis - local assistant'
+        $shortcut.IconLocation = $icon
+        $shortcut.Save()
+    }
+    Write-Host 'Jarvis window observed; Start menu and desktop shortcuts created. Native MVP acceptance remains pending.'
 } catch {
     Write-Error ('Jarvis setup stopped: ' + $_.Exception.Message) -ErrorAction Continue
     exit 1
