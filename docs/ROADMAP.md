@@ -59,7 +59,7 @@
 | Фаза | Результат | Статус |
 | --- | --- | --- |
 | 0 Реальность | Закрыть пять открытых ворот выше | Не начата |
-| 1 Длинная задача | 64 шага и час, durable-запуск с возобновлением, живой чеклист, очередь подтверждений, бюджет | **Ядро готово 17.09**: потолки, журнал, фазы, возобновление, бюджет — с тестами. Осталось: чеклист в UI, очередь подтверждений, кнопка «продолжить», живой прогон |
+| 1 Длинная задача | 64 шага и час, durable-запуск с возобновлением, живой чеклист, очередь подтверждений, бюджет | **Сделано 17–18.09**: потолки, журнал, фазы, возобновление, бюджет, чеклист, продолжение прерванной задачи, отсчёт времени на подтверждение. Открыто: очередь подтверждений — нужно решение владельца (Р7); живой прогон ждёт Windows |
 | 2 Сервисы API | Asana, Notion, Teams, Excel/OneDrive; сценарий «подготовь всё к встрече» | Не начата |
 | 3 Глаза | Дерево интерфейса окна, снимок окна, разбор моделью по отдельному согласию | Не начата |
 | 4 Руки | Клик по элементу, ограниченные клавиши, буфер обмена, управление окнами, координаты как последний фолбэк | Не начата |
@@ -118,22 +118,20 @@ and do not start phase 2 before these gates pass.
 ### На машине разработки, пока Windows недоступна
 
 ```text
-Finish phase 1 of docs/AGENT_PLAN.md: the long task already has its durable core, so build
-the surface the owner touches.
+Phase 1 of docs/AGENT_PLAN.md is built except for the approval queue, which is waiting on a
+decision by the owner (Р7 in that document). Do not build the queue before that decision.
 
-Read AGENTS.md, docs/AGENT_PLAN.md (phase 1 and its status section) and
-tests/unit/test_long_task.py. Preserve all existing work. Add the live checklist to the
-planner window from the Runner's own notify() events: done / running / waiting, with the
-waiting state naming approval or input. Add the approval queue, so confirmations that pile
-up while the task works are shown together and each one is refused on its own. Show
-unfinished runs from WorkflowStore.unfinished() and let the owner resume one: restore()
-plus a RunJournal on the same run id. A resumed task observes its targets again, so do not
-carry observations across the restart.
+Read AGENTS.md, docs/AGENT_PLAN.md (phase 1 and its status section),
+tests/unit/test_long_task.py and tests/integration/test_long_task_ui.py, and preserve all
+existing work. Useful work available on this machine: exercise the long task against the
+offline provider and a long scripted plan and fix what the checklist, the resume list or
+the journal get wrong; harden resumption against a journal that is unreadable, full or
+concurrently written; and prepare phase 2 connectors as design only, without registering
+tools, since phase 2 does not start before phase 0 passes.
 
 Run focused tests, then the full pytest, ruff check, ruff format --check and mypy --strict.
 On macOS use pytest --ignore=tests/unit/test_windows_native.py and mypy --platform win32,
 and say in the report that these are host adjustments, not repository changes. Do not claim
-any Windows, microphone, mail or model behaviour from this machine, and do not start phase 2
-before phase 0 passes on Windows.
+any Windows, microphone, mail or model behaviour from this machine.
 ```
 

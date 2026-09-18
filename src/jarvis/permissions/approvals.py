@@ -54,11 +54,20 @@ class _Grant:
 class ApprovalAuthority:
     """A capability handed only to trusted UI composition, never to tool discovery/planners."""
 
-    def __init__(self, approve: Callable[[Action, Channel], ApprovalToken]) -> None:
+    def __init__(
+        self,
+        approve: Callable[[Action, Channel], ApprovalToken],
+        remaining: Callable[[Action], float],
+    ) -> None:
         self._approve = approve
+        self._remaining = remaining
 
     def approve(self, action: Action, channel: Channel = Channel.UI) -> ApprovalToken:
         return self._approve(action, channel)
+
+    def remaining(self, action: Action) -> float:
+        """Seconds left to answer, so the owner can be told. Reading is not approving."""
+        return self._remaining(action)
 
 
 class ApprovalStore:
@@ -93,7 +102,14 @@ class ApprovalStore:
                 self._tokens[token.secret] = _Grant(action.signature, pending[1])
                 return token
 
-        return ApprovalAuthority(issue)
+        def remaining(action: Action) -> float:
+            with self._lock:
+                pending = self._pending.get(action.request_id)
+                if pending is None or pending[0] != action:
+                    return 0
+                return max(0.0, pending[1] - self._clock())
+
+        return ApprovalAuthority(issue, remaining)
 
     def request(self, action: Action) -> None:
         with self._lock:

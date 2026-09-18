@@ -27,9 +27,11 @@ from jarvis.core.planner.contracts import Limits, PlanResult, Provider, Step
 from jarvis.core.planner.deepseek_provider import DeepSeekProvider
 from jarvis.core.planner.offline import OfflineProvider
 from jarvis.core.planner.openai_provider import OpenAIProvider
+from jarvis.core.planner.resume import restore
 from jarvis.core.planner.routing import EscalatingRouter
 from jarvis.core.report import written
 from jarvis.core.workflow.journal import RunJournal
+from jarvis.core.workflow.models import RunRecord
 from jarvis.core.workflow.store import WorkflowFailure
 from jarvis.mail.session import MailSession
 from jarvis.memory.store import MemoryFailure, MemoryStore
@@ -40,6 +42,7 @@ from jarvis.security.credentials import setup_command
 from jarvis.tools.windows import WindowsBackend
 from jarvis.ui import workers
 from jarvis.ui.approval_dialog import ApprovalDialog
+from jarvis.ui.checklist import Checklist
 from jarvis.ui.mail_panel import MailPanel
 from jarvis.ui.mcp_panel import McpPanel
 from jarvis.ui.memory_panel import MemoryPanel
@@ -208,6 +211,23 @@ class PlannerWindow(QDialog):
                 "Ошибочный шаг выполнится без остановки; BLOCKED и CRITICAL остаются запрещены."
             )
         )
+        unfinished = QHBoxLayout()
+        self.unfinished = QComboBox()
+        self.unfinished.setAccessibleName("Незавершённые задачи")
+        self.resume_button = QPushButton("Продолжить прерванную задачу")
+        self.resume_button.clicked.connect(self.resume)
+        unfinished.addWidget(self.unfinished, 1)
+        unfinished.addWidget(self.resume_button)
+        layout.addLayout(unfinished)
+        layout.addWidget(
+            note(
+                "Прерванная задача возобновляется по своему журналу: уже выданные действия "
+                "не повторяются. Что она видела до перезапуска, не сохраняется — цели "
+                "наблюдаются заново."
+            )
+        )
+        self._resume: RunRecord | None = None
+        self._list_unfinished()
         buttons = QHBoxLayout()
         self.run_button = QPushButton("Запустить планировщик")
         self.run_button.setObjectName("primary")
@@ -220,6 +240,8 @@ class PlannerWindow(QDialog):
         layout.addLayout(buttons)
         self.status = note("Готово. По умолчанию: офлайн-провайдер и симуляция.")
         layout.addWidget(self.status)
+        self.checklist = Checklist()
+        layout.addWidget(self.checklist)
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
         layout.addWidget(self.output, 1)
@@ -255,6 +277,8 @@ class PlannerWindow(QDialog):
             self.mail,
         ):
             widget.setEnabled(not value)
+        self.unfinished.setEnabled(not value)
+        self.resume_button.setEnabled(not value and bool(self._unfinished))
         self.stop_button.setEnabled(value)
         self.voice.set_planning(value)
         self._voice_busy(self.voice.worker is not None)
@@ -283,6 +307,7 @@ class PlannerWindow(QDialog):
             or self._closing
         ):
             return
+        resume, self._resume = self._resume, None
         command = self.command.toPlainText()
         if not command.strip() or len(command) > 4000:
             self.status.setText("Введите команду от 1 до 4 000 символов.")
@@ -339,7 +364,10 @@ class PlannerWindow(QDialog):
         self.voice.was_cancelled = False
         self._busy(True)
         mode = Mode.SIMULATION if self.simulation.isChecked() else Mode.EXECUTE
-        limits, journal = self._durable(command, mode)
+        limits, journal = self._durable(command, mode, resume)
+        steps = restore(resume) if resume is not None else ()
+        self.checklist.reset()
+        self.checklist.restore(steps)
         self.worker = PlannerWorker(
             self.registry,
             self.engine,
@@ -353,6 +381,7 @@ class PlannerWindow(QDialog):
             self.bench.harvester,
             self.bench.learner,
             journal,
+            steps,
         )
         self.worker.progress_event.connect(self._event)
         self.worker.prompt.connect(self._prompt)
@@ -360,7 +389,46 @@ class PlannerWindow(QDialog):
         self.memory.consume_selection()
         workers.start(self.worker)
 
-    def _durable(self, command: str, mode: Mode) -> tuple[Limits, RunJournal | None]:
+    def _list_unfinished(self) -> None:
+        """Offer what was left in flight, newest first, with nothing invented about it."""
+        self.unfinished.clear()
+        self._unfinished: tuple[RunRecord, ...] = ()
+        try:
+            self._unfinished = self.bench.workflows.unfinished()
+        except WorkflowFailure:
+            self.unfinished.addItem("Журнал задач недоступен")
+        else:
+            for record in self._unfinished:
+                waiting = {
+                    "waiting_approval": "ждала подтверждения",
+                    "waiting_input": "ждала ответа",
+                }.get(record.phase, "прервана")
+                done = sum(1 for step in record.steps if not step.unresolved)
+                journalled = f"{done}/{len(record.steps)}"
+                self.unfinished.addItem(
+                    f"{record.request[:70]} — {waiting}, шагов в журнале: {journalled}"
+                )
+            if not self._unfinished:
+                self.unfinished.addItem("Незавершённых задач нет")
+        self.resume_button.setEnabled(bool(self._unfinished))
+
+    @Slot()
+    def resume(self) -> None:
+        """Pick up an interrupted run: same request, same journal, same mode."""
+        index = self.unfinished.currentIndex()
+        if self.worker is not None or not (0 <= index < len(self._unfinished)):
+            return
+        record = self._unfinished[index]
+        self._resume = record
+        self.command.setPlainText(record.request)
+        # The mode belongs to the run, not to the checkbox: a task that was executing does
+        # not continue as a simulation, and a simulation does not become execution.
+        self.simulation.setChecked(record.mode == Mode.SIMULATION.value)
+        self.start()
+
+    def _durable(
+        self, command: str, mode: Mode, resume: RunRecord | None = None
+    ) -> tuple[Limits, RunJournal | None]:
         """Open the run this task will be carried by, or say why it has to stay short.
 
         The long bounds are only honest while a journal records what was issued, so an
@@ -369,6 +437,8 @@ class PlannerWindow(QDialog):
         """
         if not self.limits.durable:
             return self.limits, None
+        if resume is not None:
+            return self.limits, RunJournal(self.bench.workflows, resume.id)
         try:
             record = self.bench.workflows.start(command, mode)
         except WorkflowFailure:
@@ -383,6 +453,7 @@ class PlannerWindow(QDialog):
         if self._closing or self.worker is None:
             return
         self.progress_event.emit(kind, value)
+        self.checklist.record(kind, value)
         if kind == "budget" and isinstance(value, tuple):
             spent, ceiling = value
             self.status.setText(f"Обращений к модели: {spent} из {ceiling}.")
@@ -407,6 +478,7 @@ class PlannerWindow(QDialog):
                 self._approve_without_review(prompt.id, prompt.value)
                 return
             self.status.setText("Ожидается подтверждение точного действия.")
+            self.checklist.wait("approval")
             # The voice panel adds the spoken channel: the same authority, the same snapshot,
             # reached by repeating one detail of it instead of by a click.
             dialog = ApprovalDialog(
@@ -419,6 +491,7 @@ class PlannerWindow(QDialog):
 
             def approved(result: int) -> None:
                 self.approval_dialog = None
+                self.checklist.wait(None)
                 worker.respond(
                     prompt.id, dialog.token if result == QDialog.DialogCode.Accepted else None
                 )
@@ -428,6 +501,7 @@ class PlannerWindow(QDialog):
             dialog.open()
         elif prompt.kind == "clarification" and isinstance(prompt.value, str):
             self.status.setText("Нужно уточнение команды.")
+            self.checklist.wait("clarification")
             self.voice.announce(prompt.value)
             question = QDialog(self.prompt_parent)
             question.setWindowTitle("Уточнение команды")
@@ -447,6 +521,7 @@ class PlannerWindow(QDialog):
 
             def answered(result: int) -> None:
                 self.question_dialog = None
+                self.checklist.wait(None)
                 worker.respond(
                     prompt.id, answer.text() if result == QDialog.DialogCode.Accepted else None
                 )
@@ -507,6 +582,9 @@ class PlannerWindow(QDialog):
                 dialog.reject()
         self.worker = None
         self.last_result = worker.outcome
+        self.checklist.settle()
+        # A run that stopped mid-step is now offered for resumption; one that closed is not.
+        self._list_unfinished()
         # What was done, in the owner's words, above the engine's own account of it.
         self.output.appendPlainText("\n".join(written(worker.outcome)))
         self.status.setText(worker.outcome.summary)
