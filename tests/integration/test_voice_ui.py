@@ -462,7 +462,7 @@ def test_standing_capture_arms_the_confirmation_and_frees_the_microphone(
         assert dialog is not None
         # Standing capture is already the owner's visible choice, so it asks without a press.
         qtbot.waitUntil(lambda: window.voice.confirming is not None, timeout=PATIENCE)
-        with qtbot.waitSignal(window.task_finished) as result:
+        with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
             fixture.speech_ends.set()
         assert result.args == ["finished"] and window.outbox.count == 1
         assert dialog.token is not None and dialog.token.channel is Channel.VOICE

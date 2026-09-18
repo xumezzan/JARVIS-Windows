@@ -19,6 +19,11 @@ from jarvis.core.report import HEADLINE
 from jarvis.security.browser_policy import NetworkPolicy
 from jarvis.ui.planner_window import PlannerWindow
 
+# The budget every interface wait in this suite uses. pytest-qt's own default is five
+# seconds, which is generous on the machine that writes a test and tight on a shared
+# runner doing four other things; a run that hangs still fails, three times later.
+PATIENCE = 15000
+
 
 def click_approval(window: PlannerWindow, qtbot: QtBot) -> None:
     qtbot.waitUntil(lambda: window.approval_dialog is not None, timeout=15000)
@@ -36,7 +41,7 @@ def test_offline_multistep(qtbot: QtBot, tmp_path: Path, simulation: bool) -> No
         assert window.simulation.isChecked() and window.provider_choice.currentIndex() == 0
         window.simulation.setChecked(simulation)
         window.command.setPlainText("проверь систему дважды")
-        with qtbot.waitSignal(window.task_finished) as result:
+        with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
             QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
         assert result.args == ["simulated" if simulation else "finished"]
         assert window.output.toPlainText().count("local.check:") == 2
@@ -61,7 +66,7 @@ def test_exact_ui_approval_only(qtbot: QtBot, tmp_path: Path, approve: bool) -> 
         assert dialog is not None and window.outbox.count == 0
         assert MESSAGE["body"] in dialog.preview.toPlainText()
         assert not window.command.isEnabled()
-        with qtbot.waitSignal(window.task_finished) as result:
+        with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
             if approve:
                 QTest.mouseClick(dialog.approve_button, Qt.MouseButton.LeftButton)
             else:
@@ -90,7 +95,7 @@ def test_autonomous_mode_replaces_only_the_human_review(
     window.show()
     try:
         if autonomous:
-            with qtbot.waitSignal(window.task_finished) as result:
+            with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
                 assert window.run_command("test", execute=True, autonomous=True)
             assert result.args == ["finished"]
             # No dialog was shown, yet the outbox holds exactly the approved snapshot.
@@ -100,7 +105,7 @@ def test_autonomous_mode_replaces_only_the_human_review(
             assert window.run_command("test", execute=True, autonomous=False)
             qtbot.waitUntil(lambda: window.approval_dialog is not None)
             assert window.outbox.count == 0
-            with qtbot.waitSignal(window.task_finished):
+            with qtbot.waitSignal(window.task_finished, timeout=PATIENCE):
                 window.stop()
             assert window.outbox.count == 0
     finally:
@@ -117,7 +122,7 @@ def test_clarification_resumes(qtbot: QtBot, tmp_path: Path) -> None:
         qtbot.waitUntil(lambda: window.question_dialog is not None)
         assert window.answer_input is not None and window.answer_button is not None
         window.answer_input.setText("проверь систему дважды")
-        with qtbot.waitSignal(window.task_finished) as result:
+        with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
             QTest.mouseClick(window.answer_button, Qt.MouseButton.LeftButton)
         assert result.args == ["simulated"]
         assert window.output.toPlainText().count("local.check:") == 2
@@ -146,7 +151,7 @@ def test_stop_pending_work(qtbot: QtBot, tmp_path: Path, phase: str) -> None:
             qtbot.waitUntil(
                 lambda: window.approval_dialog is not None or window.question_dialog is not None
             )
-        with qtbot.waitSignal(window.task_finished) as result:
+        with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
             QTest.mouseClick(window.stop_button, Qt.MouseButton.LeftButton)
         assert result.args == ["cancelled"]
         assert window.worker is None and window.outbox.count == 0
@@ -257,7 +262,7 @@ def test_invented_target_is_rejected_without_backend_hooks(
     try:
         window.simulation.setChecked(simulation)
         window.command.setPlainText("test")
-        with qtbot.waitSignal(window.task_finished) as result:
+        with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
             window.start()
         assert result.args == ["error"] and "unobserved_target" in window.status.text()
         assert not probe.calls and window.approval_dialog is None
@@ -324,7 +329,7 @@ def test_a_field_the_planner_never_observed_is_rejected(qtbot: QtBot, tmp_path: 
     try:
         window.simulation.setChecked(False)
         window.command.setPlainText("test")
-        with qtbot.waitSignal(window.task_finished) as result:
+        with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
             window.start()
         assert result.args == ["error"] and "unobserved_target" in window.status.text()
         assert [item.operation for item in probe.calls] == ["list"]
@@ -403,7 +408,7 @@ def test_a_finished_run_teaches_the_words_it_was_given(qtbot: QtBot, tmp_path: P
     try:
         window.simulation.setChecked(False)
         window.command.setPlainText("проверь систему")
-        with qtbot.waitSignal(window.task_finished):
+        with qtbot.waitSignal(window.task_finished, timeout=PATIENCE):
             window.start()
         assert window.last_result is not None and window.last_result.status == "finished"
         assert {(record.phrase, record.target) for record in learnt.read()} == {

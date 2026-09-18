@@ -172,12 +172,15 @@ def test_a_screen_without_an_account_offers_no_sign_in(qtbot: QtBot, store: Fake
     panel.shutdown()
 
 
-def test_the_screen_opens_by_itself_once_and_then_stays_a_button(tmp_path: Path) -> None:
+def test_the_screen_opens_by_itself_once_and_then_stays_a_button(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
     assert first_run(tmp_path)
     session = MailSession(FakeCredentials(), FakeGraph())
     audit = AuditLog(tmp_path / "audit.sqlite3")
     try:
         window = SetupWindow(session, audit, tmp_path)
+        qtbot.addWidget(window)
         # Shown once: the next start comes up on the dashboard, not on the setup screen.
         assert not first_run(tmp_path)
         window.shutdown()
