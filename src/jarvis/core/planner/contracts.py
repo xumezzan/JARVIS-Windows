@@ -74,23 +74,68 @@ class Provider(Protocol):
 
 
 @dataclass(frozen=True)
+class Budget:
+    """What one task may spend on thinking, counted rather than estimated.
+
+    Calls are the honest unit. A price per call would have to be copied from a vendor's
+    page, would go stale without saying so, and would put a number in front of the owner
+    that nothing in this repository can verify. So the ceiling is the number of times a
+    model was asked; the run reports how much of it went, and stops when it is gone.
+
+    The count is deliberately tier-blind, because the runner is: it never learns that there
+    are two models (`planner/routing.py`). A ceiling that distinguished the expensive model
+    would have to live with the router that chooses it.
+    """
+
+    max_calls: int = 16
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.max_calls <= 256:
+            raise ValueError("Invalid planner budget.")
+
+
+@dataclass(frozen=True)
 class Limits:
+    """Bounds on one task.
+
+    The long bounds are not a matter of trust: `durable` may only be set by a caller that
+    also carries the run journal, and the runner refuses a long task without one. Sixty-four
+    steps is the journal's own ceiling (`workflow.models.MAX_STEPS`), so a task can never
+    outgrow the record that makes resuming it safe.
+    """
+
     max_steps: int = 8
     max_questions: int = 3
     provider_seconds: float = 30
     total_seconds: float = 180
+    durable: bool = False
+    budget: "Budget" = field(default_factory=Budget)
 
     def __post_init__(self) -> None:
+        steps, seconds = (64, 3600) if self.durable else (16, 300)
         if not (
-            1 <= self.max_steps <= 16
+            1 <= self.max_steps <= steps
             and 0 <= self.max_questions <= 3
             and 0 < self.provider_seconds <= 60
-            and 0 < self.total_seconds <= 300
+            and 0 < self.total_seconds <= seconds
         ):
             raise ValueError("Invalid planner limits.")
 
+    @classmethod
+    def long(cls, budget: "Budget | None" = None) -> "Limits":
+        """The bounds a durable run may use: the owner's own multi-step work."""
+        return cls(
+            max_steps=64,
+            provider_seconds=60,
+            total_seconds=3600,
+            durable=True,
+            budget=budget or Budget(max_calls=96),
+        )
 
-PlanStatus = Literal["finished", "simulated", "no_action", "error", "cancelled", "timeout", "limit"]
+
+PlanStatus = Literal[
+    "finished", "simulated", "no_action", "error", "cancelled", "timeout", "limit", "budget"
+]
 
 
 @dataclass(frozen=True)
@@ -109,6 +154,7 @@ class PlanResult:
             "cancelled": "Задача отменена.",
             "timeout": "Истекло время задачи или ожидания ответа.",
             "limit": "Достигнут предел шагов или уточнений.",
+            "budget": "Исчерпан бюджет обращений к модели. Задача остановлена.",
         }
         rows = [titles[self.status]]
         if self.error:
@@ -117,7 +163,7 @@ class PlanResult:
             f"{index}. {step.tool}: {step.outcome.status.value} ({step.outcome.error.value})"
             for index, step in enumerate(self.steps, 1)
         )
-        if self.status in ("error", "cancelled", "timeout", "limit") and any(
+        if self.status in ("error", "cancelled", "timeout", "limit", "budget") and any(
             step.outcome.may_have_effects for step in self.steps
         ):
             rows.append("Уже выданные действия не отозваны; проверьте их результаты.")

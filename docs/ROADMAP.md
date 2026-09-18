@@ -16,7 +16,7 @@
 | 2 Tools / permissions | Типизированный реестр, риск, точные одноразовые истекающие подтверждения, симуляция, аудит | Реализован локально |
 | 3 Windows | Открыть любое установленное приложение, фокус, список окон, ввод в наблюдённое поле с чтением обратно | Реализован; native Windows не проверен |
 | 4 Browser | Открыть, перейти, поиск, чтение, ввод, клик, вкладки; собственный Chromium | Реализован; JavaScript выключен, POST запрещён |
-| 5 Planner | Строгие вызовы, только реестр, ограниченный план, отмена, уточнения | Реализован; 8 действий на задачу |
+| 5 Planner | Строгие вызовы, только реестр, ограниченный план, отмена, уточнения | Реализован; длинная задача — 64 действия на durable-запуске |
 | 6 Voice | Удержание кнопки, расшифровка, STT/TTS, русские команды, отмена голосом | Реализован; настоящее оборудование не проверено |
 | 7 Memory | Профиль меток, просмотр/правка/удаление, уточнение контактов | Реализован локально |
 | 8 Outlook | OAuth/Graph, черновики, полный preview, отправка через разрешения | Реализован; живая почта не проверена |
@@ -59,7 +59,7 @@
 | Фаза | Результат | Статус |
 | --- | --- | --- |
 | 0 Реальность | Закрыть пять открытых ворот выше | Не начата |
-| 1 Длинная задача | 64 шага и час, durable-запуск с возобновлением, живой чеклист, очередь подтверждений, бюджет | Не начата |
+| 1 Длинная задача | 64 шага и час, durable-запуск с возобновлением, живой чеклист, очередь подтверждений, бюджет | **Ядро готово 17.09**: потолки, журнал, фазы, возобновление, бюджет — с тестами. Осталось: чеклист в UI, очередь подтверждений, кнопка «продолжить», живой прогон |
 | 2 Сервисы API | Asana, Notion, Teams, Excel/OneDrive; сценарий «подготовь всё к встрече» | Не начата |
 | 3 Глаза | Дерево интерфейса окна, снимок окна, разбор моделью по отдельному согласию | Не начата |
 | 4 Руки | Клик по элементу, ограниченные клавиши, буфер обмена, управление окнами, координаты как последний фолбэк | Не начата |
@@ -86,6 +86,11 @@ Mock-тест не доказывает работу Windows, микрофона
 
 ## Точный следующий prompt
 
+Ворота фазы 0 закрываются только на целевой Windows-машине. Пока она недоступна, работа
+продолжается по фазе 1 на машине разработки — второй prompt ниже.
+
+### На целевом Windows-ноутбуке
+
 ```text
 Close phase 0 on the target Windows 11 x64 laptop: install Jarvis and complete native acceptance.
 
@@ -105,6 +110,30 @@ actual search results; the owned Chromium is separate from Chrome.
 
 Record Windows build, runtime and package versions and every passed/failed/pending gate.
 Only after real Windows compatibility checks, create a reproducible dependency lock and
-repeat clean setup with it. Do not start phase 1 of docs/AGENT_PLAN.md until these gates pass,
-and do not implement later phases early.
+repeat clean setup with it. Phase 1 of docs/AGENT_PLAN.md already has its durable core,
+written and tested on the development machine; run it for real here instead of rewriting it,
+and do not start phase 2 before these gates pass.
 ```
+
+### На машине разработки, пока Windows недоступна
+
+```text
+Finish phase 1 of docs/AGENT_PLAN.md: the long task already has its durable core, so build
+the surface the owner touches.
+
+Read AGENTS.md, docs/AGENT_PLAN.md (phase 1 and its status section) and
+tests/unit/test_long_task.py. Preserve all existing work. Add the live checklist to the
+planner window from the Runner's own notify() events: done / running / waiting, with the
+waiting state naming approval or input. Add the approval queue, so confirmations that pile
+up while the task works are shown together and each one is refused on its own. Show
+unfinished runs from WorkflowStore.unfinished() and let the owner resume one: restore()
+plus a RunJournal on the same run id. A resumed task observes its targets again, so do not
+carry observations across the restart.
+
+Run focused tests, then the full pytest, ruff check, ruff format --check and mypy --strict.
+On macOS use pytest --ignore=tests/unit/test_windows_native.py and mypy --platform win32,
+and say in the report that these are host adjustments, not repository changes. Do not claim
+any Windows, microphone, mail or model behaviour from this machine, and do not start phase 2
+before phase 0 passes on Windows.
+```
+

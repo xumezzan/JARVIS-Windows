@@ -18,7 +18,7 @@ from jarvis.core.planner.contracts import (
     Step,
 )
 from jarvis.core.workflow.journal import Journal
-from jarvis.core.workflow.models import step_key
+from jarvis.core.workflow.models import Phase, step_key
 from jarvis.core.workflow.store import WorkflowFailure
 from jarvis.knowledge.harvest import Harvester
 from jarvis.knowledge.models import KnowledgeContext
@@ -49,6 +49,7 @@ class Runner:
         knowledge: KnowledgeContext | None = None,
         derived: DerivedContext | None = None,
         journal: Journal | None = None,
+        resumed: tuple[Step, ...] = (),
         harvester: Harvester | None = None,
         learner: Learner | None = None,
         notify: Callable[[str, object], None] = lambda kind, value: None,
@@ -70,7 +71,11 @@ class Runner:
         self.notify = notify
         self.cancelled = Event()
         self.active: Action | None = None
-        self.steps: list[Step] = []
+        # A resumed run starts already holding what the earlier process did. Those steps
+        # count against the ceiling and are shown in the report, and they carry no results,
+        # so nothing they touched is addressable until this task observes it again.
+        self.steps: list[Step] = list(resumed)
+        self.calls = 0
         self._used = False
 
     def cancel(self) -> None:
@@ -81,6 +86,11 @@ class Runner:
     async def run(self, command: str, mode: Mode = Mode.SIMULATION) -> PlanResult:
         if self._used or not command.strip() or len(command) > 4000 or not isinstance(mode, Mode):
             return PlanResult("error", error="invalid_request")
+        if self.limits.durable and self.journal is None:
+            # The long bounds exist because a journal carries the task across a restart.
+            # Without one they would be a promise made on trust, so they are refused here
+            # rather than honoured quietly (`AGENTS.md`, planner boundary).
+            return PlanResult("error", error="journal_required")
         self._used = True
         job = asyncio.create_task(self._run(command, mode))
 
@@ -98,22 +108,24 @@ class Runner:
             if job in done:
                 result = await job
                 self._learn(command, result)
-                return result
+                return self._settle(result)
             self.cancel()
             job.cancel()
             await asyncio.gather(job, return_exceptions=True)
-            return PlanResult("cancelled" if watcher in done else "timeout", tuple(self.steps))
+            return self._settle(
+                PlanResult("cancelled" if watcher in done else "timeout", tuple(self.steps))
+            )
         except asyncio.CancelledError:
             self.cancel()
             job.cancel()
             await asyncio.gather(job, return_exceptions=True)
-            return PlanResult("cancelled", tuple(self.steps))
+            return self._settle(PlanResult("cancelled", tuple(self.steps)))
         except TimeoutError:
-            return PlanResult("timeout", tuple(self.steps))
+            return self._settle(PlanResult("timeout", tuple(self.steps)))
         except ProviderError as error:
-            return PlanResult("error", tuple(self.steps), error.code)
+            return self._settle(PlanResult("error", tuple(self.steps), error.code))
         except Exception:
-            return PlanResult("error", tuple(self.steps), "planner_failed")
+            return self._settle(PlanResult("error", tuple(self.steps), "planner_failed"))
         finally:
             if self.active is not None:
                 self.engine.cancel(self.active)
@@ -124,6 +136,39 @@ class Runner:
             job.cancel()
             watcher.cancel()
             await asyncio.gather(job, watcher, return_exceptions=True)
+
+    def _mark(self, phase: Phase) -> None:
+        """Say where the run stands, and never let saying it change what happens.
+
+        A store that refuses the note leaves the run looking unfinished, and that is the
+        safe appearance: an unfinished run is offered for resumption, while a run wrongly
+        recorded as done would quietly take its own journal out of the picture.
+        """
+        if self.journal is None:
+            return
+        try:
+            self.journal.phase(phase)
+        except WorkflowFailure:
+            return
+
+    def _settle(self, result: PlanResult) -> PlanResult:
+        """Close the durable run with the phase its outcome deserves, unchanged."""
+        self._mark(
+            "done"
+            if result.status in ("finished", "simulated", "no_action")
+            else "cancelled"
+            if result.status == "cancelled"
+            else "failed"
+        )
+        return result
+
+    async def _ask(self, question: str) -> str | None:
+        """Waiting for the owner's words is a state of the run, not a pause inside a step."""
+        self._mark("waiting_input")
+        try:
+            return await self.clarify(question)
+        finally:
+            self._mark("running")
 
     def _learn(self, command: str, result: PlanResult) -> None:
         """Only a run that finished teaches. A failed one would teach the wrong lesson."""
@@ -150,7 +195,7 @@ class Runner:
         ):
             if self.limits.max_questions == 0:
                 return PlanResult("limit")
-            answer = await self.clarify(
+            answer = await self._ask(
                 "В команде есть ссылка на контакт. Уточните полную команду и точного адресата. "
                 "Сохранённое имя или роль не определяют получателя и не разрешают отправку. "
                 "Для почты нужен точный email-адрес."
@@ -164,6 +209,12 @@ class Runner:
         while True:
             if self.cancelled.is_set():
                 raise asyncio.CancelledError
+            if self.calls >= self.limits.budget.max_calls:
+                # The ceiling stops the task with what it has, rather than spending past
+                # what the owner agreed to and reporting it afterwards.
+                return PlanResult("budget", tuple(self.steps))
+            self.calls += 1
+            self.notify("budget", (self.calls, self.limits.budget.max_calls))
             self.notify("thinking", len(self.steps) + 1)
             async with asyncio.timeout(self.limits.provider_seconds):
                 raw = await self.provider.propose(
@@ -193,7 +244,7 @@ class Runner:
             if proposal.kind == "clarify":
                 if len(answers) >= self.limits.max_questions:
                     return PlanResult("limit", tuple(self.steps))
-                answer = await self.clarify(proposal.question)
+                answer = await self._ask(proposal.question)
                 if answer is None:
                     return PlanResult("cancelled", tuple(self.steps))
                 if not answer.strip() or len(answer) > 4000:
@@ -221,7 +272,7 @@ class Runner:
                 ):
                     if len(answers) >= self.limits.max_questions:
                         return PlanResult("limit", tuple(self.steps))
-                    answer = await self.clarify(
+                    answer = await self._ask(
                         "Укажите точные email для Кому, Копия и Скрытая копия. "
                         "Адрес из письма, памяти или предложения модели не определяет получателя. "
                         "Ответ уточняет данные и не подтверждает отправку."
@@ -253,7 +304,11 @@ class Runner:
                 self.engine.cancel(action)
                 self.active = None
                 return PlanResult("error", tuple(self.steps), "duplicate_effect")
-            token = await self.approve(action) if action.risk is Risk.CONFIRM else None
+            token = None
+            if action.risk is Risk.CONFIRM:
+                self._mark("waiting_approval")
+                token = await self.approve(action)
+                self._mark("running")
             if self.cancelled.is_set():
                 raise asyncio.CancelledError
             if journal is not None:

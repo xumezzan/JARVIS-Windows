@@ -697,7 +697,10 @@ class MainWindow(QMainWindow):
         if not self.running:
             # A run started from the planner window itself; mirror it here too.
             self._begin()
-        if kind == "thinking":
+        if kind == "budget" and isinstance(value, tuple):
+            spent, ceiling = value
+            self.action_label.setText(f"Обращений к модели: {spent} из {ceiling}.")
+        elif kind == "thinking":
             self._set_state(UiState.THINKING)
             self.action_label.setText(f"Планирование шага {value}…")
         elif kind == "executing":

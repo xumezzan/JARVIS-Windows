@@ -9,8 +9,9 @@ from uuid import uuid4
 from PySide6.QtCore import QThread, Signal
 
 from jarvis.core.context.learning import Learner
-from jarvis.core.planner.contracts import Limits, PlanResult, Provider
+from jarvis.core.planner.contracts import Limits, PlanResult, Provider, Step
 from jarvis.core.planner.runner import Runner
+from jarvis.core.workflow.journal import Journal
 from jarvis.knowledge.harvest import Harvester
 from jarvis.knowledge.models import KnowledgeContext
 from jarvis.memory.derived import DerivedContext
@@ -45,6 +46,8 @@ class PlannerWorker(QThread):
         derived: DerivedContext | None = None,
         harvester: Harvester | None = None,
         learner: Learner | None = None,
+        journal: Journal | None = None,
+        resumed: tuple[Step, ...] = (),
     ) -> None:
         super().__init__()
         self.command = command
@@ -59,6 +62,8 @@ class PlannerWorker(QThread):
             memory=memory,
             knowledge=knowledge,
             derived=derived,
+            journal=journal,
+            resumed=resumed,
             harvester=harvester,
             learner=learner,
             notify=self.progress_event.emit,
