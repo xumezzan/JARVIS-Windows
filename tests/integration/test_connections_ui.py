@@ -1,5 +1,6 @@
 """Connecting a service in the real window, without a terminal and without a real key."""
 
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -164,15 +165,19 @@ def test_the_screen_says_excel_needs_a_work_account_before_the_consent(
     consent, it is a choice of account; said afterwards, it looks like a broken connector.
     """
     # The Microsoft section exists only where the session does, and so does its consent.
-    panel = ConnectionsPanel(session=MailSession(), audit=AuditLog(tmp_path / "audit.sqlite3"))
-    qtbot.addWidget(panel)
-    panel.show()
-    settled(qtbot, panel)
-    labels = [
-        widget.text()
-        for widget in panel.findChildren(QLabel)
-        if "Excel" in widget.text() or "OneDrive" in widget.text()
-    ]
-    said = [text for text in labels if "рабочем или учебном" in text]
-    assert said, labels
-    assert any("личном OneDrive" in text for text in said)
+    # The log is closed here rather than left to the collector: an audit that outlives its
+    # test is an open handle, and this suite turns every ResourceWarning into a failure -
+    # of whichever test happens to be running when the collector reaches it.
+    with closing(AuditLog(tmp_path / "audit.sqlite3")) as audit:
+        panel = ConnectionsPanel(session=MailSession(), audit=audit)
+        qtbot.addWidget(panel)
+        panel.show()
+        settled(qtbot, panel)
+        labels = [
+            widget.text()
+            for widget in panel.findChildren(QLabel)
+            if "Excel" in widget.text() or "OneDrive" in widget.text()
+        ]
+        said = [text for text in labels if "рабочем или учебном" in text]
+        assert said, labels
+        assert any("личном OneDrive" in text for text in said)
