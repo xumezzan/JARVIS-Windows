@@ -43,6 +43,10 @@ Action = Literal["ask", "save", "forget"]
 # list of what Jarvis can reach.
 ELSEWHERE = (
     ("Outlook", "Вход Microsoft во вкладке «Outlook» — почта открывается там же."),
+    (
+        "Teams и OneDrive",
+        "Тот же аккаунт Microsoft, но отдельные согласия: кнопки во вкладке «Outlook».",
+    ),
     ("Серверы MCP", "Ключ на каждый сервер во вкладке «Серверы MCP», после проверки набора."),
     ("ElevenLabs", "Голос: кнопка микрофона → «Настроить голос ElevenLabs Free…»."),
 )
