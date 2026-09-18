@@ -101,6 +101,10 @@ class MemoryPanel(QWidget):
         self.previous: Entry | None = None
         self.closed = False
         self.available = False
+        # Whether the start-up read has actually happened. The read is scheduled for the
+        # next turn of the event loop, so "no worker is running" answers True before it
+        # has even begun - and anything that waited on that alone was not waiting at all.
+        self.profile_read = False
         layout = QVBoxLayout(self)
         layout.addWidget(
             note(
@@ -318,6 +322,7 @@ class MemoryPanel(QWidget):
             return
         worker.wait()
         self.worker = None
+        self.profile_read = True
         self.available = not bool(worker.error)
         self.entries = worker.entries if self.available else ()
         self._render_profile()

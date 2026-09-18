@@ -45,8 +45,9 @@ def make_window(
     qtbot.addWidget(window)
     window.show()
     # The memory panel reads its store on the next turn and holds the run button until it
-    # is done; waiting here keeps that start-up out of what these tests are measuring.
-    qtbot.waitUntil(lambda: window.memory.worker is None, timeout=PATIENCE)
+    # is done. Waiting on "no worker is running" would answer True before the read has
+    # even started, so the wait is on the read itself having happened.
+    qtbot.waitUntil(lambda: window.memory.profile_read, timeout=PATIENCE)
     return window
 
 
@@ -400,9 +401,9 @@ def awaiting_approval(
     )
     qtbot.addWidget(window)
     window.show()
-    # The memory panel reads its store on the next turn; starting before it settles would
-    # measure that start-up instead of the confirmation.
-    qtbot.waitUntil(lambda: window.memory.worker is None, timeout=PATIENCE)
+    # The memory panel reads its store on the next turn; starting before that read has
+    # happened means `start` refuses silently and the confirmation never appears.
+    qtbot.waitUntil(lambda: window.memory.profile_read, timeout=PATIENCE)
     window.simulation.setChecked(False)
     if hands_free:
         # The command itself arrives by voice, the way it does with standing capture on.

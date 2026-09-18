@@ -333,7 +333,14 @@ class PlannerWindow(QDialog):
         try:
             memory = self.memory.snapshot()
         except (ValueError, MemoryFailure):
-            self.status.setText("Проверьте вкладку «Память»: загрузка и лимит выбранных записей.")
+            # A profile still being read is not a profile with something wrong in it, and
+            # sending the owner to the tab to look for a problem they do not have is worse
+            # than telling them to press the button again in a moment.
+            self.status.setText(
+                "Профиль памяти ещё читается — повторите через мгновение."
+                if self.memory.worker is not None
+                else "Проверьте вкладку «Память»: загрузка и лимит выбранных записей."
+            )
             return
         # Knowledge is selected by the command, so it is assembled here rather than chosen
         # in a panel; it leaves the machine under the same consent as the chosen labels.

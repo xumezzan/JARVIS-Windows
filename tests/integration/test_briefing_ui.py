@@ -49,9 +49,9 @@ def window(qtbot: QtBot, tmp_path: Path) -> PlannerWindow:
     # The window speaks its summary; a test has no speaker and no need of one.
     built.voice.speech_enabled.setChecked(False)
     # The button is switched off while the memory panel reads its store, exactly as the
-    # planner's own is. The status line is the honest signal that the read has happened:
-    # waiting on the worker alone can catch the moment before it starts.
-    qtbot.waitUntil(lambda: "Загрузка" not in built.memory.status.text(), timeout=15000)
+    # planner's own is. The read begins on the next turn of the event loop, so the wait is
+    # on the read having happened rather than on no worker running.
+    qtbot.waitUntil(lambda: built.memory.profile_read, timeout=15000)
     qtbot.waitUntil(lambda: built.briefing_button.isEnabled(), timeout=15000)
     return built
 
