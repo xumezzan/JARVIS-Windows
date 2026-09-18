@@ -1,6 +1,5 @@
 """Desktop command shell: the command bar runs the real planner through PermissionEngine."""
 
-from datetime import datetime
 from uuid import UUID, uuid4
 
 from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer, Signal, Slot
@@ -15,11 +14,13 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -34,14 +35,20 @@ from jarvis.observability.logging import ShellLog
 from jarvis.security.browser_policy import NetworkPolicy
 from jarvis.security.credentials import setup_command
 from jarvis.ui.activity_log import ActivityLog
-from jarvis.ui.components import IconButton, MonthCalendar, Panel
+from jarvis.ui.checklist import Checklist
+from jarvis.ui.components import IconButton, Panel, StatusDot
+from jarvis.ui.connection_probe import ConnectionProbe
 from jarvis.ui.dashboard import OrbWidget, line_icon
+from jarvis.ui.home import STARTERS, AgentCard, ConnectedApps, QuickActions, SummaryCard, TodayPanel
 from jarvis.ui.permission_workbench import PermissionWorkbench
 from jarvis.ui.planner_window import PlannerWindow
+from jarvis.ui.preferences import MAX_NAME, HomePreferences
 from jarvis.ui.setup_window import SetupWindow
 from jarvis.ui.states import STATE_LABELS, UiState
-from jarvis.ui.theme import PALETTES, STYLESHEET, build_stylesheet, load_fonts
+from jarvis.ui.theme import PALETTES, build_stylesheet, load_fonts
+from jarvis.ui.today_worker import TodayWorker
 from jarvis.ui.voice_panel import HoldButton, VoicePanel
+from jarvis.ui.workers import start as start_worker
 
 # Finite planner error categories rendered as advice; never arbitrary text from a tool.
 ERROR_ADVICE: dict[str, str] = {
@@ -67,6 +74,32 @@ PLAN_STATES: dict[str, tuple[UiState, ShellEvent]] = {
     "limit": (UiState.ERROR, ShellEvent.FAILED),
     "cancelled": (UiState.CANCELLED, ShellEvent.CANCELLED),
     "timeout": (UiState.ERROR, ShellEvent.TIMED_OUT),
+}
+
+
+# The three fixed widths this screen is laid out around. The rail is a rail - it never
+# takes space from the work - and the day column stays narrow enough to be read at a glance.
+RAIL_WIDTH = 216
+RAIL_COMPACT = 64
+JOURNAL_WIDTH = 288
+DAY_WIDTH = 320
+ORB_SIZE = 212
+ORB_COMPACT = 132
+# Wide enough for four zones side by side, and for three of them without the journal.
+WIDE = 1400
+COMPACT = 1180
+
+# The colour of the dot beside the state. The words stay the ones in `states.py`: two
+# vocabularies for one thing is how a screen starts contradicting itself.
+STATUS_TONES: dict[UiState, str] = {
+    UiState.IDLE: "live",
+    UiState.LISTENING: "busy",
+    UiState.THINKING: "busy",
+    UiState.AWAITING_APPROVAL: "warn",
+    UiState.EXECUTING: "busy",
+    UiState.SUCCESS: "live",
+    UiState.ERROR: "error",
+    UiState.CANCELLED: "warn",
 }
 
 
@@ -98,17 +131,25 @@ class MainWindow(QMainWindow):
         self._waits = 0
         self._closing = False
         self._closed = False
+        self.today_worker: TodayWorker | None = None
+        self.probe: ConnectionProbe | None = None
+        # Two things this window remembers about its owner: what to call them, and which
+        # palette they chose. Both are local, and neither is worth asking for twice.
+        self.preferences = HomePreferences(config.data_dir / "home.json", tuple(PALETTES))
         self.setWindowTitle("JARVIS • Desktop Preview")
         self.resize(1480, 940)
         self.setMinimumSize(860, 640)
         load_fonts()
-        self.setStyleSheet(STYLESHEET)
+        self.setStyleSheet(build_stylesheet(self.preferences.theme))
         self._build_ui()
         # One planner session for the whole application, so the microphone, the command bar
         # and the planner window share one registry, permission engine and audit log.
         self._ensure_planner()
         self._set_state(UiState.IDLE)
         self._record(ShellEvent.STARTED)
+        # What is connected is a fact about this machine, and the screen says it out loud
+        # rather than showing eight tiles that all look the same.
+        self._probe_connections()
         self.command_input.setFocus()
         self._submit_shortcut = QShortcut(QKeySequence("Ctrl+Return"), self)
         self._submit_shortcut.activated.connect(self.submit)
@@ -124,277 +165,422 @@ class MainWindow(QMainWindow):
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         self.scroll_area.setWidget(central)
         self.setCentralWidget(self.scroll_area)
-        root = QVBoxLayout(central)
-        root.setContentsMargins(20, 16, 20, 20)
-        root.setSpacing(24)
-        header = QHBoxLayout()
-        mark = label("", "brandMark")
-        mark.setPixmap(line_icon("orb", "#8dc2ff", 24).pixmap(24, 24))
-        header.addWidget(mark)
-        header.addWidget(label("Jarvis", "wordmark"))
-        header.addStretch()
-        self.motion_button = QPushButton("Анимация")
-        self.motion_button.setObjectName("motion")
-        self.motion_button.setCheckable(True)
-        self.motion_button.setChecked(True)
-        self.motion_button.setAccessibleName("Анимация сферы")
-        header.addWidget(self.motion_button)
-        self.theme_picker = QComboBox()
-        self.theme_picker.setObjectName("themePicker")
-        self.theme_picker.setAccessibleName("Цветовая тема")
-        self.theme_picker.addItems(list(PALETTES))
-        self.theme_picker.currentTextChanged.connect(self._apply_theme)
-        header.addWidget(self.theme_picker)
-        root.addLayout(header)
-        columns = QHBoxLayout()
-        columns.setSpacing(20)
-        root.addLayout(columns, 1)
+        root = QHBoxLayout(central)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(16)
+        root.addWidget(self._build_rail())
+        self.dashboard_grid = QGridLayout()
+        self.dashboard_grid.setSpacing(16)
+        root.addLayout(self.dashboard_grid, 1)
+        self.left_column = self._build_journal()
+        self.center_column = self._build_center()
+        self.right_column = self._build_day()
+        self._show_mode_line()
+        self._show_greeting()
+        self._compact_layout: bool | None = None
+        self._layout_key = ""
+        self._arrange_dashboard()
 
+    def _build_rail(self) -> QFrame:
+        """Who this is, where to go, and whether it is running - in that order."""
         sidebar = QFrame()
         self.sidebar = sidebar
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(160)
+        sidebar.setFixedWidth(RAIL_WIDTH)
         side = QVBoxLayout(sidebar)
-        side.setContentsMargins(8, 12, 8, 12)
-        side.setSpacing(8)
+        side.setContentsMargins(12, 16, 12, 14)
+        side.setSpacing(6)
+
+        brand = QHBoxLayout()
+        brand.setSpacing(10)
+        mark = label("", "brandMark")
+        mark.setPixmap(line_icon("orb", "#7fb2f5", 26).pixmap(26, 26))
+        mark.setFixedSize(26, 26)
+        brand.addWidget(mark)
+        brand_text = QVBoxLayout()
+        brand_text.setSpacing(1)
+        brand_text.setContentsMargins(0, 0, 0, 0)
+        self.wordmark = label("Jarvis", "wordmark")
+        self.wordmark.setWordWrap(False)
+        self.brand_tagline = label("Твой AI-ассистент. Всегда рядом.", "tagline")
+        brand_text.addWidget(self.wordmark)
+        brand_text.addWidget(self.brand_tagline)
+        brand.addLayout(brand_text, 1)
+        side.addLayout(brand)
+        side.addSpacing(14)
+
         self.navigation = QButtonGroup(self)
         self.navigation.setExclusive(True)
         self.nav_buttons: dict[str, QPushButton] = {}
+        # Five entries, each of which opens something real. A menu item that scrolls the
+        # page to a card is not navigation, and the owner said so about the last one.
         for key, title, icon_name in (
             ("home", "Главная", "home"),
-            ("chat", "Чат", "chat"),
-            ("tasks", "Задачи", "tasks"),
-            ("calendar", "Календарь", "calendar"),
-            ("apps", "Инструменты", "apps"),
+            ("journal", "Журнал", "clock"),
+            ("plans", "Планы", "calendar"),
+            ("connections", "Подключения", "link"),
             ("settings", "Настройки", "settings"),
         ):
             button = QPushButton(title)
             button.setAccessibleName(title)
             button.setToolTip(title)
             button.setIcon(line_icon(icon_name))
-            button.setIconSize(QSize(21, 21))
+            button.setIconSize(QSize(18, 18))
             button.setObjectName("nav")
             button.setCheckable(True)
-            button.setFixedHeight(52)
+            button.setFixedHeight(42)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.clicked.connect(lambda checked=False, target=key: self._navigate(target))
             self.navigation.addButton(button)
             self.nav_buttons[key] = button
             side.addWidget(button)
         self.nav_buttons["home"].setChecked(True)
-        side.addStretch()
-        avatar = label("J", "avatar")
-        avatar.setFixedSize(40, 40)
-        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        side.addWidget(avatar)
-        self.sidebar_greeting = label("Ваше пространство", "greeting")
-        self.sidebar_hint = label("На этом устройстве", "sectionHint")
-        side.addWidget(self.sidebar_greeting)
-        side.addWidget(self.sidebar_hint)
-        columns.addWidget(sidebar)
+        side.addStretch(1)
 
-        self.dashboard_grid = QGridLayout()
-        self.dashboard_grid.setSpacing(24)
-        columns.addLayout(self.dashboard_grid, 1)
-        self.left_column = QWidget()
-        self.left_column.setObjectName("column")
-        left = QVBoxLayout(self.left_column)
+        divider = QFrame()
+        divider.setObjectName("divider")
+        divider.setFrameShape(QFrame.Shape.NoFrame)
+        divider.setFixedHeight(1)
+        side.addWidget(divider)
+        side.addSpacing(10)
+        bottom = QHBoxLayout()
+        bottom.setSpacing(10)
+        self.avatar = label("J", "avatar")
+        self.avatar.setFixedSize(34, 34)
+        self.avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        bottom.addWidget(self.avatar)
+        agent = QVBoxLayout()
+        agent.setSpacing(2)
+        agent.setContentsMargins(0, 0, 0, 0)
+        self.agent_name = label("Jarvis", "tileTitle")
+        self.agent_name.setWordWrap(False)
+        agent.addWidget(self.agent_name)
+        state_row = QHBoxLayout()
+        state_row.setSpacing(6)
+        self.agent_dot = StatusDot("live", "Оболочка запущена")
+        state_row.addWidget(self.agent_dot)
+        self.agent_state = label("Онлайн", "tileCaption")
+        self.agent_state.setWordWrap(False)
+        state_row.addWidget(self.agent_state, 1)
+        agent.addLayout(state_row)
+        bottom.addLayout(agent, 1)
+        side.addLayout(bottom)
+        return sidebar
+
+    def _build_journal(self) -> QWidget:
+        """What has happened. Quiet on purpose - it is a record, not a workplace."""
+        column = QWidget()
+        column.setObjectName("column")
+        left = QVBoxLayout(column)
         left.setContentsMargins(0, 0, 0, 0)
-        left.setSpacing(18)
-        activity_card, activity_body = self._card("История действий", "Этот сеанс")
+        left.setSpacing(16)
+        self.journal_card = Panel("Журнал", icon="clock", action="Весь журнал")
+        if self.journal_card.action_button is not None:
+            # The whole journal is the audit of every tool call, which already has a window.
+            self.journal_card.action_button.clicked.connect(self.open_permissions)
         self.activity = ActivityLog(self.config.activity_limit)
         self.activity.setObjectName("activity")
-        activity_body.addWidget(self.activity, 1)
-        activity_body.addWidget(label("История текущего сеанса", "muted"))
-        left.addWidget(activity_card, 3)
-        self.apps_card, apps_body = self._card("Инструменты")
-        apps_body.addWidget(label("Приложения под вашим контролем", "sectionHint"))
-        for title, icon in (("Браузер", "globe"), ("Блокнот", "document"), ("VS Code", "code")):
-            entry = QPushButton(title)
-            entry.setObjectName("toolEntry")
-            entry.setIcon(line_icon(icon, "#8dc2ff"))
-            entry.setIconSize(QSize(22, 22))
-            entry.setMinimumHeight(52)
-            entry.setToolTip(f"{title}: открыть окно инструментов и разрешений")
-            entry.clicked.connect(self.open_permissions)
-            apps_body.addWidget(entry)
-        apps_body.addWidget(
-            label(
-                "Открыть можно любое установленное приложение: назовите его. "
-                "Действия проходят проверку разрешений.",
-                "sectionHint",
-            )
-        )
-        left.addWidget(self.apps_card, 2)
+        self.journal_card.body.addWidget(self.activity, 1)
+        self._completed = 0
+        self.summary_label = label("Завершено команд: 0", "sectionHint")
+        self.journal_card.body.addWidget(self.summary_label)
+        left.addWidget(self.journal_card, 1)
+        return column
 
-        self.center_column = QWidget()
-        self.center_column.setObjectName("column")
-        center = QVBoxLayout(self.center_column)
-        center.setContentsMargins(0, 6, 0, 0)
-        center.setSpacing(10)
-        hero_title = label("Jarvis", "heroTitle")
-        hero_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        center.addWidget(hero_title)
-        self.state_label = label("", "state")
-        self.state_label.setAccessibleName("Состояние задачи")
-        self.state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        center.addWidget(self.state_label)
+    def _build_center(self) -> QWidget:
+        """The one thing this window is for, with everything around it kept out of its way."""
+        column = QWidget()
+        column.setObjectName("column")
+        center = QVBoxLayout(column)
+        center.setContentsMargins(0, 0, 0, 0)
+        center.setSpacing(14)
+
+        head = QHBoxLayout()
+        head.setSpacing(16)
+        greeting = QVBoxLayout()
+        greeting.setSpacing(4)
+        greeting.setContentsMargins(0, 0, 0, 0)
+        self.greeting_title = label("Привет", "greetingTitle")
+        self.greeting_title.setWordWrap(False)
+        greeting.addWidget(self.greeting_title)
+        greeting.addWidget(label("Я Jarvis. Чем могу помочь?", "greetingLine"))
+        head.addLayout(greeting, 1)
+        head.addWidget(self._build_status_pill(), 0, Qt.AlignmentFlag.AlignTop)
+        center.addLayout(head)
+
+        # The sphere is the one picture on the screen, and it says one thing: whether
+        # anything is happening. It sits above the command rather than in place of it.
         self.orb = OrbWidget()
-        self.motion_button.toggled.connect(self.orb.set_motion_enabled)
-        center.addWidget(self.orb, 1)
-        voice_controls = QHBoxLayout()
-        voice_controls.setSpacing(22)
-        voice_controls.addStretch()
-        keyboard = IconButton("keyboard", "Ввести команду с клавиатуры")
-        keyboard.clicked.connect(lambda: self._navigate("chat"))
-        voice_controls.addWidget(keyboard)
+        self.orb.setFixedSize(ORB_SIZE, ORB_SIZE)
+        orb_row = QHBoxLayout()
+        orb_row.addStretch(1)
+        orb_row.addWidget(self.orb)
+        orb_row.addStretch(1)
+        center.addLayout(orb_row)
+
+        command_frame = QFrame()
+        self.command_frame = command_frame
+        command_frame.setObjectName("commandBar")
+        command_layout = QHBoxLayout(command_frame)
+        command_layout.setContentsMargins(8, 6, 8, 6)
+        command_layout.setSpacing(10)
+        # The microphone lives in the command line: speaking and typing are the same act,
+        # so they belong in one place rather than in two corners of the screen.
         self.microphone_button = HoldButton("")
         self.microphone_button.setObjectName("microphone")
-        self.microphone_button.setIcon(line_icon("mic", "#81bfff", 32))
-        self.microphone_button.setIconSize(QSize(30, 30))
-        self.microphone_button.setFixedSize(72, 72)
+        self.microphone_button.setIcon(line_icon("mic", "#81bfff", 26))
+        self.microphone_button.setIconSize(QSize(20, 20))
+        self.microphone_button.setFixedSize(42, 42)
+        self.microphone_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.microphone_button.setAccessibleName("Удерживайте для записи команды")
         self.microphone_button.setToolTip(
             "Удерживайте кнопку или пробел на ней и говорите. "
             "Распознанная команда запускается сразу."
         )
-        voice_controls.addWidget(self.microphone_button)
+        command_layout.addWidget(self.microphone_button)
+        self.command_input = QPlainTextEdit()
+        self.command_input.setObjectName("commandInput")
+        self.command_input.installEventFilter(self)
+        self.command_input.setAccessibleName("Текстовая команда")
+        self.command_input.setPlaceholderText("Скажите, что сделать")
+        self.command_input.setFixedHeight(42)
+        self.command_input.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        command_layout.addWidget(self.command_input, 1)
+        self.submit_button = QPushButton()
+        self.submit_button.setObjectName("send")
+        self.submit_button.setIcon(line_icon("arrow", "#06101f", 28))
+        self.submit_button.setIconSize(QSize(20, 20))
+        self.submit_button.setFixedSize(42, 42)
+        self.submit_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.submit_button.setAccessibleName("Выполнить команду")
+        self.submit_button.setToolTip("Выполнить команду · Ctrl+Enter")
+        self.submit_button.clicked.connect(self.submit)
+        command_layout.addWidget(self.submit_button)
+        command_frame.setFixedHeight(58)
+        center.addWidget(command_frame)
+
+        hints = QHBoxLayout()
+        hints.setSpacing(10)
+        self.validation_label = label("Ctrl+Enter — выполнить", "inputHint")
+        hints.addWidget(self.validation_label)
+        hints.addStretch()
+        self.voice_hint = label("Микрофон выключен. Запись по удержанию.", "inputHint")
+        self.voice_hint.setAccessibleName("Состояние микрофона")
+        hints.addWidget(self.voice_hint)
+        center.addLayout(hints)
+
+        # Four ways a command usually starts. They fill the line rather than run: the owner
+        # finishes the sentence, and nothing leaves this window until they send it.
+        starters = QHBoxLayout()
+        starters.setSpacing(10)
+        self.starter_buttons: dict[str, QPushButton] = {}
+        for icon_name, title, spoken, prefix in STARTERS:
+            chip = QPushButton(title)
+            chip.setObjectName("chip")
+            chip.setIcon(line_icon(icon_name, "#7fb2f5", 20))
+            chip.setIconSize(QSize(15, 15))
+            chip.setFixedHeight(36)
+            # A row of chips must never be what decides the width of the window; Qt
+            # shortens the label itself when the four of them stop fitting.
+            chip.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            chip.setAccessibleName(spoken)
+            chip.setToolTip(f"{spoken} — подставить в строку команды: «{prefix}…»")
+            chip.clicked.connect(lambda _=False, text=prefix: self._use_example(text))
+            starters.addWidget(chip, 1)
+            self.starter_buttons[title] = chip
+        center.addLayout(starters)
+
+        # The empty state teaches by offering whole commands; once there is a task, the
+        # card that shows the work takes its place.
+        self.quick_actions = QuickActions()
+        self.quick_actions.chosen.connect(self._use_example)
+        self.examples_box = self.quick_actions
+        center.addWidget(self.quick_actions)
+
+        self.task_card, task_body = self._card("Сейчас делаю")
+        self.transcript = QPlainTextEdit()
+        self.transcript.setObjectName("transcript")
+        self.transcript.setReadOnly(True)
+        self.transcript.setAccessibleName("Принятый текст команды")
+        self.transcript.setPlaceholderText("Здесь появится команда, которую я принял")
+        self.transcript.setFixedHeight(46)
+        task_body.addWidget(self.transcript)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 1)
+        self.progress.setValue(0)
+        self.progress.setTextVisible(False)
+        self.progress.setFixedHeight(4)
+        task_body.addWidget(self.progress)
+        # The same steps the planner window shows, in the window the owner is looking at.
+        self.checklist = Checklist()
+        task_body.addWidget(self.checklist, 1)
+        self.action_label = label("Пока ничего не выполнялось.", "muted")
+        self.action_label.setAccessibleName("Результат задачи")
+        task_body.addWidget(self.action_label)
+        self.task_card.setVisible(False)
+        center.addWidget(self.task_card, 1)
+
+        center.addStretch(1)
+        center.addWidget(self._build_settings())
+        return column
+
+    def _build_status_pill(self) -> QFrame:
+        """One line that says whether the assistant is idle, busy or stopped, and a way in."""
+        pill = QFrame()
+        pill.setObjectName("statusPill")
+        row = QHBoxLayout(pill)
+        row.setContentsMargins(12, 8, 8, 8)
+        row.setSpacing(10)
+        self.status_dot = StatusDot("live", "Система активна")
+        row.addWidget(self.status_dot)
+        column = QVBoxLayout()
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(1)
+        self.state_label = label("", "state")
+        self.state_label.setWordWrap(False)
+        self.state_label.setAccessibleName("Состояние задачи")
+        column.addWidget(self.state_label)
+        # The line under it is about the shell rather than the task: it is running, and it
+        # keeps saying so while the state above changes.
+        self.system_label = label("Система активна", "pillCaption")
+        self.system_label.setWordWrap(False)
+        column.addWidget(self.system_label)
+        row.addLayout(column, 1)
+        self.settings_button = IconButton("settings", "Настройки ассистента")
+        self.settings_button.clicked.connect(lambda: self._navigate("settings"))
+        row.addWidget(self.settings_button)
         self.stop_button = IconButton("close", "Остановить выполнение (Esc)")
         self.stop_button.setEnabled(False)
+        self.stop_button.setVisible(False)
         self.stop_button.clicked.connect(self.stop)
-        voice_controls.addWidget(self.stop_button)
-        voice_controls.addStretch()
-        center.addLayout(voice_controls)
-        self.voice_hint = label("Микрофон выключен. Запись только по удержанию.", "muted")
-        self.voice_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.voice_hint.setAccessibleName("Состояние микрофона")
-        center.addWidget(self.voice_hint)
-        center.addSpacing(14)
-        controls = QHBoxLayout()
-        controls.setSpacing(10)
-        controls.addStretch()
+        row.addWidget(self.stop_button)
+        return pill
+
+    def _build_settings(self) -> QWidget:
+        """Everything configurable in this window, in one place the owner opens on purpose.
+
+        One line instead of four controls: the state stays in words on the screen, because
+        the owner asked for autonomy to be visible, not for four decisions before speaking.
+        """
+        holder = QWidget()
+        holder.setObjectName("zone")
+        outer = QVBoxLayout(holder)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(8)
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(8)
+        self.mode_label = label("", "sectionHint")
+        self.mode_label.setWordWrap(False)
+        self.mode_label.setAccessibleName("Как работает ассистент")
+        mode_row.addWidget(self.mode_label)
+        self.mode_button = QPushButton("изменить")
+        self.mode_button.setObjectName("link")
+        self.mode_button.setCheckable(True)
+        self.mode_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.mode_button.toggled.connect(self._show_modes)
+        mode_row.addWidget(self.mode_button)
+        mode_row.addStretch(1)
+        outer.addLayout(mode_row)
+
+        self.mode_box = Panel("Настройки", icon="settings")
+        modes = self.mode_box.body
+        pickers = QHBoxLayout()
+        pickers.setSpacing(10)
         self.run_mode = QComboBox()
         self.run_mode.addItems(["Выполнять действия", "Только симуляция"])
         self.run_mode.setAccessibleName("Режим выполнения")
-        self.run_mode.setMaximumWidth(210)
-        controls.addWidget(self.run_mode)
+        self.run_mode.currentIndexChanged.connect(self._show_mode_line)
+        pickers.addWidget(self.run_mode, 1)
         self.provider_mode = QComboBox()
         self.provider_mode.addItems(
             ["Офлайн: учебные команды", "Облако: DeepSeek, сложные задачи — OpenAI"]
         )
         self.provider_mode.setAccessibleName("Планировщик команд")
-        self.provider_mode.setMaximumWidth(230)
-        controls.addWidget(self.provider_mode)
-        controls.addStretch()
-        center.addLayout(controls)
-        self.autonomy = QCheckBox("Автономно: не подтверждать каждый шаг")
+        self.provider_mode.currentIndexChanged.connect(self._show_mode_line)
+        pickers.addWidget(self.provider_mode, 1)
+        modes.addLayout(pickers)
+        self.autonomy = QCheckBox("Делать самому, не спрашивая на каждом шаге")
         self.autonomy.setChecked(True)
         self.autonomy.setAccessibleName("Автономный режим")
-        center.addWidget(self.autonomy, 0, Qt.AlignmentFlag.AlignHCenter)
-        self.hands_free = QCheckBox("Свободные руки: слушать по слову «Джарвис»")
+        self.autonomy.toggled.connect(self._show_mode_line)
+        modes.addWidget(self.autonomy)
+        self.hands_free = QCheckBox("Слушать по слову «Джарвис», без удержания кнопки")
         self.hands_free.setAccessibleName("Постоянное прослушивание микрофона")
         self.hands_free.setToolTip(
             "Микрофон слушает без удержания кнопки, пока переключатель включён. "
             "Выполняется только фраза, начинающаяся со слова «Джарвис»."
         )
         self.hands_free.toggled.connect(self._hands_free)
-        center.addWidget(self.hands_free, 0, Qt.AlignmentFlag.AlignHCenter)
-        command_label = label("Ваша команда", "sectionHint")
-        center.addWidget(command_label)
-        command_frame = QFrame()
-        self.command_frame = command_frame
-        command_frame.setObjectName("commandBar")
-        command_layout = QHBoxLayout(command_frame)
-        command_layout.setContentsMargins(14, 8, 10, 8)
-        command_symbol = label("")
-        command_symbol.setPixmap(line_icon("command", "#8dc2ff", 20).pixmap(20, 20))
-        command_layout.addWidget(command_symbol)
-        self.command_input = QPlainTextEdit()
-        self.command_input.setObjectName("commandInput")
-        self.command_input.installEventFilter(self)
-        command_label.setBuddy(self.command_input)
-        self.command_input.setAccessibleName("Текстовая команда")
-        self.command_input.setPlaceholderText("Что нужно сделать?")
-        self.command_input.setFixedHeight(58)
-        command_layout.addWidget(self.command_input, 1)
-        self.submit_button = QPushButton()
-        self.submit_button.setObjectName("send")
-        self.submit_button.setIcon(line_icon("arrow", "#e4eeff", 28))
-        self.submit_button.setIconSize(QSize(26, 26))
-        self.submit_button.setFixedSize(42, 42)
-        self.submit_button.setAccessibleName("Выполнить команду")
-        self.submit_button.setToolTip("Выполнить команду · Ctrl+Enter")
-        self.submit_button.clicked.connect(self.submit)
-        command_layout.addWidget(self.submit_button)
-        center.addWidget(command_frame)
-        self.validation_label = label(
-            "Скажите или напишите команду · Ctrl+Enter для запуска", "inputHint"
-        )
-        self.validation_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        center.addWidget(self.validation_label)
+        self.hands_free.toggled.connect(self._show_mode_line)
+        modes.addWidget(self.hands_free)
 
-        self.right_column = QWidget()
-        self.right_column.setObjectName("column")
-        right = QVBoxLayout(self.right_column)
-        right.setContentsMargins(0, 0, 0, 0)
-        right.setSpacing(18)
-        self.calendar_card, calendar_body = self._card("Сегодня", f"{datetime.now():%d.%m.%Y}")
-        calendar_body.addWidget(MonthCalendar())
-        calendar_body.addWidget(label("Календарь не подключён", "sectionHint"))
-        right.addWidget(self.calendar_card, 3)
+        appearance = QHBoxLayout()
+        appearance.setSpacing(10)
+        appearance.addWidget(label("Как к вам обращаться", "sectionHint"))
+        self.name_input = QLineEdit(self.preferences.name)
+        self.name_input.setMaxLength(MAX_NAME)
+        self.name_input.setPlaceholderText("имя для приветствия")
+        self.name_input.setAccessibleName("Имя владельца для приветствия")
+        self.name_input.setToolTip("Хранится только на этом компьютере, рядом с настройками.")
+        self.name_input.editingFinished.connect(self._remember_preferences)
+        appearance.addWidget(self.name_input, 1)
+        self.theme_picker = QComboBox()
+        self.theme_picker.setObjectName("themePicker")
+        self.theme_picker.setAccessibleName("Цветовая тема")
+        self.theme_picker.addItems(list(PALETTES))
+        self.theme_picker.setCurrentText(self.preferences.theme)
+        self.theme_picker.currentTextChanged.connect(self._apply_theme)
+        appearance.addWidget(self.theme_picker)
+        self.motion_button = QPushButton("Анимация")
+        self.motion_button.setObjectName("motion")
+        self.motion_button.setCheckable(True)
+        self.motion_button.setChecked(True)
+        self.motion_button.setAccessibleName("Анимация сферы")
+        self.motion_button.toggled.connect(self.orb.set_motion_enabled)
+        appearance.addWidget(self.motion_button)
+        modes.addLayout(appearance)
 
-        self.task_card, task_body = self._card("Текущая задача")
-        self._completed = 0
-        summary_row = QHBoxLayout()
-        summary_icon = label("")
-        summary_icon.setPixmap(line_icon("check", "#70e2c7", 26).pixmap(26, 26))
-        summary_row.addWidget(summary_icon)
-        self.summary_label = label("Завершено команд: 0")
-        summary_row.addWidget(self.summary_label, 1)
-        task_body.addLayout(summary_row)
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 1)
-        self.progress.setValue(0)
-        self.progress.setTextVisible(False)
-        task_body.addWidget(self.progress)
-
-        self.transcript = QPlainTextEdit()
-        self.transcript.setObjectName("transcript")
-        self.transcript.setReadOnly(True)
-        self.transcript.setAccessibleName("Принятый текст команды")
-        self.transcript.setPlaceholderText("Начните с одной команды")
-        self.transcript.setFixedHeight(62)
-        task_body.addWidget(self.transcript)
-        self.action_label = label("Её текст и факты выполнения появятся здесь.", "muted")
-        self.action_label.setAccessibleName("Результат задачи")
-        task_body.addWidget(self.action_label)
-        task_body.addStretch()
-
-        right.addWidget(self.task_card, 3)
-
-        suggestion, suggestion_body = self._card("От команды к действию")
-        suggestion.setObjectName("suggestion")
-        suggestion_body.addWidget(
-            label(
-                "Откройте инструменты, чтобы управлять приложениями и проверять разрешения.",
-                "muted",
-            )
-        )
-        self.permissions_button = QPushButton("Открыть инструменты")
-        self.permissions_button.setObjectName("secondary")
-        self.permissions_button.setIcon(line_icon("shield", "#e4eeff"))
+        self.permissions_button = QPushButton("Инструменты и разрешения")
+        self.permissions_button.setIcon(line_icon("shield", "#b8d6fa"))
         self.permissions_button.clicked.connect(self.open_permissions)
-        suggestion_body.addWidget(self.permissions_button)
-        self.planner_button = QPushButton("Открыть планировщик")
-        self.planner_button.setObjectName("primary")
-        self.planner_button.clicked.connect(self.open_planner)
-        suggestion_body.addWidget(self.planner_button)
-        self.setup_button = QPushButton("Настройка подключений")
-        self.setup_button.setObjectName("secondary")
-        self.setup_button.clicked.connect(self.open_setup)
-        suggestion_body.addWidget(self.setup_button)
-        right.addWidget(suggestion, 2)
-        self._compact_layout: bool | None = None
-        self._arrange_dashboard()
+        modes.addWidget(self.permissions_button)
+        self.mode_box.setVisible(False)
+        outer.addWidget(self.mode_box)
+        return holder
+
+    def _build_day(self) -> QWidget:
+        """What is around the task: the day, what is connected, and what is running."""
+        column = QWidget()
+        column.setObjectName("column")
+        right = QVBoxLayout(column)
+        right.setContentsMargins(0, 0, 0, 0)
+        right.setSpacing(16)
+
+        self.today = TodayPanel()
+        self.today.connect_requested.connect(self.open_setup)
+        self.today.open_requested.connect(self.open_calendar)
+        # Kept under their old names: the day still asks for the one thing it needs.
+        self.calendar_card = self.today
+        self.calendar_hint = self.today.hint
+        self.calendar_button = self.today.connect_button
+        right.addWidget(self.today)
+
+        self.connected_apps = ConnectedApps()
+        self.connected_apps.connect_requested.connect(self.open_setup)
+        self.setup_button = self.connected_apps.add_button
+        right.addWidget(self.connected_apps)
+
+        self.summary_card = SummaryCard()
+        right.addWidget(self.summary_card)
+
+        self.agent_card = AgentCard()
+        self.agent_card.open_requested.connect(self.open_planner)
+        self.planner_button = self.agent_card.open_button
+        right.addWidget(self.agent_card)
+        right.addStretch(1)
+        self._show_summary()
+        return column
 
     @staticmethod
     def _card(title: str, caption: str = "") -> tuple[QFrame, QVBoxLayout]:
@@ -405,28 +591,43 @@ class MainWindow(QMainWindow):
     def _apply_theme(self, theme: str) -> None:
         stylesheet = build_stylesheet(theme)
         self.setStyleSheet(stylesheet)
-        for dialog in (self.permission_workbench, self.planner_window):
+        for dialog in (self.permission_workbench, self.planner_window, self.setup_window):
             if dialog is not None:
                 dialog.setStyleSheet(stylesheet)
+        self._remember_preferences()
 
     def _arrange_dashboard(self) -> None:
-        compact = self.width() < 1300
-        if compact == self._compact_layout:
+        """Three widths, one rule: the command keeps the middle and the rail keeps its width.
+
+        Below the wide breakpoint the journal - the one column that is a record rather than
+        a workplace - moves under the work instead of squeezing it, and below the compact
+        one the rail drops to icons and the day joins the journal on the second row.
+        """
+        width = self.width()
+        key = "compact" if width < COMPACT else "medium" if width < WIDE else "wide"
+        if key == self._layout_key:
             return
+        self._layout_key = key
+        compact = key == "compact"
         self._compact_layout = compact
         for column in (self.left_column, self.center_column, self.right_column):
             self.dashboard_grid.removeWidget(column)
         for index in range(3):
             self.dashboard_grid.setColumnStretch(index, 0)
-        self.sidebar.setFixedWidth(64 if compact else 160)
+        self.sidebar.setFixedWidth(RAIL_COMPACT if compact else RAIL_WIDTH)
         for button in self.nav_buttons.values():
             button.setText("" if compact else button.accessibleName())
-        self.sidebar_greeting.setVisible(not compact)
-        self.sidebar_hint.setVisible(not compact)
+        for widget in (self.wordmark, self.brand_tagline, self.agent_name, self.agent_state):
+            widget.setVisible(not compact)
+        self.orb.setFixedSize(*((ORB_COMPACT, ORB_COMPACT) if compact else (ORB_SIZE, ORB_SIZE)))
         if compact:
-            self.center_column.setMinimumHeight(590)
-            self.orb.setMinimumHeight(240)
-            self.orb.setMaximumHeight(280)
+            # Nothing is pinned to a width here: at this size the two support columns share
+            # whatever is left, and the content has to fit rather than scroll sideways.
+            for column in (self.left_column, self.right_column):
+                column.setMinimumWidth(0)
+                column.setMaximumWidth(WIDE)
+            self.left_column.setVisible(True)
+            self.center_column.setMinimumHeight(560)
             self.dashboard_grid.addWidget(self.center_column, 0, 0, 1, 2)
             self.dashboard_grid.addWidget(self.left_column, 1, 0)
             self.dashboard_grid.addWidget(self.right_column, 1, 1)
@@ -434,13 +635,18 @@ class MainWindow(QMainWindow):
             self.dashboard_grid.setColumnStretch(1, 1)
         else:
             self.center_column.setMinimumHeight(0)
-            self.orb.setMinimumHeight(330)
-            self.orb.setMaximumHeight(16777215)
-            for index, (column, stretch) in enumerate(
-                ((self.left_column, 30), (self.center_column, 40), (self.right_column, 34))
+            # The support columns are fixed and the work takes everything else, so widening
+            # the window widens the command rather than the record beside it.
+            self.left_column.setFixedWidth(JOURNAL_WIDTH)
+            self.right_column.setFixedWidth(DAY_WIDTH)
+            for index, column in enumerate(
+                (self.left_column, self.center_column, self.right_column)
             ):
                 self.dashboard_grid.addWidget(column, 0, index)
-                self.dashboard_grid.setColumnStretch(index, stretch)
+            self.dashboard_grid.setColumnStretch(1, 1)
+            # Three zones instead of four: below the wide breakpoint the record gives its
+            # space to the work rather than squeezing both.
+            self.left_column.setVisible(key == "wide")
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -458,26 +664,43 @@ class MainWindow(QMainWindow):
         return super().eventFilter(watched, event)
 
     def _navigate(self, target: str) -> None:
+        """Every entry opens something real; none of them is a name for scrolling."""
         self.nav_buttons[target].setChecked(True)
-        if target == "settings":
-            # What a person means by "settings" here is which services are connected;
-            # the permission workbench has its own button on the dashboard.
+        if target == "connections":
             self.open_setup()
             return
-        destinations = {
-            "home": self.orb,
-            "chat": self.command_input,
-            "tasks": self.task_card,
-            "calendar": self.calendar_card,
-            "apps": self.apps_card,
-        }
-        widget = destinations[target]
+        if target == "plans":
+            # Plans are the routines the assistant runs by itself; they live in the planner
+            # window, and the entry opens them there rather than pretending otherwise.
+            self._open_planner_tab("Рутины")
+            return
+        if target == "settings":
+            self.mode_button.setChecked(True)
+            self.scroll_area.ensureWidgetVisible(self.mode_box)
+            self.run_mode.setFocus()
+            return
+        widget = self.command_input if target == "home" else self.journal_card
         self.scroll_area.ensureWidgetVisible(widget)
-        if target == "chat":
+        if target == "home":
             self.command_input.setFocus()
         else:
             widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
             widget.setFocus()
+
+    def _open_planner_tab(self, title: str) -> None:
+        planner = self._ensure_planner()
+        if planner is None:
+            return
+        for index in range(planner.tabs.count()):
+            if planner.tabs.tabText(index) == title:
+                planner.tabs.setCurrentIndex(index)
+                break
+        self.open_planner()
+
+    @Slot()
+    def open_calendar(self) -> None:
+        """The whole day rather than what is left of it: Outlook keeps the calendar."""
+        self._open_planner_tab("Outlook")
 
     def _record(self, event: ShellEvent) -> None:
         self.log.record(event, self._request_id)
@@ -485,15 +708,87 @@ class MainWindow(QMainWindow):
         if event == ShellEvent.SUCCEEDED:
             self._completed += 1
             self.summary_label.setText(f"Завершено команд: {self._completed}")
+            self._show_summary()
 
     def _set_state(self, state: UiState) -> None:
         self.state = state
         self.state_label.setText(STATE_LABELS[state])
+        self.status_dot.set_tone(STATUS_TONES[state], STATE_LABELS[state])
         self.orb.set_state(state)
         self.state_label.setProperty("status", state.value)
         self.state_label.style().unpolish(self.state_label)
         self.state_label.style().polish(self.state_label)
         self.state_changed.emit(state.value)
+
+    def _show_greeting(self) -> None:
+        """Greet the owner by the name they gave, or by no name at all - never by a guess."""
+        name = self.preferences.name
+        if not name:
+            planner = self.planner_window
+            account = planner.mail_session.account if planner is not None else None
+            # The address is the only name this application has been told; its local part
+            # is a reasonable greeting and a poor invention, so it is used only as it is.
+            local = account.address.split("@")[0] if account is not None else ""
+            name = local[:MAX_NAME].capitalize() if local.replace(".", "").isalpha() else ""
+        self.greeting_title.setText(f"Привет, {name}" if name else "Привет")
+        self.avatar.setText((name[:1] or "J").upper())
+
+    def _show_calendar(self) -> None:
+        """The day, or the one thing that has to happen before there is a day to show."""
+        planner = self.planner_window
+        account = planner.mail_session.account if planner is not None else None
+        self.today.show_account(account.address if account is not None else None)
+        if account is not None:
+            self.calendar_hint.setText(f"Календарь Microsoft · {account.address}")
+            self._read_today(account.model_dump(mode="json"))
+        self._show_greeting()
+        self._show_summary()
+
+    def _read_today(self, account: dict[str, object]) -> None:
+        """One bounded calendar read, off this thread, never while another one is running."""
+        planner = self.planner_window
+        if planner is None or self.today_worker is not None or self._closing:
+            return
+        worker = TodayWorker(planner.registry, planner.engine, account)
+        self.today_worker = worker
+        worker.finished.connect(self._today_read)
+        start_worker(worker)
+
+    @Slot()
+    def _today_read(self) -> None:
+        worker, self.today_worker = self.today_worker, None
+        if worker is None or self._closing:
+            return
+        self.today.show_events(worker.events, worker.read)
+        self._show_summary()
+
+    def _probe_connections(self) -> None:
+        """Ask the credential store what is actually connected, once, in a worker."""
+        if self.probe is not None or self._closing:
+            return
+        probe = ConnectionProbe(self.config.data_dir)
+        self.probe = probe
+        probe.finished.connect(self._connections_probed)
+        start_worker(probe)
+
+    @Slot()
+    def _connections_probed(self) -> None:
+        probe, self.probe = self.probe, None
+        if probe is None or self._closing:
+            return
+        planner = self.planner_window
+        account = planner.mail_session.account if planner is not None else None
+        self.connected_apps.apply({**probe.states, "microsoft": account is not None})
+        self._show_summary()
+
+    def _show_summary(self) -> None:
+        """Only what this window already knows, in one sentence."""
+        self.summary_card.summarise(
+            self.today.count,
+            self.today.next_event,
+            self._completed,
+            self.connected_apps.missing,
+        )
 
     def _set_busy(self, busy: bool) -> None:
         self.command_input.setReadOnly(busy)
@@ -503,7 +798,10 @@ class MainWindow(QMainWindow):
         self.autonomy.setEnabled(not busy)
         self.planner_button.setEnabled(not busy)
         self.permissions_button.setEnabled(not busy)
+        # A stop button on an idle screen is a control that does nothing; it appears when
+        # there is something to stop and goes away again when there is not.
         self.stop_button.setEnabled(busy)
+        self.stop_button.setVisible(busy)
         self.progress.setRange(0, 0 if busy else 1)
         if not busy:
             self.progress.setValue(0)
@@ -585,7 +883,40 @@ class MainWindow(QMainWindow):
             self.voice.message.connect(self.voice_hint.setText)
             self.voice.transcript_ready.connect(self._spoken)
         self.planner_window.setStyleSheet(self.styleSheet())
+        self._show_calendar()
         return self.planner_window
+
+    @Slot()
+    def _show_mode_line(self) -> None:
+        """One line that says how the assistant will work, in words rather than in controls."""
+        parts = [
+            "делаю сам" if self.autonomy.isChecked() else "спрашиваю на каждом шаге",
+            "офлайн-модель" if self.provider_mode.currentIndex() == 0 else "облачная модель",
+        ]
+        if self.run_mode.currentIndex() == 1:
+            parts.append("только симуляция")
+        if self.hands_free.isChecked():
+            parts.append("слушаю по слову «Джарвис»")
+        self.mode_label.setText(" · ".join(parts))
+        # The same sentence under the agent card: how it works belongs where it is said
+        # to be working, not only next to the switch that changes it.
+        self.agent_card.set_caption("На этом устройстве · " + " · ".join(parts))
+
+    @Slot()
+    def _remember_preferences(self) -> None:
+        """Keep the name and the palette for the next launch; an empty name is no name."""
+        self.preferences.remember(self.name_input.text(), self.theme_picker.currentText())
+        self.name_input.setText(self.preferences.name)
+        self._show_greeting()
+
+    @Slot(bool)
+    def _show_modes(self, shown: bool) -> None:
+        self.mode_box.setVisible(shown)
+        self.mode_button.setText("свернуть" if shown else "изменить")
+
+    def _use_example(self, text: str) -> None:
+        self.command_input.setPlainText(text)
+        self.command_input.setFocus()
 
     @Slot(bool)
     def _hands_free(self, enabled: bool) -> None:
@@ -691,6 +1022,11 @@ class MainWindow(QMainWindow):
         self._request_id = uuid4()
         self._cancel_requested = False
         self.running = True
+        self.checklist.reset()
+        # The examples were the empty state; once there is a task they are in the way, and
+        # the card that shows the work takes their place.
+        self.examples_box.setVisible(False)
+        self.task_card.setVisible(True)
         self._set_busy(True)
         self._set_state(UiState.THINKING)
         self._record(ShellEvent.SUBMITTED)
@@ -707,6 +1043,7 @@ class MainWindow(QMainWindow):
         if not self.running:
             # A run started from the planner window itself; mirror it here too.
             self._begin()
+        self.checklist.record(kind, value)
         if kind == "budget" and isinstance(value, tuple):
             spent, ceiling = value
             self.action_label.setText(f"Обращений к модели: {spent} из {ceiling}.")
@@ -742,6 +1079,7 @@ class MainWindow(QMainWindow):
         if not self.running:
             return
         state, event = PLAN_STATES.get(status, (UiState.ERROR, ShellEvent.FAILED))
+        self.checklist.settle()
         self._reset()
         self._set_state(state)
         result = self.planner_window.last_result if self.planner_window is not None else None
@@ -839,14 +1177,47 @@ class MainWindow(QMainWindow):
             return
         if self.setup_window is None:
             self.setup_window = SetupWindow(
-                planner.mail_session, planner.audit, self.config.data_dir, self
+                planner.mail_session,
+                planner.audit,
+                self.config.data_dir,
+                self,
+                # Shown beside the key, not editable there: the planner owns the identifier.
+                models={
+                    "deepseek": self.config.fast_model,
+                    "openai": planner.model.text().strip() or self.config.planner_model,
+                },
             )
             self.setup_window.finished.connect(self._setup_closed)
+            self.setup_window.navigate.connect(self._from_setup)
+        self.setup_window.setStyleSheet(self.styleSheet())
         self.setup_window.show()
         self.setup_window.raise_()
         self.setup_window.activateWindow()
 
+    @Slot(str)
+    def _from_setup(self, target: str) -> None:
+        """An entry of the setup rail that belongs here: open it, rather than duplicating it."""
+        if self._closing:
+            return
+        self.raise_()
+        self.activateWindow()
+        if target == "commands":
+            # Commands are configured where they are given, next to the command line.
+            self._navigate("settings")
+            self.run_mode.setFocus()
+            return
+        if target == "profile":
+            self._navigate("settings")
+            self.name_input.setFocus()
+            self.name_input.selectAll()
+            return
+        self._navigate("home")
+
     def _setup_closed(self) -> None:
+        # Something may have been connected while it was open; the day and the grid of
+        # services both say so at once rather than at the next launch.
+        self._show_calendar()
+        self._probe_connections()
         window, self.setup_window = self.setup_window, None
         if window is not None:
             window.shutdown()
