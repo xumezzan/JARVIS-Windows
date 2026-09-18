@@ -1,5 +1,6 @@
 """Notion connector. No integration token, workspace, network or real page is used."""
 
+import asyncio
 import json
 from collections.abc import Iterator
 from threading import Event as Flag
@@ -12,6 +13,8 @@ from jarvis.connectors.notion.connector import CAPABILITIES, NotionConnector
 from jarvis.connectors.notion.mapping import MAPPERS
 from jarvis.connectors.notion.models import (
     AppendInput,
+    CreatePageInput,
+    NewPage,
     NotionResult,
     PageInput,
     ReadInput,
@@ -280,3 +283,28 @@ async def test_a_missing_token_is_a_finite_failure_and_never_a_request(
 def test_appending_nothing_is_refused_before_anything_is_sent() -> None:
     with pytest.raises(ValueError):
         AppendInput(page=PAGE, paragraphs=[])
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_task_stops_before_notion_is_asked_anything(
+    connector: tuple[NotionConnector, FakeApi],
+) -> None:
+    """The same rule as everywhere else, proved where it costs something.
+
+    A search given up on costs nothing. A page created after the owner stopped the task is
+    a page in their workspace that nothing in this run accounts for, and the paragraphs of
+    an append are read by whoever the page is shared with.
+    """
+    built, api = connector
+    stopped = Flag()
+    stopped.set()
+    with pytest.raises(asyncio.CancelledError):
+        await built.search(SearchInput(query="Альфа"), ExecutionContext(stopped))
+    with pytest.raises(asyncio.CancelledError):
+        await built.create_page(
+            CreatePageInput(page=NewPage(parent=PAGE, title="Альфа")),
+            ExecutionContext(stopped),
+        )
+    with pytest.raises(asyncio.CancelledError):
+        await built.append(AppendInput(page=PAGE, paragraphs=["строка"]), ExecutionContext(stopped))
+    assert api.sent == []
