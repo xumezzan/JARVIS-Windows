@@ -3,7 +3,7 @@
 import json
 from contextlib import suppress
 
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
     QDialog,
@@ -102,6 +102,13 @@ class ApprovalDialog(QDialog):
         self.error_label = QLabel("Подтверждение действует до 60 секунд с подготовки действия.")
         self.error_label.setWordWrap(True)
         layout.addWidget(self.error_label)
+        # A task may now run for an hour, but this window is still a minute wide, so the
+        # owner is told how much of it is left instead of finding out by being refused.
+        self.countdown = QTimer(self)
+        self.countdown.setInterval(500)
+        self.countdown.timeout.connect(self._tick)
+        self.countdown.start()
+        self._tick()
         buttons = QHBoxLayout()
         self.cancel_button = QPushButton("Отмена")
         self.cancel_button.clicked.connect(self.reject)
@@ -112,6 +119,28 @@ class ApprovalDialog(QDialog):
         buttons.addWidget(self.cancel_button)
         buttons.addWidget(self.approve_button)
         layout.addLayout(buttons)
+
+    @Slot()
+    def _tick(self) -> None:
+        """Count the request down, and answer for the owner once it can no longer be met."""
+        if self.token is not None:
+            self.countdown.stop()
+            return
+        left = self._authority.remaining(self.action)
+        if left <= 0:
+            self.countdown.stop()
+            self.approve_button.setEnabled(False)
+            self.error_label.setText(
+                "Время на подтверждение истекло, снимок действия больше не действует. "
+                "Задача остановлена; её можно продолжить заново."
+            )
+            # Leaving a dead dialog open would hold the task for nothing: the snapshot is
+            # gone, so no answer given here could be honoured any more.
+            self.reject()
+            return
+        self.error_label.setText(
+            f"Подтвердить можно ещё {int(left)} с; после этого действие готовится заново."
+        )
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
