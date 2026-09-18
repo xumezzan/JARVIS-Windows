@@ -76,6 +76,27 @@ def line_icon(name: str, color: str = "#a5afbe", size: int = 24) -> QIcon:
             [(8, 23), (16, 23)],
         ],
         "bulb": [[(9, 18), (15, 18)], [(10, 21), (14, 21)]],
+        "mail": [[(3, 6), (21, 6), (21, 18), (3, 18), (3, 6)], [(3, 7), (12, 13), (21, 7)]],
+        "list": [[(4, 7), (20, 7)], [(4, 12), (20, 12)], [(4, 17), (14, 17)]],
+        "plus": [[(12, 5), (12, 19)], [(5, 12), (19, 12)]],
+        "chevron": [[(9, 5), (16, 12), (9, 19)]],
+        "info": [[(12, 11), (12, 17)]],
+        "search": [[(15, 15), (21, 21)]],
+        "link": [[(8, 12), (16, 12)]],
+        "user": [[(4, 21), (5, 17), (9, 15), (15, 15), (19, 17), (20, 21)]],
+        "spark": [
+            [
+                (12, 3),
+                (13.7, 10.3),
+                (21, 12),
+                (13.7, 13.7),
+                (12, 21),
+                (10.3, 13.7),
+                (3, 12),
+                (10.3, 10.3),
+                (12, 3),
+            ]
+        ],
         "shield": [
             [(12, 2), (21, 6), (19, 16), (12, 22), (5, 16), (3, 6), (12, 2)],
             [(8, 11), (11, 14), (16, 8)],
@@ -86,11 +107,14 @@ def line_icon(name: str, color: str = "#a5afbe", size: int = 24) -> QIcon:
         for point in points[1:]:
             path.lineTo(QPointF(*point))
         painter.drawPath(path)
-    if name in {"clock", "settings", "globe", "orb"}:
+    if name in {"clock", "settings", "globe", "orb", "info"}:
         painter.drawEllipse(QRectF(3, 3, 18, 18))
     if name == "orb":
         painter.setBrush(QColor(color))
         painter.drawEllipse(QRectF(10, 10, 4, 4))
+    if name == "info":
+        painter.setBrush(QColor(color))
+        painter.drawEllipse(QRectF(11, 6.5, 2, 2))
     if name == "settings":
         painter.drawEllipse(QRectF(8, 8, 8, 8))
         for angle in range(0, 360, 45):
@@ -112,6 +136,14 @@ def line_icon(name: str, color: str = "#a5afbe", size: int = 24) -> QIcon:
         painter.drawRoundedRect(QRectF(9, 2, 6, 13), 3, 3)
     if name == "bulb":
         painter.drawEllipse(QRectF(6, 2, 12, 13))
+    if name == "search":
+        painter.drawEllipse(QRectF(3, 3, 12, 12))
+    if name == "user":
+        painter.drawEllipse(QRectF(8, 3, 8, 8))
+    if name == "link":
+        # Two links of a chain: a connection, drawn rather than spelled out in a glyph.
+        painter.drawRoundedRect(QRectF(2.5, 9, 10, 6), 3, 3)
+        painter.drawRoundedRect(QRectF(11.5, 9, 10, 6), 3, 3)
     painter.end()
     icon = QIcon(pixmap)
     icon.addPixmap(pixmap, QIcon.Mode.Disabled)
@@ -203,11 +235,13 @@ class OrbWidget(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(glow)
         painter.drawEllipse(QRectF(-205, -205, 410, 410))
+        # The sphere reads as a body of light rather than a wireframe: the core carries
+        # most of it, and the ribbons below only describe its surface.
         core = QRadialGradient(QPointF(-25, -45), 200)
-        core.setColorAt(0, QColor(10, 17, 29, 12))
-        core.setColorAt(0.6, QColor(24, 44, 84, 50))
-        core.setColorAt(0.86, QColor(56, 102, 211, 95))
-        core.setColorAt(1, QColor(110, 167, 255, 25))
+        core.setColorAt(0, QColor(20, 38, 70, 95))
+        core.setColorAt(0.6, QColor(30, 58, 116, 155))
+        core.setColorAt(0.86, QColor(56, 102, 211, 150))
+        core.setColorAt(1, QColor(110, 167, 255, 45))
         painter.setBrush(core)
         painter.drawEllipse(QRectF(-147, -147, 294, 294))
         painter.setBrush(Qt.BrushStyle.NoBrush)
