@@ -23,6 +23,7 @@ import aiohttp
 from jarvis.browser.network import tls_context
 from jarvis.core.planner.contracts import PlannerInput, Proposal, ProviderError
 from jarvis.core.planner.openai_provider import INSTRUCTIONS, strict_schema, user_content
+from jarvis.permissions.policies import proposable
 from jarvis.security.credentials import load_api_key
 
 ENDPOINT = "https://api.deepseek.com/chat/completions"
@@ -86,7 +87,7 @@ class DeepSeekProvider:
         names: dict[str, str] = {}
         tools = []
         for tool in catalog:
-            if tool["risk"] not in ("SAFE", "CONFIRM"):
+            if not proposable(tool["risk"]):
                 continue
             name = tool["name"].replace(".", "__")
             if name in names:
@@ -131,7 +132,17 @@ class DeepSeekProvider:
             message = choice["message"]
             calls = message.get("tool_calls") or []
             if calls:
-                if len(calls) != 1 or calls[0].get("type") != "function":
+                # `parallel_tool_calls: false` is sent and not honoured: asked for three
+                # files, this vendor answers with three calls at once. Measured on
+                # deepseek-flash, 2026-09-18. Refusing the whole answer cost the task its
+                # first action and, with no retries, the task itself.
+                #
+                # The rule the assistant keeps is that exactly one action is taken per step,
+                # and that still holds: the first call is proposed, the rest are dropped
+                # unexecuted. They were written before the model could see any outcome, so
+                # they are guesses about a world it has not observed yet; the next step is
+                # asked for again with the real result in hand.
+                if calls[0].get("type") != "function":
                     raise ValueError
                 function = calls[0]["function"]
                 return Proposal(

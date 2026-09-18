@@ -10,6 +10,7 @@ import aiohttp
 from jarvis.browser.network import tls_context
 from jarvis.core.planner.contracts import PlannerInput, Proposal, ProviderError
 from jarvis.core.planner.identifiers import valid_model
+from jarvis.permissions.policies import proposable
 from jarvis.security.credentials import load_api_key
 
 INSTRUCTIONS = """You propose one next action for Jarvis, a local Windows assistant.
@@ -130,7 +131,7 @@ class OpenAIProvider:
         names: dict[str, str] = {}
         functions = []
         for tool in catalog:
-            if tool["risk"] not in ("SAFE", "CONFIRM"):
+            if not proposable(tool["risk"]):
                 continue
             name = tool["name"].replace(".", "__")
             if name in names:

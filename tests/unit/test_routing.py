@@ -191,3 +191,47 @@ async def test_the_runner_never_learns_there_are_two_models() -> None:
     proposal = await route.propose(context())
     assert isinstance(proposal, Proposal)
     assert call("local.check", {}).kind == "call"
+
+
+@pytest.mark.asyncio
+async def test_several_calls_at_once_still_propose_one_action() -> None:
+    """Measured on deepseek-flash: parallel_tool_calls=false is sent and not honoured.
+
+    Asked for three files, the vendor answers with three calls in one message. Refusing the
+    whole answer used to cost the task its first action, and with no retries, the task.
+    """
+
+    async def transport(payload: dict[str, Any]) -> bytes:
+        assert payload["parallel_tool_calls"] is False  # still asked for, still ignored
+        return json.dumps(
+            {
+                "choices": [
+                    {
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "type": "function",
+                                    "function": {
+                                        "name": "local__check",
+                                        "arguments": '{"delay_ms":0,"fail":false}',
+                                    },
+                                },
+                                {
+                                    "type": "function",
+                                    "function": {
+                                        "name": "local__check",
+                                        "arguments": '{"delay_ms":5,"fail":true}',
+                                    },
+                                },
+                            ]
+                        },
+                    }
+                ]
+            }
+        ).encode()
+
+    proposal = await DeepSeekProvider("deepseek-flash", transport=transport).propose(context())
+    # The first call is the proposal; the rest are dropped unexecuted, so one step is one action.
+    assert proposal.kind == "call" and proposal.tool == "local.check"
+    assert json.loads(proposal.arguments) == {"delay_ms": 0, "fail": False}

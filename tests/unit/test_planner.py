@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from jarvis.core.planner.contracts import Limits, PlannerInput, Proposal, Step
+from jarvis.core.planner.contracts import Limits, PlannerInput, Proposal, ProviderError, Step
 from jarvis.core.planner.offline import OfflineProvider, call
 from jarvis.core.planner.runner import Runner
 from jarvis.observability.audit import AuditLog
@@ -256,3 +256,49 @@ async def test_offline_clarification_reobserves_nonempty_notepad() -> None:
     ).kind == "clarify"
     answer = PlannerInput(command, (command,), (step,), Mode.EXECUTE, "[]")
     assert (await provider.propose(answer)).tool == "windows.open_app"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("vendor", ["deepseek", "openai"])
+async def test_every_provider_offers_the_levels_that_do_ordinary_work(
+    tmp_path: Path, vendor: str
+) -> None:
+    """A catalogue that hides ROUTINE hides typing, writing and the whole browser.
+
+    Both catalogues were written when the levels were SAFE and CONFIRM, and neither was
+    revisited when ROUTINE arrived between them, so the model was asked to work with the
+    reading tools alone and answered by naming tools that do not exist.
+    """
+    from jarvis.core.planner.deepseek_provider import DeepSeekProvider
+    from jarvis.core.planner.openai_provider import OpenAIProvider
+    from jarvis.files.policy import FilePolicy
+    from jarvis.platforms.files import LocalFiles
+    from jarvis.tools.files import register_files
+
+    registry, _ = local_registry()
+    register_files(registry, FilePolicy((str(tmp_path),)), LocalFiles())
+    catalog = registry.discover()
+    assert any(tool["risk"] == "ROUTINE" for tool in catalog), "fixture must carry a ROUTINE tool"
+    seen: list[dict[str, object]] = []
+
+    async def transport(payload: dict[str, object]) -> bytes:
+        seen.append(payload)
+        raise ProviderError("provider_failed")  # The catalogue is the whole subject here.
+
+    provider = (
+        DeepSeekProvider("deepseek-flash", transport=transport)
+        if vendor == "deepseek"
+        else OpenAIProvider("test-model", transport=transport)
+    )
+    data = PlannerInput("напиши текст в файл", (), (), Mode.EXECUTE, json.dumps(catalog))
+    with pytest.raises(ProviderError):
+        await provider.propose(data)
+    tools = seen[0]["tools"]
+    assert isinstance(tools, list)
+    offered = {
+        str(tool["name"] if vendor == "openai" else tool["function"]["name"]) for tool in tools
+    }
+    assert "files__write_text" in offered, "the model cannot ask for what it is never shown"
+    assert "windows__type_text" not in offered  # not registered in this fixture
+    # What must never be proposed stays out, whatever else changes.
+    assert "local__critical_test" not in offered and "local__blocked_test" not in offered
