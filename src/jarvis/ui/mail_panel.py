@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from jarvis.connectors.microsoft.drive.connector import SURFACE as FILES_SURFACE
 from jarvis.connectors.teams.connector import SURFACE as TEAMS_SURFACE
 from jarvis.mail.credentials import MailFailure
 from jarvis.mail.models import Account, Attachment, MailResult, Message
@@ -35,6 +36,13 @@ from jarvis.tools.base import ExecutionContext
 from jarvis.ui import workers
 from jarvis.ui.approval_dialog import ApprovalDialog
 from jarvis.ui.tool_worker import ToolWorker
+
+# The Microsoft surfaces this window can ask for, beyond the mailbox it signs in.
+SURFACES = ((TEAMS_SURFACE, "Разрешить Teams"), (FILES_SURFACE, "Разрешить OneDrive"))
+DONE = {
+    TEAMS_SURFACE: "Teams разрешён для этого аккаунта: чаты читаются, отправка спрашивает.",
+    FILES_SURFACE: "OneDrive разрешён для этого аккаунта: файлы читаются, запись спрашивает.",
+}
 
 
 class MailWorker(QThread):
@@ -108,9 +116,9 @@ class MailPanel(QWidget):
             self.note(
                 "Регистрация Microsoft: Mobile and desktop, redirect http://localhost. "
                 "Вход откроется в системном браузере. Пароль вводится только у Microsoft. "
-                "Разрешения: профиль, чтение/запись почты и отправка. Teams — отдельная "
-                "кнопка и отдельное согласие на тот же аккаунт: чтение чатов и отправка "
-                "сообщения с подтверждением."
+                "Разрешения: профиль, чтение/запись почты и отправка. Teams и OneDrive — "
+                "отдельные кнопки и отдельные согласия на тот же аккаунт: чаты и файлы "
+                "читаются, отправка и запись спрашивают."
             )
         )
         self.consent = QCheckBox("Разрешаю подключить Outlook с указанными правами")
@@ -118,13 +126,18 @@ class MailPanel(QWidget):
         row = QHBoxLayout()
         self.connect_button = QPushButton("Подключить / сменить аккаунт")
         self.disconnect_button = QPushButton("Отключить и удалить локальные токены")
-        self.teams_button = QPushButton("Разрешить Teams")
         self.connect_button.clicked.connect(self.connect_account)
         self.disconnect_button.clicked.connect(self.disconnect_account)
-        self.teams_button.clicked.connect(self.allow_teams)
         row.addWidget(self.connect_button)
         row.addWidget(self.disconnect_button)
-        row.addWidget(self.teams_button)
+        # One button per surface, because one consent per surface is the point: a tenant
+        # that refuses chats must not cost the owner their mailbox or their files.
+        self.surface_buttons: dict[str, QPushButton] = {}
+        for surface, label in SURFACES:
+            button = QPushButton(label)
+            button.clicked.connect(lambda _, name=surface: self.allow_surface(name))
+            self.surface_buttons[surface] = button
+            row.addWidget(button)
         form.addRow(row)
         self.simulation = QCheckBox("Симуляция почтовых инструментов")
         self.simulation.setChecked(True)
@@ -334,22 +347,23 @@ class MailPanel(QWidget):
         self.consent.setChecked(False)
         self.launch(lambda context: self.session.connect(client_id, context), connection=True)
 
-    def allow_teams(self) -> None:
+    def allow_surface(self, surface: str) -> None:
         """One more consent on the account that is already signed in.
 
-        Teams is asked for separately rather than folded into the Outlook consent: a tenant
-        that refuses chat scopes then costs Jarvis the chats and leaves the mailbox working.
+        Each surface is asked for separately rather than folded into the Outlook consent: a
+        tenant that refuses chat scopes then costs Jarvis the chats, and the mailbox and the
+        files go on working.
         """
         account = self.session.account
-        if self.busy:
+        if self.busy or surface not in self.surface_buttons:
             return
         if account is None:
-            self.status.setText("Сначала подключите аккаунт Microsoft, потом разрешите Teams.")
+            self.status.setText("Сначала подключите аккаунт Microsoft, потом выдайте доступ.")
             return
 
         async def allow(context: ExecutionContext) -> object:
-            await self.session.consent(account, TEAMS_SURFACE, context)
-            return "Teams разрешён для этого аккаунта: чаты читаются, отправка спрашивает."
+            await self.session.consent(account, surface, context)
+            return DONE[surface]
 
         self.launch(allow, connection=True)
 

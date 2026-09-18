@@ -24,7 +24,7 @@ Outlook подключается явно через MSAL/Graph; настоящ�
 | AI Brain / LLM | `core/planner/routing.py`, `deepseek_provider.py`, `openai_provider.py` | Есть; Claude как инструмент разбора — нет |
 | Planner | `core/planner/runner.py`, `core/workflow/` | Есть на короткой задаче; длинная задача с возобновлением — фаза 1 |
 | Briefing | `core/meeting.py` | Сводка к встрече: пять `SAFE`-чтений через движок разрешений, каждая строка с источником |
-| Tool & MCP Layer | `tools/`, `connectors/` | Outlook, календарь, Fireflies, Asana, Notion, чаты Teams, MCP; каналы Teams и Excel/OneDrive — остаток фазы 2 |
+| Tool & MCP Layer | `tools/`, `connectors/` | Outlook, календарь, Fireflies, Asana, Notion, чаты Teams, OneDrive/Excel, MCP; каналы Teams — остаток фазы 2 |
 | Computer Control | `tools/windows.py`, `platforms/windows/` | Открыть, сфокусировать, перечислить, напечатать; клик, клавиши, буфер — фаза 4 |
 | Vision / Screen | — | Нет; дерево интерфейса и снимок окна — фаза 3 |
 | Memory | `memory/`, `knowledge/`, `core/context/` | Есть; способ работы как память — фаза 8 |
