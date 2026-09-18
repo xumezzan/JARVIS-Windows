@@ -10,7 +10,7 @@ from pytestqt.qtbot import QtBot
 
 from jarvis.config import AppConfig
 from jarvis.observability.logging import ShellLog
-from jarvis.ui.home import ACTIONS, APPS
+from jarvis.ui.home import ACTIONS, APPS, ConnectedApps, SummaryCard
 from jarvis.ui.main_window import MainWindow
 
 PATIENCE = 15000
@@ -162,3 +162,32 @@ def test_the_quick_actions_are_commands_this_assistant_can_be_given(window: Main
     assert len(ACTIONS) == 6
     assert all(len(command.split()) >= 2 for _, _, _, command, _ in ACTIONS)
     assert set(window.quick_actions.tiles) == {title for _, title, _, _, _ in ACTIONS}
+
+
+def test_the_summary_does_not_count_connections_before_the_probe_answers(
+    qtbot: QtBot,
+) -> None:
+    """Two lines of the same screen must not disagree about the same fact.
+
+    Every tile starts unconnected, because that is how a tile waits. Counting them while
+    the counter beside them still says «проверяю» turns that waiting into a number, and on
+    a machine with connections it is the wrong number until the probe comes back.
+    """
+
+    def unconnected(panel: ConnectedApps) -> int | None:
+        """Read it through a call, so one assertion about it does not narrow the next."""
+        return panel.missing
+
+    panel = ConnectedApps()
+    card = SummaryCard()
+    qtbot.addWidget(panel)
+    qtbot.addWidget(card)
+    assert panel.counter.text() == "проверяю" and unconnected(panel) is None
+    card.summarise(0, "", 0, panel.missing)
+    assert "подключения проверяются" in card.text.text()
+    assert "не подключено сервисов" not in card.text.text()
+
+    panel.apply({key: True for key, _, _, _ in APPS[:3]})
+    card.summarise(0, "", 0, panel.missing)
+    assert unconnected(panel) == len(APPS) - 3
+    assert f"не подключено сервисов: {len(APPS) - 3}" in card.text.text()
