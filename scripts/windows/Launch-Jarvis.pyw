@@ -5,11 +5,18 @@ import json
 import os
 import subprocess
 import time
+from contextlib import suppress
 from pathlib import Path
 from uuid import uuid4
 
 root = Path(__file__).resolve().parent
 receipt = root / ("startup-" + uuid4().hex + ".json")
+# A start that outran its wait leaves its receipt behind, because the window writes it
+# after this script has stopped watching. Sweeping them here keeps that from turning into
+# a pile; the installer's own receipt is called startup.json and is not touched.
+for stale in root.glob("startup-*.json"):
+    with suppress(OSError):
+        stale.unlink()
 try:
     active = json.loads((root / "active.json").read_text(encoding="utf-8"))
     if active["slot"] not in ("a", "b") or active["model"] != "vosk-model-small-ru-0.22":
@@ -39,7 +46,10 @@ try:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    deadline = time.monotonic() + 30
+    # Two minutes, not thirty seconds. The first start after an installation or an update
+    # reads a freshly written virtual environment file by file, with the antivirus looking
+    # at each one; that is exactly the moment the old budget ran out.
+    deadline = time.monotonic() + 120
     observed = False
     while time.monotonic() < deadline and process.poll() is None:
         try:
@@ -57,8 +67,10 @@ try:
         time.sleep(0.2)
     if not observed:
         if process.poll() is None:
-            process.terminate()
-            process.wait(timeout=15)
+            # Still alive, just slow. Killing it here was the worst possible answer: the
+            # owner saw nothing appear, and the next click had to warm the same cache from
+            # the beginning. A window that is still coming is left to come.
+            raise SystemExit(0)
         raise ValueError("Window not observed")
 except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
     ctypes.windll.user32.MessageBoxW(
