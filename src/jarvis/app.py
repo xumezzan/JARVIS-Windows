@@ -4,14 +4,35 @@ import argparse
 import os
 import sys
 from collections.abc import Sequence
+from contextlib import suppress
 from importlib.metadata import version
 from pathlib import Path
 
 from jarvis.config import load_config
 
 
+def _printable() -> None:
+    """Let the console carry Russian, or show it imperfectly, but never crash on it.
+
+    The description and the messages are Russian, and a Windows console speaks whatever
+    code page its locale gives it. On one that cannot encode Cyrillic, `jarvis --help`
+    died with UnicodeEncodeError before printing anything - found by the first run of the
+    Windows checks, on a machine with an English locale rather than the owner's.
+
+    Isolated mode is the reason it cannot be left to the environment: `python -I -m jarvis`
+    ignores PYTHONUTF8 and PYTHONIOENCODING by design, and that is exactly how the launcher
+    and the installer start this application.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        # A stream that cannot be reconfigured - a pipe someone replaced, a closed handle -
+        # is left as it is. Printing is not worth failing to start over.
+        with suppress(AttributeError, OSError, ValueError):
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Launch the shell; help and version remain usable without initializing Qt."""
+    _printable()
     parser = argparse.ArgumentParser(
         prog="jarvis",
         description="Jarvis: локальный ассистент с типизированными инструментами.",

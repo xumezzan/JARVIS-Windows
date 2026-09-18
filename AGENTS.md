@@ -97,6 +97,11 @@ Do not treat fixture checks or a shown shell as completion of the full MVP scena
 Use an isolated virtual environment. Install with `python -m pip install -e ".[dev]"`.
 Run focused tests, fix failures, then full `python -m pytest`, `python -m ruff check .`,
 `python -m ruff format --check .`, and `python -m mypy`.
+The same gates run on a Windows runner for every push and pull request
+(`.github/workflows/checks.yml`). Running them locally is how you find failures early,
+not how you finish: a change is done when they pass there, because "the tests pass" has
+to mean more than "they passed on the machine that wrote them". Never merge over a red
+run, and never weaken a check to make it green.
 Run `python -m jarvis --smoke-test` and build with `python -m build`.
 Use `python -m jarvis` for interactive GUI verification. The command bar, the permissions
 window and the planner window all run local, Windows, and browser tools through PermissionEngine;
