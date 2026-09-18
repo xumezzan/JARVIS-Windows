@@ -34,6 +34,7 @@ from jarvis.observability.logging import ShellLog
 from jarvis.security.browser_policy import NetworkPolicy
 from jarvis.security.credentials import setup_command
 from jarvis.ui.activity_log import ActivityLog
+from jarvis.ui.checklist import Checklist
 from jarvis.ui.components import IconButton, MonthCalendar, Panel
 from jarvis.ui.dashboard import OrbWidget, line_icon
 from jarvis.ui.permission_workbench import PermissionWorkbench
@@ -68,6 +69,15 @@ PLAN_STATES: dict[str, tuple[UiState, ShellEvent]] = {
     "cancelled": (UiState.CANCELLED, ShellEvent.CANCELLED),
     "timeout": (UiState.ERROR, ShellEvent.TIMED_OUT),
 }
+
+
+# What an empty screen should teach: three things worth saying, in the owner's own words
+# rather than in the vocabulary of the tools underneath.
+EXAMPLES = (
+    "Подготовь всё к встрече с клиентом",
+    "Открой блокнот и напиши список дел на завтра",
+    "Проверь систему дважды",
+)
 
 
 def label(text: str, name: str = "") -> QLabel:
@@ -160,13 +170,13 @@ class MainWindow(QMainWindow):
         self.navigation = QButtonGroup(self)
         self.navigation.setExclusive(True)
         self.nav_buttons: dict[str, QPushButton] = {}
+        # Four entries, each of which opens something. "Чат", "Задачи" and "Календарь"
+        # were three names for scrolling to a card, which is not navigation.
         for key, title, icon_name in (
             ("home", "Главная", "home"),
-            ("chat", "Чат", "chat"),
-            ("tasks", "Задачи", "tasks"),
-            ("calendar", "Календарь", "calendar"),
-            ("apps", "Инструменты", "apps"),
-            ("settings", "Настройки", "settings"),
+            ("journal", "Журнал", "tasks"),
+            ("memory", "Память", "apps"),
+            ("connections", "Подключения", "settings"),
         ):
             button = QPushButton(title)
             button.setAccessibleName(title)
@@ -195,143 +205,184 @@ class MainWindow(QMainWindow):
         self.dashboard_grid = QGridLayout()
         self.dashboard_grid.setSpacing(24)
         columns.addLayout(self.dashboard_grid, 1)
+
+        # Left: what has happened. Quiet on purpose - it is a record, not a workplace.
         self.left_column = QWidget()
         self.left_column.setObjectName("column")
         left = QVBoxLayout(self.left_column)
         left.setContentsMargins(0, 0, 0, 0)
         left.setSpacing(18)
-        activity_card, activity_body = self._card("История действий", "Этот сеанс")
+        self.journal_card, journal_body = self._card("Журнал", "этот сеанс")
         self.activity = ActivityLog(self.config.activity_limit)
         self.activity.setObjectName("activity")
-        activity_body.addWidget(self.activity, 1)
-        activity_body.addWidget(label("История текущего сеанса", "muted"))
-        left.addWidget(activity_card, 3)
-        self.apps_card, apps_body = self._card("Инструменты")
-        apps_body.addWidget(label("Приложения под вашим контролем", "sectionHint"))
-        for title, icon in (("Браузер", "globe"), ("Блокнот", "document"), ("VS Code", "code")):
-            entry = QPushButton(title)
-            entry.setObjectName("toolEntry")
-            entry.setIcon(line_icon(icon, "#8dc2ff"))
-            entry.setIconSize(QSize(22, 22))
-            entry.setMinimumHeight(52)
-            entry.setToolTip(f"{title}: открыть окно инструментов и разрешений")
-            entry.clicked.connect(self.open_permissions)
-            apps_body.addWidget(entry)
-        apps_body.addWidget(
-            label(
-                "Открыть можно любое установленное приложение: назовите его. "
-                "Действия проходят проверку разрешений.",
-                "sectionHint",
-            )
-        )
-        left.addWidget(self.apps_card, 2)
+        journal_body.addWidget(self.activity, 1)
+        self._completed = 0
+        self.summary_label = label("Завершено команд: 0", "sectionHint")
+        journal_body.addWidget(self.summary_label)
+        left.addWidget(self.journal_card, 1)
 
+        # Centre: the one thing this window is for. The command is the largest element on
+        # the screen, and what the assistant is doing right now sits directly under it.
         self.center_column = QWidget()
         self.center_column.setObjectName("column")
         center = QVBoxLayout(self.center_column)
         center.setContentsMargins(0, 6, 0, 0)
-        center.setSpacing(10)
-        hero_title = label("Jarvis", "heroTitle")
-        hero_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        center.addWidget(hero_title)
+        center.setSpacing(12)
+        state_row = QHBoxLayout()
+        state_row.setSpacing(12)
+        self.orb = OrbWidget()
+        self.orb.setFixedSize(84, 84)
+        self.motion_button.toggled.connect(self.orb.set_motion_enabled)
+        state_row.addWidget(self.orb)
         self.state_label = label("", "state")
         self.state_label.setAccessibleName("Состояние задачи")
-        self.state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        center.addWidget(self.state_label)
-        self.orb = OrbWidget()
-        self.motion_button.toggled.connect(self.orb.set_motion_enabled)
-        center.addWidget(self.orb, 1)
-        voice_controls = QHBoxLayout()
-        voice_controls.setSpacing(22)
-        voice_controls.addStretch()
-        keyboard = IconButton("keyboard", "Ввести команду с клавиатуры")
-        keyboard.clicked.connect(lambda: self._navigate("chat"))
-        voice_controls.addWidget(keyboard)
+        state_row.addWidget(self.state_label, 1)
+        self.stop_button = IconButton("close", "Остановить выполнение (Esc)")
+        self.stop_button.setEnabled(False)
+        self.stop_button.clicked.connect(self.stop)
+        state_row.addWidget(self.stop_button)
+        center.addLayout(state_row)
+
+        command_frame = QFrame()
+        self.command_frame = command_frame
+        command_frame.setObjectName("commandBar")
+        command_layout = QHBoxLayout(command_frame)
+        command_layout.setContentsMargins(12, 8, 10, 8)
+        command_layout.setSpacing(10)
+        # The microphone lives in the command line: speaking and typing are the same act,
+        # so they belong in one place rather than in two corners of the screen.
         self.microphone_button = HoldButton("")
         self.microphone_button.setObjectName("microphone")
-        self.microphone_button.setIcon(line_icon("mic", "#81bfff", 32))
-        self.microphone_button.setIconSize(QSize(30, 30))
-        self.microphone_button.setFixedSize(72, 72)
+        self.microphone_button.setIcon(line_icon("mic", "#81bfff", 26))
+        self.microphone_button.setIconSize(QSize(24, 24))
+        self.microphone_button.setFixedSize(46, 46)
         self.microphone_button.setAccessibleName("Удерживайте для записи команды")
         self.microphone_button.setToolTip(
             "Удерживайте кнопку или пробел на ней и говорите. "
             "Распознанная команда запускается сразу."
         )
-        voice_controls.addWidget(self.microphone_button)
-        self.stop_button = IconButton("close", "Остановить выполнение (Esc)")
-        self.stop_button.setEnabled(False)
-        self.stop_button.clicked.connect(self.stop)
-        voice_controls.addWidget(self.stop_button)
-        voice_controls.addStretch()
-        center.addLayout(voice_controls)
-        self.voice_hint = label("Микрофон выключен. Запись только по удержанию.", "muted")
-        self.voice_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        command_layout.addWidget(self.microphone_button)
+        self.command_input = QPlainTextEdit()
+        self.command_input.setObjectName("commandInput")
+        self.command_input.installEventFilter(self)
+        self.command_input.setAccessibleName("Текстовая команда")
+        self.command_input.setPlaceholderText("Скажите, что сделать")
+        self.command_input.setFixedHeight(64)
+        command_layout.addWidget(self.command_input, 1)
+        self.submit_button = QPushButton()
+        self.submit_button.setObjectName("send")
+        self.submit_button.setIcon(line_icon("arrow", "#e4eeff", 28))
+        self.submit_button.setIconSize(QSize(26, 26))
+        self.submit_button.setFixedSize(46, 46)
+        self.submit_button.setAccessibleName("Выполнить команду")
+        self.submit_button.setToolTip("Выполнить команду · Ctrl+Enter")
+        self.submit_button.clicked.connect(self.submit)
+        command_layout.addWidget(self.submit_button)
+        command_frame.setFixedHeight(84)
+        center.addWidget(command_frame)
+
+        hints = QHBoxLayout()
+        hints.setSpacing(10)
+        self.validation_label = label("Ctrl+Enter — выполнить", "inputHint")
+        hints.addWidget(self.validation_label)
+        hints.addStretch()
+        self.voice_hint = label("Микрофон выключен. Запись только по удержанию.", "inputHint")
         self.voice_hint.setAccessibleName("Состояние микрофона")
-        center.addWidget(self.voice_hint)
-        center.addSpacing(14)
-        controls = QHBoxLayout()
-        controls.setSpacing(10)
-        controls.addStretch()
+        hints.addWidget(self.voice_hint)
+        center.addLayout(hints)
+
+        # One line instead of four controls. The state stays in words on the screen: the
+        # owner asked for autonomy to be visible, not for four decisions before speaking.
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(8)
+        self.mode_label = label("", "sectionHint")
+        self.mode_label.setWordWrap(False)
+        self.mode_label.setAccessibleName("Как работает ассистент")
+        mode_row.addWidget(self.mode_label)
+        self.mode_button = QPushButton("изменить")
+        self.mode_button.setObjectName("link")
+        self.mode_button.setCheckable(True)
+        self.mode_button.toggled.connect(self._show_modes)
+        mode_row.addWidget(self.mode_button)
+        mode_row.addStretch(1)
+        center.addLayout(mode_row)
+
+        self.mode_box = QWidget()
+        modes = QVBoxLayout(self.mode_box)
+        modes.setContentsMargins(0, 0, 0, 0)
+        modes.setSpacing(8)
+        pickers = QHBoxLayout()
+        pickers.setSpacing(10)
         self.run_mode = QComboBox()
         self.run_mode.addItems(["Выполнять действия", "Только симуляция"])
         self.run_mode.setAccessibleName("Режим выполнения")
-        self.run_mode.setMaximumWidth(210)
-        controls.addWidget(self.run_mode)
+        self.run_mode.currentIndexChanged.connect(self._show_mode_line)
+        pickers.addWidget(self.run_mode, 1)
         self.provider_mode = QComboBox()
         self.provider_mode.addItems(
             ["Офлайн: учебные команды", "Облако: DeepSeek, сложные задачи — OpenAI"]
         )
         self.provider_mode.setAccessibleName("Планировщик команд")
-        self.provider_mode.setMaximumWidth(230)
-        controls.addWidget(self.provider_mode)
-        controls.addStretch()
-        center.addLayout(controls)
-        self.autonomy = QCheckBox("Автономно: не подтверждать каждый шаг")
+        self.provider_mode.currentIndexChanged.connect(self._show_mode_line)
+        pickers.addWidget(self.provider_mode, 1)
+        modes.addLayout(pickers)
+        self.autonomy = QCheckBox("Делать самому, не спрашивая на каждом шаге")
         self.autonomy.setChecked(True)
         self.autonomy.setAccessibleName("Автономный режим")
-        center.addWidget(self.autonomy, 0, Qt.AlignmentFlag.AlignHCenter)
-        self.hands_free = QCheckBox("Свободные руки: слушать по слову «Джарвис»")
+        self.autonomy.toggled.connect(self._show_mode_line)
+        modes.addWidget(self.autonomy)
+        self.hands_free = QCheckBox("Слушать по слову «Джарвис», без удержания кнопки")
         self.hands_free.setAccessibleName("Постоянное прослушивание микрофона")
         self.hands_free.setToolTip(
             "Микрофон слушает без удержания кнопки, пока переключатель включён. "
             "Выполняется только фраза, начинающаяся со слова «Джарвис»."
         )
         self.hands_free.toggled.connect(self._hands_free)
-        center.addWidget(self.hands_free, 0, Qt.AlignmentFlag.AlignHCenter)
-        command_label = label("Ваша команда", "sectionHint")
-        center.addWidget(command_label)
-        command_frame = QFrame()
-        self.command_frame = command_frame
-        command_frame.setObjectName("commandBar")
-        command_layout = QHBoxLayout(command_frame)
-        command_layout.setContentsMargins(14, 8, 10, 8)
-        command_symbol = label("")
-        command_symbol.setPixmap(line_icon("command", "#8dc2ff", 20).pixmap(20, 20))
-        command_layout.addWidget(command_symbol)
-        self.command_input = QPlainTextEdit()
-        self.command_input.setObjectName("commandInput")
-        self.command_input.installEventFilter(self)
-        command_label.setBuddy(self.command_input)
-        self.command_input.setAccessibleName("Текстовая команда")
-        self.command_input.setPlaceholderText("Что нужно сделать?")
-        self.command_input.setFixedHeight(58)
-        command_layout.addWidget(self.command_input, 1)
-        self.submit_button = QPushButton()
-        self.submit_button.setObjectName("send")
-        self.submit_button.setIcon(line_icon("arrow", "#e4eeff", 28))
-        self.submit_button.setIconSize(QSize(26, 26))
-        self.submit_button.setFixedSize(42, 42)
-        self.submit_button.setAccessibleName("Выполнить команду")
-        self.submit_button.setToolTip("Выполнить команду · Ctrl+Enter")
-        self.submit_button.clicked.connect(self.submit)
-        command_layout.addWidget(self.submit_button)
-        center.addWidget(command_frame)
-        self.validation_label = label(
-            "Скажите или напишите команду · Ctrl+Enter для запуска", "inputHint"
-        )
-        self.validation_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        center.addWidget(self.validation_label)
+        self.hands_free.toggled.connect(self._show_mode_line)
+        modes.addWidget(self.hands_free)
+        self.mode_box.setVisible(False)
+        center.addWidget(self.mode_box)
 
+        self.task_card, task_body = self._card("Сейчас делаю")
+        self.transcript = QPlainTextEdit()
+        self.transcript.setObjectName("transcript")
+        self.transcript.setReadOnly(True)
+        self.transcript.setAccessibleName("Принятый текст команды")
+        self.transcript.setPlaceholderText("Здесь появится команда, которую я принял")
+        self.transcript.setFixedHeight(52)
+        task_body.addWidget(self.transcript)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 1)
+        self.progress.setValue(0)
+        self.progress.setTextVisible(False)
+        self.progress.setFixedHeight(4)
+        task_body.addWidget(self.progress)
+        # The same steps the planner window shows, in the window the owner is looking at.
+        self.checklist = Checklist()
+        task_body.addWidget(self.checklist, 1)
+        self.action_label = label("Пока ничего не выполнялось.", "muted")
+        self.action_label.setAccessibleName("Результат задачи")
+        task_body.addWidget(self.action_label)
+        self.task_card.setVisible(False)
+        center.addWidget(self.task_card, 1)
+
+        # An empty screen that teaches: three things worth saying, in the owner's words.
+        self.examples_box = QWidget()
+        examples = QVBoxLayout(self.examples_box)
+        examples.setContentsMargins(0, 0, 0, 0)
+        examples.setSpacing(6)
+        examples.addWidget(label("Можно сказать так:", "sectionHint"))
+        for example in EXAMPLES:
+            entry = QPushButton(example)
+            entry.setObjectName("toolEntry")
+            entry.setMinimumHeight(38)
+            entry.setToolTip("Подставить эту команду в строку")
+            entry.clicked.connect(lambda _, text=example: self._use_example(text))
+            examples.addWidget(entry)
+        center.addWidget(self.examples_box)
+        center.addStretch(1)
+
+        # Right: what is around the task - the day, and the way to connect what is missing.
         self.right_column = QWidget()
         self.right_column.setObjectName("column")
         right = QVBoxLayout(self.right_column)
@@ -339,60 +390,33 @@ class MainWindow(QMainWindow):
         right.setSpacing(18)
         self.calendar_card, calendar_body = self._card("Сегодня", f"{datetime.now():%d.%m.%Y}")
         calendar_body.addWidget(MonthCalendar())
-        calendar_body.addWidget(label("Календарь не подключён", "sectionHint"))
+        self.calendar_hint = label("Календарь не подключён.", "sectionHint")
+        calendar_body.addWidget(self.calendar_hint)
+        self.calendar_button = QPushButton("Подключить календарь")
+        self.calendar_button.setObjectName("secondary")
+        self.calendar_button.clicked.connect(self.open_setup)
+        calendar_body.addWidget(self.calendar_button)
         right.addWidget(self.calendar_card, 3)
 
-        self.task_card, task_body = self._card("Текущая задача")
-        self._completed = 0
-        summary_row = QHBoxLayout()
-        summary_icon = label("")
-        summary_icon.setPixmap(line_icon("check", "#70e2c7", 26).pixmap(26, 26))
-        summary_row.addWidget(summary_icon)
-        self.summary_label = label("Завершено команд: 0")
-        summary_row.addWidget(self.summary_label, 1)
-        task_body.addLayout(summary_row)
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 1)
-        self.progress.setValue(0)
-        self.progress.setTextVisible(False)
-        task_body.addWidget(self.progress)
-
-        self.transcript = QPlainTextEdit()
-        self.transcript.setObjectName("transcript")
-        self.transcript.setReadOnly(True)
-        self.transcript.setAccessibleName("Принятый текст команды")
-        self.transcript.setPlaceholderText("Начните с одной команды")
-        self.transcript.setFixedHeight(62)
-        task_body.addWidget(self.transcript)
-        self.action_label = label("Её текст и факты выполнения появятся здесь.", "muted")
-        self.action_label.setAccessibleName("Результат задачи")
-        task_body.addWidget(self.action_label)
-        task_body.addStretch()
-
-        right.addWidget(self.task_card, 3)
-
-        suggestion, suggestion_body = self._card("От команды к действию")
+        suggestion, suggestion_body = self._card("Дальше")
         suggestion.setObjectName("suggestion")
-        suggestion_body.addWidget(
-            label(
-                "Откройте инструменты, чтобы управлять приложениями и проверять разрешения.",
-                "muted",
-            )
-        )
-        self.permissions_button = QPushButton("Открыть инструменты")
+        self.setup_button = QPushButton("Настройка подключений")
+        self.setup_button.setObjectName("primary")
+        self.setup_button.clicked.connect(self.open_setup)
+        suggestion_body.addWidget(self.setup_button)
+        self.planner_button = QPushButton("Планировщик и память")
+        self.planner_button.setObjectName("secondary")
+        self.planner_button.clicked.connect(self.open_planner)
+        suggestion_body.addWidget(self.planner_button)
+        self.permissions_button = QPushButton("Инструменты и разрешения")
         self.permissions_button.setObjectName("secondary")
         self.permissions_button.setIcon(line_icon("shield", "#e4eeff"))
         self.permissions_button.clicked.connect(self.open_permissions)
         suggestion_body.addWidget(self.permissions_button)
-        self.planner_button = QPushButton("Открыть планировщик")
-        self.planner_button.setObjectName("primary")
-        self.planner_button.clicked.connect(self.open_planner)
-        suggestion_body.addWidget(self.planner_button)
-        self.setup_button = QPushButton("Настройка подключений")
-        self.setup_button.setObjectName("secondary")
-        self.setup_button.clicked.connect(self.open_setup)
-        suggestion_body.addWidget(self.setup_button)
+        suggestion_body.addStretch()
         right.addWidget(suggestion, 2)
+        self._show_mode_line()
+
         self._compact_layout: bool | None = None
         self._arrange_dashboard()
 
@@ -424,9 +448,7 @@ class MainWindow(QMainWindow):
         self.sidebar_greeting.setVisible(not compact)
         self.sidebar_hint.setVisible(not compact)
         if compact:
-            self.center_column.setMinimumHeight(590)
-            self.orb.setMinimumHeight(240)
-            self.orb.setMaximumHeight(280)
+            self.center_column.setMinimumHeight(560)
             self.dashboard_grid.addWidget(self.center_column, 0, 0, 1, 2)
             self.dashboard_grid.addWidget(self.left_column, 1, 0)
             self.dashboard_grid.addWidget(self.right_column, 1, 1)
@@ -434,10 +456,8 @@ class MainWindow(QMainWindow):
             self.dashboard_grid.setColumnStretch(1, 1)
         else:
             self.center_column.setMinimumHeight(0)
-            self.orb.setMinimumHeight(330)
-            self.orb.setMaximumHeight(16777215)
             for index, (column, stretch) in enumerate(
-                ((self.left_column, 30), (self.center_column, 40), (self.right_column, 34))
+                ((self.left_column, 26), (self.center_column, 48), (self.right_column, 26))
             ):
                 self.dashboard_grid.addWidget(column, 0, index)
                 self.dashboard_grid.setColumnStretch(index, stretch)
@@ -459,21 +479,20 @@ class MainWindow(QMainWindow):
 
     def _navigate(self, target: str) -> None:
         self.nav_buttons[target].setChecked(True)
-        if target == "settings":
-            # What a person means by "settings" here is which services are connected;
-            # the permission workbench has its own button on the dashboard.
+        if target == "connections":
             self.open_setup()
             return
-        destinations = {
-            "home": self.orb,
-            "chat": self.command_input,
-            "tasks": self.task_card,
-            "calendar": self.calendar_card,
-            "apps": self.apps_card,
-        }
-        widget = destinations[target]
+        if target == "memory":
+            # Memory lives in the planner window; the entry opens it there rather than
+            # pretending this window has a page for it.
+            planner = self._ensure_planner()
+            if planner is not None:
+                planner.tabs.setCurrentIndex(1)
+                self.open_planner()
+            return
+        widget = self.command_input if target == "home" else self.journal_card
         self.scroll_area.ensureWidgetVisible(widget)
-        if target == "chat":
+        if target == "home":
             self.command_input.setFocus()
         else:
             widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -494,6 +513,17 @@ class MainWindow(QMainWindow):
         self.state_label.style().unpolish(self.state_label)
         self.state_label.style().polish(self.state_label)
         self.state_changed.emit(state.value)
+
+    def _show_calendar(self) -> None:
+        """The day, or the one thing that has to happen before there is a day to show."""
+        planner = self.planner_window
+        account = planner.mail_session.account if planner is not None else None
+        self.calendar_hint.setText(
+            f"Календарь Microsoft · {account.address}"
+            if account is not None
+            else "Календарь не подключён — встречи не видны."
+        )
+        self.calendar_button.setVisible(account is None)
 
     def _set_busy(self, busy: bool) -> None:
         self.command_input.setReadOnly(busy)
@@ -585,7 +615,30 @@ class MainWindow(QMainWindow):
             self.voice.message.connect(self.voice_hint.setText)
             self.voice.transcript_ready.connect(self._spoken)
         self.planner_window.setStyleSheet(self.styleSheet())
+        self._show_calendar()
         return self.planner_window
+
+    @Slot()
+    def _show_mode_line(self) -> None:
+        """One line that says how the assistant will work, in words rather than in controls."""
+        parts = [
+            "делаю сам" if self.autonomy.isChecked() else "спрашиваю на каждом шаге",
+            "офлайн-модель" if self.provider_mode.currentIndex() == 0 else "облачная модель",
+        ]
+        if self.run_mode.currentIndex() == 1:
+            parts.append("только симуляция")
+        if self.hands_free.isChecked():
+            parts.append("слушаю по слову «Джарвис»")
+        self.mode_label.setText(" · ".join(parts))
+
+    @Slot(bool)
+    def _show_modes(self, shown: bool) -> None:
+        self.mode_box.setVisible(shown)
+        self.mode_button.setText("свернуть" if shown else "изменить")
+
+    def _use_example(self, text: str) -> None:
+        self.command_input.setPlainText(text)
+        self.command_input.setFocus()
 
     @Slot(bool)
     def _hands_free(self, enabled: bool) -> None:
@@ -691,6 +744,11 @@ class MainWindow(QMainWindow):
         self._request_id = uuid4()
         self._cancel_requested = False
         self.running = True
+        self.checklist.reset()
+        # The examples were the empty state; once there is a task they are in the way, and
+        # the card that shows the work takes their place.
+        self.examples_box.setVisible(False)
+        self.task_card.setVisible(True)
         self._set_busy(True)
         self._set_state(UiState.THINKING)
         self._record(ShellEvent.SUBMITTED)
@@ -707,6 +765,7 @@ class MainWindow(QMainWindow):
         if not self.running:
             # A run started from the planner window itself; mirror it here too.
             self._begin()
+        self.checklist.record(kind, value)
         if kind == "budget" and isinstance(value, tuple):
             spent, ceiling = value
             self.action_label.setText(f"Обращений к модели: {spent} из {ceiling}.")
@@ -742,6 +801,7 @@ class MainWindow(QMainWindow):
         if not self.running:
             return
         state, event = PLAN_STATES.get(status, (UiState.ERROR, ShellEvent.FAILED))
+        self.checklist.settle()
         self._reset()
         self._set_state(state)
         result = self.planner_window.last_result if self.planner_window is not None else None
@@ -847,6 +907,8 @@ class MainWindow(QMainWindow):
         self.setup_window.activateWindow()
 
     def _setup_closed(self) -> None:
+        # Something may have been connected while it was open; the day says so at once.
+        self._show_calendar()
         window, self.setup_window = self.setup_window, None
         if window is not None:
             window.shutdown()

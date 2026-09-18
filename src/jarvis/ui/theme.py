@@ -125,6 +125,9 @@ QPushButton#stop { color: #ffb9c4; border: 1px solid #a66177; }
 QPushButton:disabled { color: #77899e; background: #17222f; border: 1px solid #2a384a; }
 QPushButton#send:disabled { background: #17222f; border-color: #2a384a; }
 QComboBox#themePicker { min-width: 92px; }
+QPushButton#link { background: transparent; border: none; color: $primary;
+    font-size: 12px; padding: 2px 4px; text-decoration: underline; }
+QPushButton#link:hover { color: $focus; }
 QPushButton#motion { font-size: 12px; padding: 7px 12px; }
 QPushButton#motion:checked { color: $primary; }
 QComboBox { padding: 7px 12px; color: #a4b4c9; font-size: 11px; }
