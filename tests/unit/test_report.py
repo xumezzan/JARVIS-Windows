@@ -7,7 +7,7 @@ import pytest
 
 from jarvis.connectors.instants import parse
 from jarvis.core.planner.contracts import PlanResult, Step
-from jarvis.core.report import spoken, written
+from jarvis.core.report import HEADLINE, LOOKED, spoken, written
 from jarvis.observability.audit import ErrorCode
 from jarvis.permissions.engine import Outcome
 from jarvis.permissions.policies import Status
@@ -43,7 +43,7 @@ def letter(subject: str = "Перенос встречи") -> dict[str, object]:
 def test_a_sent_letter_is_reported_with_what_it_was_about() -> None:
     result = PlanResult("finished", (step("outlook.send", letter()),))
     lines = written(result)
-    assert lines[0] == "Готово."
+    assert lines[0] in HEADLINE["finished"]
     assert lines[1] == "Отправил письмо «Перенос встречи» на ivan@example.com и ещё 1."
     # Aloud the address is left out: the local Russian voice cannot pronounce it anyway.
     said = spoken(result)
@@ -114,7 +114,7 @@ def test_an_unconfirmed_effect_is_reported_as_unconfirmed() -> None:
         "timeout",
     )
     lines = written(result)
-    assert lines[0] == "Не уложился по времени."
+    assert lines[0] in HEADLINE["timeout"]
     assert lines[1].startswith("Отправил письмо «Перенос встречи»") and "проверьте" in lines[1]
     assert lines[-1] == "Уже выданные действия не отменяются; проверьте их результат."
     assert "не отменяются" in spoken(result)
@@ -133,8 +133,12 @@ def test_a_refusal_says_plainly_why_nothing_happened() -> None:
 
 def test_a_task_that_only_looked_says_so() -> None:
     result = PlanResult("finished", (step("outlook.list", {"folder": "inbox"}),))
-    assert written(result) == ("Готово.", "Ничего не менял — только посмотрел.")
-    assert "только посмотрел" in spoken(result)
+    first, second = written(result)
+    assert first in HEADLINE["finished"] and second in LOOKED
+    assert any(line in spoken(result) for line in LOOKED)
+    # The frame varies between runs, never between two readings of the same one: the
+    # screen and the voice must not describe the same task differently.
+    assert written(result) == (first, second) and spoken(result).startswith(first)
 
 
 def test_a_simulation_claims_nothing() -> None:
@@ -150,7 +154,8 @@ def test_a_simulation_claims_nothing() -> None:
 def test_nothing_a_tool_or_a_model_said_reaches_the_report() -> None:
     result = PlanResult("finished", (step("unknown.tool", {"anything": SECRET}),))
     # An unknown tool is not invented into a sentence, and its answer is not quoted.
-    assert written(result) == ("Готово.", "Ничего не менял — только посмотрел.")
+    first, second = written(result)
+    assert first in HEADLINE["finished"] and second in LOOKED
     assert SECRET not in spoken(result)
 
 

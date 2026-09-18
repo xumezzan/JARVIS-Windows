@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 from pytestqt.qtbot import QtBot
 
 from jarvis.config import AppConfig
+from jarvis.core.report import HEADLINE, LOOKED
 from jarvis.observability.logging import ShellLog
 from jarvis.ui.main_window import MainWindow
 from jarvis.ui.states import UiState
@@ -112,9 +113,8 @@ def test_real_execution_runs_the_tool_without_blocking_the_ui(
     assert result.args == ["finished"]
     assert window.state == UiState.SUCCESS
     # Two checks change nothing in the world, and the assistant says exactly that.
-    assert window.action_label.text().startswith(
-        "Готово." + "\n" + "Ничего не менял — только посмотрел."
-    )
+    headline, looked = window.action_label.text().split("\n")[:2]
+    assert headline in HEADLINE["finished"] and looked in LOOKED
     assert "local.check: SUCCESS" in window.action_label.text()
     assert (window.config.data_dir / "audit.sqlite3").exists()
 
