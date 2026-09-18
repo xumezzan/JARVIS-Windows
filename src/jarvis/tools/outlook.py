@@ -48,7 +48,9 @@ def register_outlook(registry: ToolRegistry, session: MailSession) -> None:
             "/me/mailFolders/" + args.folder + "/messages",
             params={
                 "$top": str(args.limit),
-                "$select": "id,subject,from,receivedDateTime,isDraft",
+                # `isRead` is the difference between "letters from this person" and the
+                # thing the owner actually asks for: what they have not read yet.
+                "$select": "id,subject,from,receivedDateTime,isDraft,isRead",
                 "$orderby": "receivedDateTime desc",
             },
         )
@@ -56,7 +58,10 @@ def register_outlook(registry: ToolRegistry, session: MailSession) -> None:
         if not isinstance(values, list) or len(values) > args.limit:
             raise ValueError("mail_response")
         safe = [
-            {key: row.get(key) for key in ("id", "subject", "from", "receivedDateTime", "isDraft")}
+            {
+                key: row.get(key)
+                for key in ("id", "subject", "from", "receivedDateTime", "isDraft", "isRead")
+            }
             for row in values
             if isinstance(row, dict)
         ]

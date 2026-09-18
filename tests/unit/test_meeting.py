@@ -111,6 +111,7 @@ ANSWERS: dict[str, list[dict[str, Any]]] = {
             "from": {"emailAddress": {"address": CLIENT}},
             "receivedDateTime": "2026-09-17T09:00:00Z",
             "isDraft": False,
+            "isRead": True,
         },
         {
             "id": "m2",
@@ -118,6 +119,7 @@ ANSWERS: dict[str, list[dict[str, Any]]] = {
             "from": {"emailAddress": {"address": "boss@example.test"}},
             "receivedDateTime": "2026-09-17T10:00:00Z",
             "isDraft": False,
+            "isRead": False,
         },
     ],
     "notion.search": [{"id": "page1", "title": "Клиент Acme", "url": "", "archived": False}],
@@ -356,6 +358,44 @@ async def test_what_is_said_out_loud_carries_counts_and_no_identifiers(bench: Be
     assert "1 письмо" in spoken and "страница клиента найдена" in spoken
     # A voice cannot pronounce an address or a record id, and should not try.
     assert "@" not in spoken and "evt1" not in spoken and "page1" not in spoken
+
+
+@pytest.mark.asyncio
+async def test_unread_letters_come_first_and_say_that_they_are_unread(tmp_path: Path) -> None:
+    services = Services()
+    services.answers["outlook.list"] = [
+        {
+            "id": "read",
+            "subject": "Старое",
+            "from": {"emailAddress": {"address": CLIENT}},
+            "receivedDateTime": "2026-09-16T09:00:00Z",
+            "isRead": True,
+        },
+        {
+            "id": "unread",
+            "subject": "Смета",
+            "from": {"emailAddress": {"address": CLIENT}},
+            "receivedDateTime": "2026-09-17T09:00:00Z",
+            "isRead": False,
+        },
+        {
+            # No flag at all: counted as read, because claiming "unread" without evidence
+            # sends the owner into the meeting looking for a letter that is not waiting.
+            "id": "unknown",
+            "subject": "Без признака",
+            "from": {"emailAddress": {"address": CLIENT}},
+            "receivedDateTime": "2026-09-15T09:00:00Z",
+        },
+    ]
+    built = bench_for(tmp_path, services)
+    try:
+        briefing = await built.prepare()
+        mail = next(section for section in briefing.sections if section.part == "mail")
+        assert [line.entity for line in mail.lines] == ["unread", "read", "unknown"]
+        assert "не прочитано" in mail.lines[0].text
+        assert all("не прочитано" not in line.text for line in mail.lines[1:])
+    finally:
+        built.audit.close()
 
 
 def test_russian_counting_is_not_a_table_read_aloud() -> None:

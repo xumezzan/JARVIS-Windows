@@ -376,30 +376,39 @@ class Briefer:
         return Section("tasks", "found" if lines else "empty", lines)
 
     async def _mail(self, account: dict[str, object], clients: tuple[Client, ...]) -> Section:
-        """The newest letters from the client. The listing carries no read flag, so this
-        says "from this person" rather than pretending to know what is unread."""
+        """What this person wrote, with anything still unread first and marked as such.
+
+        Read letters are not dropped: the last exchange is often exactly what is needed
+        before a meeting, whether or not it was opened. A letter whose read flag is
+        missing counts as read - claiming "unread" without evidence would be the one
+        mistake here that sends the owner into the meeting looking for a letter that
+        does not exist.
+        """
         letters = await self._observe(
             "outlook.list", {"account": account, "folder": "inbox", "limit": MAX_EVENTS}
         )
         if letters is None:
             return Section("mail", "unavailable")
         addresses = {client.address.casefold() for client in clients}
-        lines: list[Line] = []
+        waiting: list[Line] = []
+        opened: list[Line] = []
         for row in rows(letters):
             sender = row.get("from")
             mailbox = sender.get("emailAddress") if isinstance(sender, dict) else None
             address = short(mailbox.get("address"), 254) if isinstance(mailbox, dict) else ""
             if address.casefold() not in addresses or not row.get("id"):
                 continue
-            lines.append(
-                Line(
-                    "outlook.list",
-                    short(row.get("id"), 120),
-                    f"«{short(row.get('subject')) or 'без темы'}», "
-                    f"{day_text(short(row.get('receivedDateTime'), 20)) or 'без даты'}",
-                )
+            unread = row.get("isRead") is False
+            line = Line(
+                "outlook.list",
+                short(row.get("id"), 120),
+                f"«{short(row.get('subject')) or 'без темы'}», "
+                f"{day_text(short(row.get('receivedDateTime'), 20)) or 'без даты'}"
+                + (" · не прочитано" if unread else ""),
             )
-        return Section("mail", "found" if lines else "empty", tuple(lines[:MAX_LINES]))
+            (waiting if unread else opened).append(line)
+        lines = (*waiting, *opened)[:MAX_LINES]
+        return Section("mail", "found" if lines else "empty", lines)
 
     async def _page(self, clients: tuple[Client, ...]) -> Section:
         terms = [term for client in clients for term in self._terms(client) if term]
