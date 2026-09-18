@@ -1,5 +1,6 @@
 """Asana connector. No API key, account, network or real workspace is used."""
 
+import asyncio
 import json
 from collections.abc import Iterator
 from threading import Event as Flag
@@ -12,6 +13,8 @@ from jarvis.connectors.asana.connector import CAPABILITIES, AsanaConnector
 from jarvis.connectors.asana.mapping import MAPPERS
 from jarvis.connectors.asana.models import (
     AsanaResult,
+    CreateTaskInput,
+    NewTask,
     ProjectsInput,
     TaskInput,
     TasksInput,
@@ -238,3 +241,26 @@ async def test_one_task_is_addressed_by_the_identifier_and_nothing_else(
     # An identifier is digits: a path, a name or a sentence cannot be one.
     with pytest.raises(ValueError):
         TaskInput(task="../projects")
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_task_stops_before_asana_is_asked_anything(
+    connector: tuple[AsanaConnector, FakeApi],
+) -> None:
+    """Cancellation is answered before the wire, and that matters most for the write.
+
+    A read given up on costs nothing. A create given up on after the request went out is a
+    task in somebody's project that this run does not know it made, so the checkpoint has
+    to come first - and on the write the test proves it by the request that never happened.
+    """
+    built, api = connector
+    stopped = Flag()
+    stopped.set()
+    with pytest.raises(asyncio.CancelledError):
+        await built.tasks(TasksInput(project="900"), ExecutionContext(stopped))
+    with pytest.raises(asyncio.CancelledError):
+        await built.create_task(
+            CreateTaskInput(task=NewTask(name="Прислать смету", workspace="5")),
+            ExecutionContext(stopped),
+        )
+    assert api.sent == []
