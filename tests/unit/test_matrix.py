@@ -112,8 +112,9 @@ def test_composition_builds_one_surface_with_a_single_approval_issuer(tmp_path: 
     assert expected <= names
     assert bench.engine is not None and bench.authority is not None
     # Connectors declare themselves through the contract and appear in one inventory.
-    assert bench.connectors.services() == ("calendar", "fireflies")
+    assert bench.connectors.services() == ("calendar", "fireflies", "asana")
     assert {"calendar.list", "calendar.create", "fireflies.get"} <= names
+    assert {"asana.tasks", "asana.task", "asana.projects", "asana.create_task"} <= names
     assert (tmp_path / "audit.sqlite3").exists()
     # The registry is sealed once the engine owns it, so nothing can be added later.
     with pytest.raises(ValueError):

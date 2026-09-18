@@ -15,9 +15,15 @@ SERVICES = {
     "openai": "Jarvis/OpenAI",
     "deepseek": "Jarvis/DeepSeek",
     "fireflies": "Jarvis/Fireflies",
+    "asana": "Jarvis/Asana",
 }
 SERVICE = SERVICES["openai"]
-VENDORS = {"openai": "OpenAI", "deepseek": "DeepSeek", "fireflies": "Fireflies"}
+VENDORS = {
+    "openai": "OpenAI",
+    "deepseek": "DeepSeek",
+    "fireflies": "Fireflies",
+    "asana": "Asana",
+}
 # An MCP server is named by the owner, so its entry is a pattern rather than a fixed
 # name - but a pattern in trusted code, which an argument still cannot step outside.
 MCP = re.compile(r"mcp_[a-z][a-z0-9_]{0,31}")
