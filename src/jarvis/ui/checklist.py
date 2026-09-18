@@ -23,6 +23,7 @@ from jarvis.permissions.policies import Status
 
 Wait = Literal["approval", "clarification"]
 
+MAX_HEIGHT = 170
 WAITING: dict[Wait, str] = {
     "approval": "ждёт подтверждения",
     "clarification": "ждёт ответа",
@@ -50,20 +51,32 @@ class Checklist(QWidget):
         self.rows.setAccessibleName("Шаги задачи")
         self.rows.setSelectionMode(QListWidget.SelectionMode.NoSelection)
         self.rows.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.rows.setMaximumHeight(170)
+        self.rows.setMaximumHeight(MAX_HEIGHT)
         layout.addWidget(self.rows)
         self.current: QListWidgetItem | None = None
         self.waiting: Wait | None = None
+        self._fit()
+
+    def _fit(self) -> None:
+        """Take the height the steps need and no more; an empty list is not a box."""
+        count = self.rows.count()
+        self.rows.setVisible(bool(count))
+        if not count:
+            return
+        row = self.rows.sizeHintForRow(0)
+        self.rows.setFixedHeight(min(row * count + 2 * self.rows.frameWidth() + 4, MAX_HEIGHT))
 
     def reset(self) -> None:
         self.rows.clear()
         self.current = None
         self.waiting = None
+        self._fit()
 
     def _row(self, text: str) -> QListWidgetItem:
         item = QListWidgetItem(text)
         item.setFlags(Qt.ItemFlag.ItemIsEnabled)
         self.rows.addItem(item)
+        self._fit()
         self.rows.scrollToItem(item)
         return item
 
@@ -98,6 +111,7 @@ class Checklist(QWidget):
         if self.current is not None:
             self.rows.takeItem(self.rows.row(self.current))
             self.current = None
+            self._fit()
         self.waiting = None
 
     def wait(self, kind: Wait | None) -> None:

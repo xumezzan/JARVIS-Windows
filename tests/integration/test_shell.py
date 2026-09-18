@@ -21,6 +21,7 @@ from jarvis.core.report import HEADLINE, LOOKED
 from jarvis.observability.logging import ShellLog
 from jarvis.ui.main_window import MainWindow
 from jarvis.ui.states import UiState
+from jarvis.ui.theme import PALETTES
 
 pytestmark = pytest.mark.integration
 
@@ -261,7 +262,7 @@ def test_planner_entrypoint_and_close_allows_reopen(qtbot: QtBot, window: MainWi
 def test_theme_and_motion_controls_preserve_task(window: MainWindow, qtbot: QtBot) -> None:
     window.command_input.setPlainText("Сохранить мою команду")
     window.theme_picker.setCurrentText("Graphite")
-    assert "#111214" in window.styleSheet()
+    assert PALETTES["Graphite"]["canvas"] in window.styleSheet()
     window.open_planner()
     assert window.planner_window is not None
     assert window.planner_window.styleSheet() == window.styleSheet()
