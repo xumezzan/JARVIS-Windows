@@ -62,6 +62,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     from jarvis.observability.logging import ShellLog
     from jarvis.ui import workers
     from jarvis.ui.main_window import MainWindow
+    from jarvis.ui.setup_window import first_run
     from jarvis.ui.theme import ICON
 
     try:
@@ -108,6 +109,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         QTimer.singleShot(0, window.submit)
         QTimer.singleShot(config.task_timeout_ms + 2000, window.close)
     window.show()
+    if not args.smoke_test and first_run(config.data_dir):
+        # A new machine has no key, no mailbox and no tokens, and an assistant that can
+        # reach nothing looks exactly like one that is broken. It opens once; after that
+        # it is a button, because a setup screen shown every morning stops being read.
+        QTimer.singleShot(0, window.open_setup)
     if args.startup_report is not None:
         from jarvis.installation.setup import atomic_json
 

@@ -38,6 +38,7 @@ from jarvis.ui.components import IconButton, MonthCalendar, Panel
 from jarvis.ui.dashboard import OrbWidget, line_icon
 from jarvis.ui.permission_workbench import PermissionWorkbench
 from jarvis.ui.planner_window import PlannerWindow
+from jarvis.ui.setup_window import SetupWindow
 from jarvis.ui.states import STATE_LABELS, UiState
 from jarvis.ui.theme import PALETTES, STYLESHEET, build_stylesheet, load_fonts
 from jarvis.ui.voice_panel import HoldButton, VoicePanel
@@ -89,6 +90,7 @@ class MainWindow(QMainWindow):
         self.running = False
         self.permission_workbench: PermissionWorkbench | None = None
         self.planner_window: PlannerWindow | None = None
+        self.setup_window: SetupWindow | None = None
         self.voice: VoicePanel | None = None
         self._request_id: UUID | None = None
         self._cancel_requested = False
@@ -386,6 +388,10 @@ class MainWindow(QMainWindow):
         self.planner_button.setObjectName("primary")
         self.planner_button.clicked.connect(self.open_planner)
         suggestion_body.addWidget(self.planner_button)
+        self.setup_button = QPushButton("Настройка подключений")
+        self.setup_button.setObjectName("secondary")
+        self.setup_button.clicked.connect(self.open_setup)
+        suggestion_body.addWidget(self.setup_button)
         right.addWidget(suggestion, 2)
         self._compact_layout: bool | None = None
         self._arrange_dashboard()
@@ -454,7 +460,9 @@ class MainWindow(QMainWindow):
     def _navigate(self, target: str) -> None:
         self.nav_buttons[target].setChecked(True)
         if target == "settings":
-            self.open_permissions()
+            # What a person means by "settings" here is which services are connected;
+            # the permission workbench has its own button on the dashboard.
+            self.open_setup()
             return
         destinations = {
             "home": self.orb,
@@ -761,6 +769,8 @@ class MainWindow(QMainWindow):
             self.voice.set_hands_free(False)
         if self.running:
             self.stop()
+        if self.setup_window is not None:
+            self.setup_window.shutdown()
         if self.planner_window is not None:
             self.planner_window.shutdown()
         if self.permission_workbench is not None:
@@ -816,6 +826,32 @@ class MainWindow(QMainWindow):
             self.permission_workbench = None
 
     @Slot()
+    def open_setup(self) -> None:
+        """The one screen that says what is connected and connects the rest.
+
+        It borrows the planner's session and audit log rather than making its own: signing
+        in twice in one application would leave two accounts and one of them unaudited.
+        """
+        if self._closing:
+            return
+        planner = self._ensure_planner()
+        if planner is None:
+            return
+        if self.setup_window is None:
+            self.setup_window = SetupWindow(
+                planner.mail_session, planner.audit, self.config.data_dir, self
+            )
+            self.setup_window.finished.connect(self._setup_closed)
+        self.setup_window.show()
+        self.setup_window.raise_()
+        self.setup_window.activateWindow()
+
+    def _setup_closed(self) -> None:
+        window, self.setup_window = self.setup_window, None
+        if window is not None:
+            window.shutdown()
+            window.deleteLater()
+
     def open_planner(self) -> None:
         if self.running or self._closing:
             return
