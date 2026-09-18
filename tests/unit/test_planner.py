@@ -9,7 +9,14 @@ from uuid import uuid4
 
 import pytest
 
-from jarvis.core.planner.contracts import Limits, PlannerInput, Proposal, ProviderError, Step
+from jarvis.core.planner.contracts import (
+    Answer,
+    Limits,
+    PlannerInput,
+    Proposal,
+    ProviderError,
+    Step,
+)
 from jarvis.core.planner.offline import OfflineProvider, call
 from jarvis.core.planner.runner import Runner
 from jarvis.observability.audit import AuditLog
@@ -254,7 +261,9 @@ async def test_offline_clarification_reobserves_nonempty_notepad() -> None:
     assert (
         await provider.propose(PlannerInput(command, (), (step,), Mode.EXECUTE, "[]"))
     ).kind == "clarify"
-    answer = PlannerInput(command, (command,), (step,), Mode.EXECUTE, "[]")
+    answer = PlannerInput(
+        command, (Answer("какое приложение?", command),), (step,), Mode.EXECUTE, "[]"
+    )
     assert (await provider.propose(answer)).tool == "windows.open_app"
 
 

@@ -41,9 +41,23 @@ class Step:
 
 
 @dataclass(frozen=True)
+class Answer:
+    """One clarification, kept together with the question it answered.
+
+    An answer used to travel on its own, and a live run showed what that costs. The strong
+    model asked whether it should carry on, was told "yes", could not tell from `["yes"]`
+    what it had agreed to, and asked again - three times, until the question limit ended a
+    task with two of its seven steps done. A bare answer answers nothing.
+    """
+
+    question: str = field(repr=False)
+    answer: str = field(repr=False)
+
+
+@dataclass(frozen=True)
 class PlannerInput:
     command: str = field(repr=False)
-    answers: tuple[str, ...] = field(repr=False)
+    answers: tuple[Answer, ...] = field(repr=False)
     steps: tuple[Step, ...] = field(repr=False)
     mode: Mode
     catalog_json: str = field(repr=False)

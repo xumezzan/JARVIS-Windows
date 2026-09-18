@@ -290,7 +290,12 @@ async def test_contacts_require_clarification_before_provider(harness: Harness) 
         harness.registry, harness.engine, provider, harness.approve, clarify, memory=memory
     )
     result = await runner.run("напиши Саше")
-    assert seen and provider.inputs[0].answers == ("проверь систему",)
+    # The question travels with the answer: a bare reply answers nothing, and a model
+    # that cannot tell what it was told yes about asks the same thing again.
+    assert seen
+    (clarification,) = provider.inputs[0].answers
+    assert clarification.answer == "проверь систему"
+    assert "контакт" in clarification.question
     assert result.status == "simulated" and harness.outbox.count == 0
 
 
