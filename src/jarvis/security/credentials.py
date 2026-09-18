@@ -51,6 +51,73 @@ def setup_command(provider: str = "") -> str:
     return f"{quoted} -m jarvis.security.credentials set {provider}".rstrip()
 
 
+async def _helper(provider: str, mode: str, secret: str = "") -> str:
+    """One bounded, killable child between the interface and the credential store.
+
+    The key never travels as an argument: a command line is readable by anything that can
+    list processes. It goes down a pipe, in one direction, and comes back only as the word
+    the caller asked for - "1", "0", or "ok" - so a window can show what is connected
+    without ever holding what connects it.
+    """
+    service_of(provider)  # Refuse an unknown vendor before spawning anything.
+    launch = asyncio.create_task(
+        asyncio.create_subprocess_exec(
+            sys.executable,
+            "-I",
+            "-m",
+            "jarvis.security.credentials",
+            mode,
+            provider,
+            stdin=asyncio.subprocess.PIPE if secret else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            limit=8192,
+            creationflags=0x08000000 if sys.platform == "win32" else 0,
+        )
+    )
+    process: asyncio.subprocess.Process | None = None
+    try:
+        async with asyncio.timeout(8):
+            process = await asyncio.shield(launch)
+            written = (secret + "\n").encode() if secret else None
+            raw, _ = await process.communicate(written)
+            if process.returncode != 0:
+                raise ProviderError("credentials")
+            return raw.decode(errors="replace").strip()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        raise ProviderError("credentials") from None
+    finally:
+        if process is None:
+            process = await launch
+        if process.returncode is None:
+            with suppress(ProcessLookupError):
+                process.kill()
+            await process.communicate()
+        await process.wait()
+
+
+async def has_api_key(provider: str) -> bool:
+    """Whether something is stored, without bringing it into this process."""
+    try:
+        return await _helper(provider, "--has") == "1"
+    except ProviderError:
+        return False
+
+
+async def store_api_key(provider: str, key: str) -> None:
+    if not valid_key(key):
+        raise ProviderError("credentials")
+    if await _helper(provider, "--store", key) != "ok":
+        raise ProviderError("credentials")
+
+
+async def forget_api_key(provider: str) -> None:
+    if await _helper(provider, "--forget") != "ok":
+        raise ProviderError("credentials")
+
+
 async def load_api_key(provider: str = "openai") -> str:
     service_of(provider)  # Refuse an unknown vendor before spawning anything.
     launch = asyncio.create_task(
@@ -138,6 +205,25 @@ def main() -> int:
             store.set_password(service_of(provider), ACCOUNT, key)
             print(f"Ключ {vendor_of(provider)} сохранён в системном хранилище.")
             return 0
+        if arguments[:1] == ["--has"] and len(arguments) == 2:
+            stored = store.get_password(service_of(provider), ACCOUNT) or ""
+            # Only whether, never what.
+            sys.stdout.write("1\n" if valid_key(stored) else "0\n")
+            return 0
+        if arguments[:1] == ["--store"] and len(arguments) == 2 and not console(sys.stdin, True):
+            # A typed key belongs to `set`, which hides it as it is typed. This path exists
+            # for a window, so it reads the key from the pipe and refuses a console.
+            key = sys.stdin.readline().strip()
+            if not valid_key(key):
+                raise ValueError
+            store.set_password(service_of(provider), ACCOUNT, key)
+            sys.stdout.write("ok\n")
+            return 0
+        if arguments[:1] == ["--forget"] and len(arguments) == 2:
+            with suppress(Exception):
+                store.delete_password(service_of(provider), ACCOUNT)
+            sys.stdout.write("ok\n")
+            return 0
         if (
             arguments[:1] == ["--pipe"]
             and len(arguments) <= 2
@@ -151,7 +237,7 @@ def main() -> int:
             return 0
     except Exception:
         pass
-    if sys.argv[1:2] != ["--pipe"]:
+    if sys.argv[1:2] not in (["--pipe"], ["--has"], ["--store"], ["--forget"]):
         vendors = "[openai|deepseek|fireflies|mcp_<имя>]"
         print("Ключ недоступен. Настройка: " + setup_command(vendors))
     return 1
