@@ -91,52 +91,37 @@ Mock-тест не доказывает работу Windows, микрофона
 
 ## Точный следующий prompt
 
-Ворота фазы 0 закрываются только на целевой Windows-машине. Пока она недоступна, работа
-продолжается по фазе 1 на машине разработки — второй prompt ниже.
+Фаза 2 написана целиком и не проверена ни одним живым сервисом. Это и есть главный
+открытый риск: около трёх тысяч строк коннекторов и сценарий встречи стоят на
+синтетических ответах. Поэтому первый prompt — живой проход, а не новый код.
 
-### На целевом Windows-ноутбуке
-
-```text
-Close phase 0 on the target Windows 11 x64 laptop: install Jarvis and complete native acceptance.
-
-Read AGENTS.md, docs/AGENT_PLAN.md, docs/MILESTONE_9.md, docs/WINDOWS_ACCEPTANCE.md and
-scripts/windows/Install-Jarvis.ps1. Preserve all existing work. Run
-scripts/windows/Install-Jarvis.cmd from this complete repository; do not require manual
-Python/pip setup. Inspect installation-report.json and the real window, then launch from
-Start. Repair any native failures, test clean/repeated installation, offline repeat,
-spaces/Cyrillic paths, interrupted download, cancellation, permissions and missing hardware.
-
-Run scripts/windows/Test-Jarvis.ps1 and the full acceptance matrix, including the wake word
-and hands-free listening on the real microphone, spoken confirmation by control detail, and
-DeepSeek as the live planner provider. For Outlook, let the user choose their own test
-account and recipient and approve the exact snapshot in the normal UI. Never bypass OAuth/MFA,
-microphone consent, Group Policy or approvals. 202 is not delivery proof. Public search needs
-actual search results; the owned Chromium is separate from Chrome.
-
-Record Windows build, runtime and package versions and every passed/failed/pending gate.
-Only after real Windows compatibility checks, create a reproducible dependency lock and
-repeat clean setup with it. Phase 1 of docs/AGENT_PLAN.md already has its durable core,
-written and tested on the development machine; run it for real here instead of rewriting it,
-and do not start phase 2 before these gates pass.
-```
-
-### На машине разработки, пока Windows недоступна
+### Живая проверка фазы 2 (на машине владельца, с его аккаунтами)
 
 ```text
-Phase 1 of docs/AGENT_PLAN.md is built except for the approval queue, which is waiting on a
-decision by the owner (Р7 in that document). Do not build the queue before that decision.
+Verify phase 2 against the real services on this Windows machine. Change nothing until
+something actually fails.
 
-Read AGENTS.md, docs/AGENT_PLAN.md (phase 1 and its status section),
-tests/unit/test_long_task.py and tests/integration/test_long_task_ui.py, and preserve all
-existing work. Useful work available on this machine: exercise the long task against the
-offline provider and a long scripted plan and fix what the checklist, the resume list or
-the journal get wrong; harden resumption against a journal that is unreadable, full or
-concurrently written; and prepare phase 2 connectors as design only, without registering
-tools, since phase 2 does not start before phase 0 passes.
+Read AGENTS.md, docs/ASANA.md, docs/NOTION.md, docs/TEAMS.md, docs/ONEDRIVE.md and
+docs/MEETING.md. Connect what the owner supplies: Asana and Notion tokens in the
+Connections tab, the Microsoft account in the Outlook tab, then the separate consents for
+Teams and OneDrive. Run one read of each connector through the planner window, then press
+"Подготовить всё к встрече" with a real meeting in the calendar.
 
-Run focused tests, then the full pytest, ruff check, ruff format --check and mypy --strict.
-On macOS use pytest --ignore=tests/unit/test_windows_native.py and mypy --platform win32,
-and say in the report that these are host adjustments, not repository changes. Do not claim
-any Windows, microphone, mail or model behaviour from this machine.
+Record, for every call: the exact tool, what came back, and what broke. Fix what broke -
+response shapes, pagination, percent-encoding, Excel coercion, permission refusals - with
+a test that would have caught it. Do not widen a route table to make a call work without
+reading the official reference first, and do not claim a live check that did not run.
 ```
 
+### Фаза 3 — глаза (только по просьбе владельца)
+
+`AGENTS.md` запрещает начинать фазу, о которой не просили. Когда попросят — фаза 3 в
+[AGENT_PLAN.md](AGENT_PLAN.md): дерево интерфейса окна как основной способ видеть, снимок
+**окна** с вырезанием полей пароля в адаптере, разбор снимка моделью по отдельному
+согласию Р6.
+
+### Ворота, которые закрываются не здесь
+
+Живой Outlook (нужен личный аккаунт владельца), чистая ОС без Python и обрыв сети (нужна
+виртуальная машина), согласие администратора тенанта для каналов Teams, решение Р7 по
+очереди подтверждений.

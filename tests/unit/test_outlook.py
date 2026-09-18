@@ -248,6 +248,21 @@ async def test_untrusted_mail_never_grants_authority(mail: MailHarness) -> None:
     assert not mail.graph.writes
 
 
+@pytest.mark.asyncio
+async def test_a_listing_says_which_letters_are_still_unread(mail: MailHarness) -> None:
+    """The read flag is the difference between "letters from this person" and the thing
+    the owner actually asks for before a meeting: what is still waiting."""
+    assert mail.session.account is not None
+    action = mail.prepare("outlook.list", {"account": mail.session.account.model_dump()})
+    result = await mail.engine.execute(action)
+    assert result.status is Status.SUCCESS and result.result_json
+    assert "isRead" in mail.graph.selected
+    rows = json.loads(json.loads(result.result_json)["data"])
+    assert rows[0]["isRead"] is False
+    # Still exactly the fields that were asked for, and nothing Graph added on its own.
+    assert set(rows[0]) == {"id", "subject", "from", "receivedDateTime", "isDraft", "isRead"}
+
+
 @pytest.mark.parametrize(
     "recipient",
     ["Саша", "Name <a@example.test>", "a@example.test\r\nBcc:b@example.test", "a@localhost"],

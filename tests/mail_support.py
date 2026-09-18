@@ -41,6 +41,7 @@ class FakeGraph:
         self.change_draft = False
         self.delay = 0.0
         self.subject = "Fixture subject"
+        self.selected = ""
         self.draft: dict[str, object] = {}
 
     async def request(
@@ -67,12 +68,19 @@ class FakeGraph:
         if path.endswith("/attachments"):
             return 200, {"value": self.draft.get("attachments", [])}
         if path.startswith("/me/mailFolders/"):
+            self.selected = (params or {}).get("$select", "")
             return 200, {
                 "value": [
                     {
                         "id": "fixture-message",
                         "subject": self.subject,
                         "from": {"emailAddress": {"address": "sender@example.test"}},
+                        "receivedDateTime": "2026-09-17T09:00:00Z",
+                        "isDraft": False,
+                        "isRead": False,
+                        # Fields nobody asked for do not cross the boundary, whatever
+                        # Graph decides to put in an answer.
+                        "bodyPreview": "не должно проходить",
                     }
                 ]
             }
