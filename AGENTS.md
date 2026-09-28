@@ -13,9 +13,15 @@ The earlier documents — the v1.0 milestone plan, `docs/AMBIENT_PLAN.md` and
 Where they look forward, `docs/AGENT_PLAN.md` supersedes them; in particular it reverses
 their "no screen reading, no clicks, no clipboard" position by explicit owner decision.
 
-Milestones 0–9 and the 0.2–0.3 phases are implemented locally. Clean Windows installation,
-live Outlook OAuth/mail, live DeepSeek, real voice hardware and the full Windows acceptance
-remain unverified, and they block every phase of the agent plan.
+Milestones 0–9 and the 0.2–0.3 phases are implemented locally. The live/Windows status is
+tracked in `docs/ROADMAP.md` and `docs/WINDOWS_ACCEPTANCE.md`; those are the source of truth,
+not this summary. At the current roadmap state, live DeepSeek and one real-microphone task
+have passed, while wake-word/voice-approval acceptance, live Outlook, the clean-VM/offline
+installation cases and full Windows E2E remain open. Phase 1 is implemented and live-tested
+except for the owner decision R7; phase 2's connectors are implemented but have not been
+validated against live services. The next planned action is the live phase 2 check on the
+owner's Windows machine. Do not start phase 5 until that gate is complete, and do not claim
+fixture or hosted-CI results as live-service or full-product acceptance.
 Work on the phase requested by the user; do not implement later phases early.
 Inspect existing instructions and changes before edits and preserve unrelated work.
 
