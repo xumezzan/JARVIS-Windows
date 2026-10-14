@@ -181,10 +181,10 @@ main (marker retries, venv redirector receipt, desktop/Start shortcuts и icon).
 | --- | --- |
 | Installer/report/offline focused tests до добавления commit-cases | 105 passed |
 | Git/PowerShell fixture update scenarios + report/active matching | 17 passed; только локальные bare repos, -SkipInstall |
-| Mac suite с `--ignore=tests/unit/test_windows_native.py` | 1059 passed, 6 skipped до последних трёх active-pointer cases; они прошли в focused Git suite |
+| Mac suite с `--ignore=tests/unit/test_windows_native.py` | 1066 passed, 6 skipped, включая source/active-pointer и Qt lifetime regressions |
 | Full pytest без ignore | Collection blocked: существующий Windows-only test_windows_native.py напрямую импортирует winreg |
-| Ruff check / format --check | Passed, 287 files |
-| Mypy `--platform win32` | Passed, 248 source files; статическая проверка, не Windows execution |
+| Ruff check / format --check | Passed, 288 files |
+| Mypy `--platform win32` | Passed, 249 source files; статическая проверка, не Windows execution |
 | Обычный Mac mypy | 11 ошибок в существующих Windows-specific branches files.py/native.py/credentials.py; они не изменялись |
 | Pip check / build | Passed; wheel и sdist собраны |
 | Cocoa smoke | `success (simulated)` |
