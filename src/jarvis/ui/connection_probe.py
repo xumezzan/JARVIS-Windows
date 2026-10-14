@@ -30,10 +30,16 @@ class ConnectionProbe(QThread):
     def run(self) -> None:
         found: dict[str, bool] = {}
         for provider in sorted(SERVICES):
+            if self.isInterruptionRequested():
+                self.states = found
+                return
             try:
                 found[provider] = asyncio.run(has_api_key(provider))
             except Exception:
                 found[provider] = False
+        if self.isInterruptionRequested():
+            self.states = found
+            return
         try:
             found["voice"] = bool(installed_model())
         except Exception:

@@ -5,12 +5,14 @@ Dropping the last reference to a running `QThread` destroys it, and Qt answers t
 than anywhere near the thread. Panels do wait for their workers before they close, but a
 widget can be deleted without being asked - a parent goes away, a window is torn down
 while a slow read is still in flight - and then that wait never runs. So the run itself
-holds the reference and gives it up only once the thread has actually finished.
+holds the reference until Qt has deleted the finished thread's C++ object on its
+owning GUI thread. Python garbage collection must not choose that deletion thread.
 """
 
 from time import monotonic
 
 from PySide6.QtCore import QThread
+from shiboken6 import isValid
 
 _running: list[QThread] = []
 
@@ -24,20 +26,24 @@ def _finished(worker: QThread) -> bool:
 
 
 def _release() -> None:
-    _running[:] = [worker for worker in _running if not _finished(worker)]
+    # Finishing is not C++ destruction. Keep the wrapper alive until Qt deletes the
+    # QObject on its owning thread, rather than letting Python GC pick a worker thread.
+    _running[:] = [worker for worker in _running if isValid(worker)]
 
 
 def start(worker: QThread) -> None:
     """Start the worker and keep it reachable for the length of its run."""
     _release()
     _running.append(worker)
+    worker.finished.connect(worker.deleteLater)
+    worker.destroyed.connect(_release)
     worker.start()
 
 
 def pending() -> int:
     """How many started workers are still running."""
     _release()
-    return len(_running)
+    return sum(not _finished(worker) for worker in _running)
 
 
 def drain(timeout_ms: int = 10000) -> bool:

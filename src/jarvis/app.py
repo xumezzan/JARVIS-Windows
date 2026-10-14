@@ -83,7 +83,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     application.setApplicationName("Jarvis")
     application.setOrganizationName("Jarvis")
     application.setWindowIcon(QIcon(str(ICON)))
-    window = MainWindow(config, log)
+    # Automatic smoke exercises the offline engine, without looking at real credentials.
+    window = MainWindow(config, log, probe_connections=not args.smoke_test)
     application.aboutToQuit.connect(window.shutdown)
     smoke_result = 1
     # A real command finishes in well under a second, so the smoke run must not close the

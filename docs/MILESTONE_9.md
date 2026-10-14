@@ -196,6 +196,15 @@ main (marker retries, venv redirector receipt, desktop/Start shortcuts и icon).
 ноутбука выполнить Update без SkipInstall, проверить source_commit, совпадение run_id,
 настоящее окно и оба ярлыка; пройти оставшуюся матрицу ниже.
 
+Windows CI обнаружил существующий crash Qt при сборке мусора в worker thread;
+он воспроизвёлся и на исходном main (run 38537828112). Завершённый QThread теперь
+удерживается до C++ deletion через deleteLater в его GUI thread. Закрытие окна также
+останавливает дальнейшие credential lookups connection probe после текущего ограниченного
+вызова. Smoke явно отключает connection probe: автоматическая диагностика не читает
+личные credentials. Обычные UI tests используют синтетическое состояние подключений.
+Регрессии проверяют поток удаления, удержание до deferred deletion, остановку probe
+и отсутствие probe в diagnostic window; focused Qt suite: 34 passed, exit 0 на Mac.
+
 ### Оставшаяся приёмка
 
 Обновлено после прогона 17.09.2026; что именно проверено — в

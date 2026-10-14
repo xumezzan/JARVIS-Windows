@@ -61,6 +61,22 @@ def test_startup_and_unavailable_capabilities(window: MainWindow) -> None:
     assert window.autonomy.isChecked()
 
 
+def test_offline_diagnostic_window_never_starts_a_credential_probe(
+    qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refused_probe(*args: object) -> None:
+        pytest.fail("Offline diagnosis must not construct a credential probe.")
+
+    monkeypatch.setattr("jarvis.ui.main_window.ConnectionProbe", refused_probe)
+    shell = MainWindow(AppConfig(tmp_path), ShellLog(tmp_path / "logs"), probe_connections=False)
+    qtbot.addWidget(shell)
+    # The flag also prevents a later refresh from enabling live credential reads.
+    shell._probe_connections()
+    assert shell.probe is None
+    shell.shutdown()
+    shell.close()
+
+
 def test_small_window_scrolls_instead_of_clipping(qtbot: QtBot, window: MainWindow) -> None:
     window.resize(860, 640)
     qtbot.waitUntil(lambda: window.scroll_area.verticalScrollBar().maximum() > 0)
