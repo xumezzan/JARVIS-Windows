@@ -60,7 +60,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     from PySide6.QtWidgets import QApplication
 
     from jarvis.observability.logging import ShellLog
-    from jarvis.ui import workers
+    from jarvis.ui import garbage_collection, workers
     from jarvis.ui.main_window import MainWindow
     from jarvis.ui.setup_window import first_run
     from jarvis.ui.theme import ICON
@@ -80,6 +80,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # started it: a Python icon in the taskbar, and nothing called Jarvis to find.
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Jarvis.Desktop")
     application = QApplication(["jarvis"])
+    garbage_collection.install()
     application.setApplicationName("Jarvis")
     application.setOrganizationName("Jarvis")
     application.setWindowIcon(QIcon(str(ICON)))
@@ -145,5 +146,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         window.shutdown()
         # A closed window is not a finished worker: a run whose panel was deleted still
         # holds its thread, and leaving before it returns would abort the process.
-        workers.drain()
+        if workers.drain():
+            garbage_collection.stop()
+        else:
+            smoke_result = result = 1
     return smoke_result if args.smoke_test else result

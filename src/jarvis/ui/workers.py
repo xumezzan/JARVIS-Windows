@@ -14,6 +14,8 @@ from time import monotonic
 from PySide6.QtCore import QThread
 from shiboken6 import isValid
 
+from jarvis.ui import garbage_collection
+
 _running: list[QThread] = []
 
 
@@ -33,6 +35,7 @@ def _release() -> None:
 
 def start(worker: QThread) -> None:
     """Start the worker and keep it reachable for the length of its run."""
+    garbage_collection.install()
     _release()
     _running.append(worker)
     worker.finished.connect(worker.deleteLater)

@@ -181,10 +181,10 @@ main (marker retries, venv redirector receipt, desktop/Start shortcuts и icon).
 | --- | --- |
 | Installer/report/offline focused tests до добавления commit-cases | 105 passed |
 | Git/PowerShell fixture update scenarios + report/active matching | 17 passed; только локальные bare repos, -SkipInstall |
-| Mac suite с `--ignore=tests/unit/test_windows_native.py` | 1066 passed, 6 skipped, включая source/active-pointer и Qt lifetime regressions |
+| Mac suite с `--ignore=tests/unit/test_windows_native.py` | 1070 passed, 6 skipped, включая source/active-pointer, Qt lifetime и GUI cycle collection regressions |
 | Full pytest без ignore | Collection blocked: существующий Windows-only test_windows_native.py напрямую импортирует winreg |
-| Ruff check / format --check | Passed, 288 files |
-| Mypy `--platform win32` | Passed, 249 source files; статическая проверка, не Windows execution |
+| Ruff check / format --check | Passed, 290 files |
+| Mypy `--platform win32` | Passed, 251 source files; статическая проверка, не Windows execution |
 | Обычный Mac mypy | 11 ошибок в существующих Windows-specific branches files.py/native.py/credentials.py; они не изменялись |
 | Pip check / build | Passed; wheel и sdist собраны |
 | Cocoa smoke | `success (simulated)` |
@@ -204,6 +204,18 @@ Windows CI обнаружил существующий crash Qt при сбор�
 личные credentials. Обычные UI tests используют синтетическое состояние подключений.
 Регрессии проверяют поток удаления, удержание до deferred deletion, остановку probe
 и отсутствие probe в diagnostic window; focused Qt suite: 34 passed, exit 0 на Mac.
+
+Повторный Windows run 38549532529 показал, что одного удержания QThread недостаточно:
+Python cycle collection снова сработала в planner worker. Поэтому приложение перед
+запуском любых workers отключает автоматический cycle collector и выполняет gc.collect
+таймером в GUI thread раз в секунду; обычный reference counting сохраняется. После
+drain восстанавливается прежнее состояние GC. Это решение следует ограничению Qt на
+[удаление QObjects в их owning thread](https://doc.qt.io/qt-6/threads-qobject.html) и
+использует стандартный [Python gc API](https://docs.python.org/3.13/library/gc.html).
+Регрессия создаёт cyclic QWidget и 10000 циклов в фоне: QWidget удаляется только GUI
+таймером, explicit collection из worker отклоняется, исходное GC setting сохраняется.
+Focused collection/planner/worker suite: 34 passed, exit 0 на Mac. Это ещё не native
+desktop acceptance; полные Windows gates остаются обязательны до публикации main.
 
 ### Оставшаяся приёмка
 
