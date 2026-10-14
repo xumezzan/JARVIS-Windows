@@ -156,6 +156,77 @@ Native Qt: `QT_QPA_PLATFORM=windows`, `tests/integration` — 105 passed.
 
 ## Открытые ворота
 
+### Дополнение 2026-10-14: переустановка опубликованного main и самодиагностика
+
+Запрос «установи заново» на ранее установленном ноутбуке теперь ведёт через
+`Update-Jarvis.cmd`: получить точный commit `main`, сохранить локальные правки/ветку,
+установить выбранный источник и сверить текущие отчёты. Clean main идёт fast-forward;
+dirty/non-main/diverged/detached — через отдельный worktree. Сеть недоступна — обновление
+не выдаётся за успешное. Офлайн-ремонт остаётся отдельным `Install-Jarvis.cmd`.
+Подробности и первый запрос для старой копии: [WINDOWS_UPDATE.md](WINDOWS_UPDATE.md).
+
+Сюда перенесена самодиагностика из локальной копии с сохранением native исправлений
+main (marker retries, venv redirector receipt, desktop/Start shortcuts и icon).
+Установщик пишет JSON schema 2 и русский Markdown до/после каждого шага, включая сбой
+и обычную отмену. Проверки идут отдельными ограниченными процессами, содержат реальные
+локальные permissions/planner/audit/memory упражнения и никогда не трогают аккаунты
+или звук. Ошибка обязательной проверки блокирует кандидата. Bootstrap имеет отдельный
+отчёт с общим run_id. Обновление связывает source_commit с receipt/active/отчётами;
+старый или неполный отчёт не может подтвердить новое обновление.
+[Охват и ограничения диагностики](INSTALLATION_DIAGNOSTICS.md).
+
+Проверка на Mac (Python 3.12.7, отдельный venv, `pip install -e ".[dev,voice]`):
+
+| Проверка | Результат |
+| --- | --- |
+| Installer/report/offline focused tests до добавления commit-cases | 105 passed |
+| Git/PowerShell fixture update scenarios + report/active matching | 17 passed; только локальные bare repos, -SkipInstall |
+| Mac suite с `--ignore=tests/unit/test_windows_native.py` | 1071 passed, 6 skipped, включая source/active-pointer, Qt lifetime, GUI cycle collection и isolated smoke regressions |
+| Full pytest без ignore | Collection blocked: существующий Windows-only test_windows_native.py напрямую импортирует winreg |
+| Ruff check / format --check | Passed, 291 files |
+| Mypy `--platform win32` | Passed, 252 source files; статическая проверка, не Windows execution |
+| Обычный Mac mypy | 11 ошибок в существующих Windows-specific branches files.py/native.py/credentials.py; они не изменялись |
+| Pip check / build | Passed; wheel и sdist собраны |
+| Cocoa smoke | `success (simulated)` |
+| Интерактивный Cocoa main window, временные данные | Два local.check сделано; окно закрыто |
+| PowerShell 7.6.7 parser на Mac | Install/Update/Test синтаксически корректны; PS5.1/COM не проверены |
+| Windows hosted CI, commit 37b3963 | [Run 38550860924](https://github.com/xumezzan/JARVIS-Windows/actions/runs/38550860924): 1094 passed, 6 skipped; lint/format/mypy/pip check/smoke/build passed |
+
+Полные обязательные Windows gates выполняются GitHub Actions на PR и должны быть зелёными
+до слияния. Они также не заменяют desktop/clean-machine/live acceptance. Для целевого
+ноутбука выполнить Update без SkipInstall, проверить source_commit, совпадение run_id,
+настоящее окно и оба ярлыка; пройти оставшуюся матрицу ниже.
+
+Windows CI обнаружил существующий crash Qt при сборке мусора в worker thread;
+он воспроизвёлся и на исходном main (run 38537828112). Завершённый QThread теперь
+удерживается до C++ deletion через deleteLater в его GUI thread. Закрытие окна также
+останавливает дальнейшие credential lookups connection probe после текущего ограниченного
+вызова. Smoke явно отключает connection probe: автоматическая диагностика не читает
+личные credentials. Обычные UI tests используют синтетическое состояние подключений.
+Регрессии проверяют поток удаления, удержание до deferred deletion, остановку probe
+и отсутствие probe в diagnostic window; focused Qt suite: 34 passed, exit 0 на Mac.
+
+Повторный Windows run 38549532529 показал, что одного удержания QThread недостаточно:
+Python cycle collection снова сработала в planner worker. Поэтому приложение перед
+запуском любых workers отключает автоматический cycle collector и выполняет gc.collect
+таймером в GUI thread раз в секунду; обычный reference counting сохраняется. После
+drain восстанавливается прежнее состояние GC. Это решение следует ограничению Qt на
+[удаление QObjects в их owning thread](https://doc.qt.io/qt-6/threads-qobject.html) и
+использует стандартный [Python gc API](https://docs.python.org/3.13/library/gc.html).
+Регрессия создаёт cyclic QWidget и 10000 циклов в фоне: QWidget удаляется только GUI
+таймером, explicit collection из worker отклоняется, исходное GC setting сохраняется.
+Focused collection/planner/worker suite: 34 passed, exit 0 на Mac. Это ещё не native
+desktop acceptance; полные Windows gates остаются обязательны до публикации main.
+
+Smoke дополнительно выключает озвучивание результата, включённое обычным main window:
+автодиагностика не должна запускать TTS. Child-process regression выполняет настоящий
+entry point и фиксирует любую попытку начать VoiceWorker или credential probe, подменяя
+их до выполнения, чтобы даже регрессия не достигла устройств/credentials. Обычные UI
+tests также используют fixture recorder/speaker по умолчанию; explicit voice fixtures
+сохраняются. Focused worker/shell/voice suite после этого изменения: 63 passed на Mac.
+
+### Оставшаяся приёмка
+
 Обновлено после прогона 17.09.2026; что именно проверено — в
 [WINDOWS_ACCEPTANCE.md](WINDOWS_ACCEPTANCE.md), раздел «Результаты прогона 17.09.2026».
 

@@ -60,7 +60,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     from PySide6.QtWidgets import QApplication
 
     from jarvis.observability.logging import ShellLog
-    from jarvis.ui import workers
+    from jarvis.ui import garbage_collection, workers
     from jarvis.ui.main_window import MainWindow
     from jarvis.ui.setup_window import first_run
     from jarvis.ui.theme import ICON
@@ -80,10 +80,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         # started it: a Python icon in the taskbar, and nothing called Jarvis to find.
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Jarvis.Desktop")
     application = QApplication(["jarvis"])
+    garbage_collection.install()
     application.setApplicationName("Jarvis")
     application.setOrganizationName("Jarvis")
     application.setWindowIcon(QIcon(str(ICON)))
-    window = MainWindow(config, log)
+    # Automatic smoke exercises the offline engine, without looking at real credentials.
+    window = MainWindow(config, log, probe_connections=not args.smoke_test)
     application.aboutToQuit.connect(window.shutdown)
     smoke_result = 1
     # A real command finishes in well under a second, so the smoke run must not close the
@@ -102,6 +104,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.smoke_test:
         window.task_finished.connect(finish_smoke)
+        if window.voice is not None:
+            window.voice.speech_enabled.setChecked(False)
         # Simulation and the offline provider: the smoke run never touches a real adapter.
         window.run_mode.setCurrentIndex(1)
         window.provider_mode.setCurrentIndex(0)
@@ -144,5 +148,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         window.shutdown()
         # A closed window is not a finished worker: a run whose panel was deleted still
         # holds its thread, and leaving before it returns would abort the process.
-        workers.drain()
+        if workers.drain():
+            garbage_collection.stop()
+        else:
+            smoke_result = result = 1
     return smoke_result if args.smoke_test else result

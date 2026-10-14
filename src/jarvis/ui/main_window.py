@@ -115,7 +115,7 @@ class MainWindow(QMainWindow):
     state_changed = Signal(str)
     task_finished = Signal(str)
 
-    def __init__(self, config: AppConfig, log: ShellLog) -> None:
+    def __init__(self, config: AppConfig, log: ShellLog, *, probe_connections: bool = True) -> None:
         super().__init__()
         self.config = config
         self.log = log
@@ -133,6 +133,7 @@ class MainWindow(QMainWindow):
         self._closed = False
         self.today_worker: TodayWorker | None = None
         self.probe: ConnectionProbe | None = None
+        self._probe_connections_enabled = probe_connections
         # Two things this window remembers about its owner: what to call them, and which
         # palette they chose. Both are local, and neither is worth asking for twice.
         self.preferences = HomePreferences(config.data_dir / "home.json", tuple(PALETTES))
@@ -764,7 +765,7 @@ class MainWindow(QMainWindow):
 
     def _probe_connections(self) -> None:
         """Ask the credential store what is actually connected, once, in a worker."""
-        if self.probe is not None or self._closing:
+        if not self._probe_connections_enabled or self.probe is not None or self._closing:
             return
         probe = ConnectionProbe(self.config.data_dir)
         self.probe = probe
@@ -1103,6 +1104,8 @@ class MainWindow(QMainWindow):
     def shutdown(self) -> None:
         """Fallback for application-level quit; planner shutdown joins its worker thread."""
         self._closing = True
+        if self.probe is not None:
+            self.probe.requestInterruption()
         if self.voice is not None:
             self.voice.set_hands_free(False)
         if self.running:
