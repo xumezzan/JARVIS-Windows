@@ -55,6 +55,25 @@ def test_deleting_a_panel_mid_run_does_not_abort_the_process() -> None:
     assert result.stdout.splitlines()[-2:] == ["deleted", "drained"]
 
 
+def test_automatic_smoke_does_not_start_audio_or_credential_probes(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "tests.smoke_support"],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "QT_QPA_PLATFORM": "offscreen",
+            "JARVIS_DATA_DIR": str(tmp_path / "diagnostic-data"),
+        },
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.splitlines()[-1] == "isolated smoke verified"
+
+
 def test_a_running_worker_is_held_until_it_finishes(qtbot: QtBot) -> None:
     worker = Sleeper(0.4)
     workers.start(worker)

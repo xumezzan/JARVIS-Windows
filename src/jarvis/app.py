@@ -104,6 +104,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.smoke_test:
         window.task_finished.connect(finish_smoke)
+        if window.voice is not None:
+            window.voice.speech_enabled.setChecked(False)
         # Simulation and the offline provider: the smoke run never touches a real adapter.
         window.run_mode.setCurrentIndex(1)
         window.provider_mode.setCurrentIndex(0)

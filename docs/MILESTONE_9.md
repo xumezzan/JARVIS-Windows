@@ -181,15 +181,16 @@ main (marker retries, venv redirector receipt, desktop/Start shortcuts и icon).
 | --- | --- |
 | Installer/report/offline focused tests до добавления commit-cases | 105 passed |
 | Git/PowerShell fixture update scenarios + report/active matching | 17 passed; только локальные bare repos, -SkipInstall |
-| Mac suite с `--ignore=tests/unit/test_windows_native.py` | 1070 passed, 6 skipped, включая source/active-pointer, Qt lifetime и GUI cycle collection regressions |
+| Mac suite с `--ignore=tests/unit/test_windows_native.py` | 1071 passed, 6 skipped, включая source/active-pointer, Qt lifetime, GUI cycle collection и isolated smoke regressions |
 | Full pytest без ignore | Collection blocked: существующий Windows-only test_windows_native.py напрямую импортирует winreg |
-| Ruff check / format --check | Passed, 290 files |
-| Mypy `--platform win32` | Passed, 251 source files; статическая проверка, не Windows execution |
+| Ruff check / format --check | Passed, 291 files |
+| Mypy `--platform win32` | Passed, 252 source files; статическая проверка, не Windows execution |
 | Обычный Mac mypy | 11 ошибок в существующих Windows-specific branches files.py/native.py/credentials.py; они не изменялись |
 | Pip check / build | Passed; wheel и sdist собраны |
 | Cocoa smoke | `success (simulated)` |
 | Интерактивный Cocoa main window, временные данные | Два local.check сделано; окно закрыто |
 | PowerShell 7.6.7 parser на Mac | Install/Update/Test синтаксически корректны; PS5.1/COM не проверены |
+| Windows hosted CI, commit 37b3963 | [Run 38550860924](https://github.com/xumezzan/JARVIS-Windows/actions/runs/38550860924): 1094 passed, 6 skipped; lint/format/mypy/pip check/smoke/build passed |
 
 Полные обязательные Windows gates выполняются GitHub Actions на PR и должны быть зелёными
 до слияния. Они также не заменяют desktop/clean-machine/live acceptance. Для целевого
@@ -216,6 +217,13 @@ drain восстанавливается прежнее состояние GC. �
 таймером, explicit collection из worker отклоняется, исходное GC setting сохраняется.
 Focused collection/planner/worker suite: 34 passed, exit 0 на Mac. Это ещё не native
 desktop acceptance; полные Windows gates остаются обязательны до публикации main.
+
+Smoke дополнительно выключает озвучивание результата, включённое обычным main window:
+автодиагностика не должна запускать TTS. Child-process regression выполняет настоящий
+entry point и фиксирует любую попытку начать VoiceWorker или credential probe, подменяя
+их до выполнения, чтобы даже регрессия не достигла устройств/credentials. Обычные UI
+tests также используют fixture recorder/speaker по умолчанию; explicit voice fixtures
+сохраняются. Focused worker/shell/voice suite после этого изменения: 63 passed на Mac.
 
 ### Оставшаяся приёмка
 
