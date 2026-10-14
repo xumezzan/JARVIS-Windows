@@ -156,6 +156,48 @@ Native Qt: `QT_QPA_PLATFORM=windows`, `tests/integration` — 105 passed.
 
 ## Открытые ворота
 
+### Дополнение 2026-10-14: переустановка опубликованного main и самодиагностика
+
+Запрос «установи заново» на ранее установленном ноутбуке теперь ведёт через
+`Update-Jarvis.cmd`: получить точный commit `main`, сохранить локальные правки/ветку,
+установить выбранный источник и сверить текущие отчёты. Clean main идёт fast-forward;
+dirty/non-main/diverged/detached — через отдельный worktree. Сеть недоступна — обновление
+не выдаётся за успешное. Офлайн-ремонт остаётся отдельным `Install-Jarvis.cmd`.
+Подробности и первый запрос для старой копии: [WINDOWS_UPDATE.md](WINDOWS_UPDATE.md).
+
+Сюда перенесена самодиагностика из локальной копии с сохранением native исправлений
+main (marker retries, venv redirector receipt, desktop/Start shortcuts и icon).
+Установщик пишет JSON schema 2 и русский Markdown до/после каждого шага, включая сбой
+и обычную отмену. Проверки идут отдельными ограниченными процессами, содержат реальные
+локальные permissions/planner/audit/memory упражнения и никогда не трогают аккаунты
+или звук. Ошибка обязательной проверки блокирует кандидата. Bootstrap имеет отдельный
+отчёт с общим run_id. Обновление связывает source_commit с receipt/active/отчётами;
+старый или неполный отчёт не может подтвердить новое обновление.
+[Охват и ограничения диагностики](INSTALLATION_DIAGNOSTICS.md).
+
+Проверка на Mac (Python 3.12.7, отдельный venv, `pip install -e ".[dev,voice]`):
+
+| Проверка | Результат |
+| --- | --- |
+| Installer/report/offline focused tests до добавления commit-cases | 105 passed |
+| Git/PowerShell fixture update scenarios + report/active matching | 17 passed; только локальные bare repos, -SkipInstall |
+| Mac suite с `--ignore=tests/unit/test_windows_native.py` | 1059 passed, 6 skipped до последних трёх active-pointer cases; они прошли в focused Git suite |
+| Full pytest без ignore | Collection blocked: существующий Windows-only test_windows_native.py напрямую импортирует winreg |
+| Ruff check / format --check | Passed, 287 files |
+| Mypy `--platform win32` | Passed, 248 source files; статическая проверка, не Windows execution |
+| Обычный Mac mypy | 11 ошибок в существующих Windows-specific branches files.py/native.py/credentials.py; они не изменялись |
+| Pip check / build | Passed; wheel и sdist собраны |
+| Cocoa smoke | `success (simulated)` |
+| Интерактивный Cocoa main window, временные данные | Два local.check сделано; окно закрыто |
+| PowerShell 7.6.7 parser на Mac | Install/Update/Test синтаксически корректны; PS5.1/COM не проверены |
+
+Полные обязательные Windows gates выполняются GitHub Actions на PR и должны быть зелёными
+до слияния. Они также не заменяют desktop/clean-machine/live acceptance. Для целевого
+ноутбука выполнить Update без SkipInstall, проверить source_commit, совпадение run_id,
+настоящее окно и оба ярлыка; пройти оставшуюся матрицу ниже.
+
+### Оставшаяся приёмка
+
 Обновлено после прогона 17.09.2026; что именно проверено — в
 [WINDOWS_ACCEPTANCE.md](WINDOWS_ACCEPTANCE.md), раздел «Результаты прогона 17.09.2026».
 

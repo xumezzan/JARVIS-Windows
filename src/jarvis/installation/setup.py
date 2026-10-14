@@ -5,16 +5,19 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from jarvis.installation.assets import SetupError, digest, download, extract_model
+from jarvis.installation.report import CATALOG, CheckStatus, InstallationReport
 
 
 def atomic_json(path: Path, value: object) -> None:
@@ -84,23 +87,29 @@ def run(command: Sequence[str], env: Mapping[str, str], *, seconds: int = 600) -
             return output.read().decode("utf-8", errors="replace")
         finally:
             if process.poll() is None:
-                if sys.platform == "win32":
-                    subprocess.run(
-                        [
-                            str(Path(os.environ["SYSTEMROOT"]) / "System32" / "taskkill.exe"),
-                            "/PID",
-                            str(process.pid),
-                            "/T",
-                            "/F",
-                        ],
-                        stdin=subprocess.DEVNULL,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        timeout=15,
-                        check=False,
-                    )
-                process.kill()
-                process.wait(timeout=15)
+                try:
+                    if sys.platform == "win32":
+                        with suppress(OSError, subprocess.SubprocessError):
+                            subprocess.run(
+                                [
+                                    str(
+                                        Path(os.environ["SYSTEMROOT"]) / "System32" / "taskkill.exe"
+                                    ),
+                                    "/PID",
+                                    str(process.pid),
+                                    "/T",
+                                    "/F",
+                                ],
+                                stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL,
+                                timeout=15,
+                                check=False,
+                            )
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait(timeout=15)
 
 
 def source_digest(repository: Path) -> str:
@@ -168,7 +177,19 @@ def slot_environment(slot: Path, model: str) -> dict[str, str]:
     return env
 
 
-def prepare_slot(root: Path, repository: Path, name: str, asset: dict[str, Any]) -> Path:
+def prepare_slot(
+    root: Path,
+    repository: Path,
+    name: str,
+    asset: dict[str, Any],
+    report: InstallationReport | None = None,
+) -> Path:
+    def progress(step: str) -> None:
+        if report is not None:
+            report.value["preparation_step"] = step
+            report.save()
+
+    progress("slot_directory")
     slot = root / "slots" / name
     if slot.exists():
         if not (slot / ".jarvis-slot").is_file():
@@ -186,9 +207,11 @@ def prepare_slot(root: Path, repository: Path, name: str, asset: dict[str, Any])
     slot.mkdir(parents=True)
     (slot / ".jarvis-slot").write_text("1", encoding="ascii")
     env = slot_environment(slot, asset["directory"])
+    progress("isolated_environment")
     print("Creating isolated runtime (no development dependencies).", flush=True)
     run([sys.executable, "-I", "-m", "venv", str(slot / "venv")], env)
     python = str(slot / "venv" / "Scripts" / "python.exe")
+    progress("application_packages")
     print("Installing application and voice dependencies from PyPI (network required).", flush=True)
     run(
         [
@@ -209,8 +232,10 @@ def prepare_slot(root: Path, repository: Path, name: str, asset: dict[str, Any])
         env,
         seconds=1200,
     )
+    progress("browser_download")
     print("Installing Playwright's matching Chromium from its official CDN.", flush=True)
     run([python, "-I", "-m", "playwright", "install", "chromium"], env, seconds=600)
+    progress("local_model")
     print("Checking and extracting the selected local Russian Vosk model.", flush=True)
     archive = root / "cache" / "vosk.zip"
     download(asset["url"], archive, asset["sha256"], asset["size"])
@@ -218,30 +243,112 @@ def prepare_slot(root: Path, repository: Path, name: str, asset: dict[str, Any])
     return slot
 
 
-def check_slot(slot: Path, model: str, root: Path) -> dict[str, Any]:
+def validate_probe(name: str, raw: str) -> dict[str, Any]:
+    """Accept only finite results and public version metadata, never raw child diagnostics."""
+    from jarvis.installation.probe import PACKAGES, VERSION_PATTERN
+
+    if len(raw) > 16000:
+        raise ValueError("Invalid diagnostic response.")
+    value = json.loads(raw)
+    if not isinstance(value, dict) or set(value) - {"status", "code", "packages"}:
+        raise ValueError("Invalid diagnostic response.")
+    allowed = {("passed", "none"), ("failed", "check_failed")}
+    if not CATALOG[name].required:
+        allowed |= {("warning", "missing"), ("warning", "discovery_failed")}
+    if not isinstance(value.get("status"), str) or not isinstance(value.get("code"), str):
+        raise ValueError("Invalid diagnostic response.")
+    if (value["status"], value["code"]) not in allowed:
+        raise ValueError("Invalid diagnostic response.")
+    packages = value.get("packages")
+    if name == "package_versions" and value["status"] == "passed":
+        if not isinstance(packages, dict) or set(packages) != set(PACKAGES):
+            raise ValueError("Invalid package metadata.")
+        if any(
+            not isinstance(item, str) or len(item) > 80 or not VERSION_PATTERN.fullmatch(item)
+            for item in packages.values()
+        ):
+            raise ValueError("Invalid package metadata.")
+    elif "packages" in value:
+        raise ValueError("Unexpected package metadata.")
+    return dict(value)
+
+
+def check_slot(
+    slot: Path, model: str, root: Path, report: InstallationReport | None = None
+) -> dict[str, Any]:
+    from jarvis.installation.probe import PROBE_CHECKS
+
+    report = report or InstallationReport(root)
     python = str(slot / "venv" / "Scripts" / "python.exe")
     env = slot_environment(slot, model)
+    packages: dict[str, str] = {}
     print(
-        "Checking dependencies, offline Chromium, local model and native voice availability.",
+        "Running independent bounded installation diagnostics (no accounts or audio capture).",
         flush=True,
     )
-    run([python, "-I", "-m", "pip", "check"], env)
-    checks = json.loads(run([python, "-I", "-m", "jarvis.installation.probe"], env, seconds=90))
-    if "failure" in checks:
-        from jarvis.installation.probe import DEPENDENCIES
-
-        component = checks["failure"]
-        if component not in (*DEPENDENCIES, "chromium", "model"):
-            raise SetupError("Invalid component check response.")
-        raise SetupError(
-            f"Component check failed: {component}. Check Windows compatibility, "
-            "security software and installed files; rerun setup to repair."
-        )
-    print("Running native GUI smoke in a temporary data directory.", flush=True)
     with tempfile.TemporaryDirectory(prefix="smoke-", dir=root) as temporary:
-        smoke_env = env | {"JARVIS_DATA_DIR": temporary}
-        run([python, "-I", "-m", "jarvis", "--smoke-test"], smoke_env, seconds=30)
-    return dict(checks)
+        check_env = env | {"JARVIS_DATA_DIR": temporary}
+        for name in ("pip_check", *PROBE_CHECKS, "gui_smoke"):
+            report.record(name, "running")
+            started = time.monotonic()
+            print(f"Checking {name}.", flush=True)
+            status: CheckStatus = "passed"
+            code = "none"
+            try:
+                if name == "pip_check":
+                    run([python, "-I", "-m", "pip", "check"], check_env, seconds=30)
+                elif name == "gui_smoke":
+                    run([python, "-I", "-m", "jarvis", "--smoke-test"], check_env, seconds=30)
+                else:
+                    raw = run(
+                        [python, "-I", "-m", "jarvis.installation.probe", "--check", name],
+                        check_env,
+                        seconds=30 if name in {"offline_chromium", "local_vosk"} else 15,
+                    )
+                    result = validate_probe(name, raw)
+                    status, code = cast(CheckStatus, result["status"]), result["code"]
+                    if name == "package_versions" and status == "passed":
+                        packages = result["packages"]
+            except subprocess.TimeoutExpired:
+                status, code = "failed", "timeout"
+            except ValueError:
+                status, code = "failed", "invalid_response"
+            except (SetupError, OSError, subprocess.SubprocessError):
+                status, code = "failed", "check_failed"
+            report.record(
+                name, status, code=code, duration_ms=int((time.monotonic() - started) * 1000)
+            )
+    warnings = [
+        CATALOG[name].remedy
+        for name in PROBE_CHECKS
+        if not CATALOG[name].required and report.results[name]["status"] != "passed"
+    ]
+    checks = {
+        "packages": packages,
+        "warnings": warnings,
+        "dependencies": "passed"
+        if all(
+            report.results[name]["status"] == "passed"
+            for name in PROBE_CHECKS
+            if name.startswith("import_")
+        )
+        else "failed",
+        "offline_chromium": report.results["offline_chromium"]["status"],
+        "local_vosk_load": report.results["local_vosk"]["status"],
+    }
+    report.value["checks"] = checks
+    report.value["voice_setup"] = "needs_user_action" if warnings else "detected_unverified"
+    report.save()
+    if any(
+        report.results[name]["status"] != "passed"
+        for name in ("pip_check", *PROBE_CHECKS, "gui_smoke")
+        if CATALOG[name].required
+    ):
+        raise SetupError(
+            "Required automatic diagnostics failed. "
+            "Read installation-report.md; repair and rerun setup."
+        )
+    return checks
 
 
 def shown_window(receipt: object, launched: int) -> bool:
@@ -292,60 +399,95 @@ def launch(slot: Path, model: str, root: Path) -> None:
     raise SetupError("The real Windows window was not observed. Check desktop/session and rerun.")
 
 
-def install(repository: Path, root: Path) -> None:
+def install(
+    repository: Path, root: Path, *, run_id: str | None = None, source_commit: str | None = None
+) -> None:
     reject_links(root)
-    data_path = os.environ.get("JARVIS_DATA_DIR")
-    if data_path and (
-        not Path(data_path).is_absolute()
-        or Path(data_path).expanduser().resolve().is_relative_to(root.resolve())
-    ):
-        raise SetupError(
-            "JARVIS_DATA_DIR must be an absolute path outside JarvisInstall. "
-            "Preserve existing data before changing its path."
+    report = InstallationReport(root, run_id)
+    try:
+        report.record("preflight", "running")
+        if source_commit is not None and not re.fullmatch(r"[a-f0-9]{40}", source_commit):
+            raise SetupError("Invalid source commit; installation was not started.")
+        report.value["source_commit"] = source_commit
+        data_path = os.environ.get("JARVIS_DATA_DIR")
+        if data_path and (
+            not Path(data_path).is_absolute()
+            or Path(data_path).expanduser().resolve().is_relative_to(root.resolve())
+        ):
+            raise SetupError(
+                "JARVIS_DATA_DIR must be an absolute path outside JarvisInstall. "
+                "Preserve existing data before changing its path."
+            )
+        if shutil.disk_usage(root).free < 3_000_000_000:
+            raise SetupError("Setup needs at least 3 GB free. Free space and rerun.")
+        (root / "cache").mkdir(exist_ok=True)
+        fingerprint = source_digest(repository)
+        asset = json.loads((repository / "scripts/windows/assets.json").read_text())["vosk"]
+        current = active_slot(root)
+        report.value["source"] = fingerprint
+        report.value["previous_slot"] = current
+        report.record("preflight", "passed")
+        report.record("prepare", "running")
+        slot = root / "slots" / (current or "a")
+        reusable = current is not None and healthy(slot, fingerprint)
+        if reusable:
+            print("Installed files match; checking without downloading.", flush=True)
+        else:
+            name = "b" if current == "a" else "a"
+            slot = prepare_slot(root, repository, name, asset, report)
+        report.value["slot"] = slot.name
+        report.record("prepare", "passed")
+        checks = check_slot(slot, asset["directory"], root, report)
+        report.value["checks"] = checks
+        from jarvis.installation.probe import PROBE_CHECKS
+
+        if any(
+            report.results[name]["status"] != "passed"
+            for name in ("pip_check", *PROBE_CHECKS, "gui_smoke")
+            if CATALOG[name].required
+        ):
+            raise SetupError(
+                "Required automatic diagnostics are incomplete; candidate was not activated."
+            )
+        report.record("source_integrity", "running")
+        if source_digest(repository) != fingerprint:
+            raise SetupError("Repository changed during setup. Close Jarvis and rerun setup.")
+        if not reusable:
+            atomic_json(
+                slot / "receipt.json",
+                {"source": fingerprint, "source_commit": source_commit, "files": inventory(slot)},
+            )
+        report.record("source_integrity", "passed")
+        # Verify the candidate before changing the pointer used by the stable launcher.
+        report.record("native_window", "running")
+        print("Starting Jarvis and waiting for its visible native window.", flush=True)
+        launch(slot, asset["directory"], root)
+        report.value["gui_smoke"] = "passed"
+        report.value["native_window"] = "observed"
+        report.record("native_window", "passed")
+        report.record("activation", "running")
+        atomic_json(
+            root / "active.json",
+            {"slot": slot.name, "model": asset["directory"], "source_commit": source_commit},
         )
-    if shutil.disk_usage(root).free < 3_000_000_000:
-        raise SetupError("Setup needs at least 3 GB free. Free space and rerun.")
-    (root / "cache").mkdir(exist_ok=True)
-    fingerprint = source_digest(repository)
-    asset = json.loads((repository / "scripts/windows/assets.json").read_text())["vosk"]
-    current = active_slot(root)
-    slot = root / "slots" / (current or "a")
-    reusable = current is not None and healthy(slot, fingerprint)
-    if reusable:
-        print("Installed files match; checking without downloading.", flush=True)
-    else:
-        name = "b" if current == "a" else "a"
-        slot = prepare_slot(root, repository, name, asset)
-    checks = check_slot(slot, asset["directory"], root)
-    if source_digest(repository) != fingerprint:
-        raise SetupError("Repository changed during setup. Close Jarvis and rerun setup.")
-    if not reusable:
-        atomic_json(slot / "receipt.json", {"source": fingerprint, "files": inventory(slot)})
-    # Verify the candidate before changing the pointer used by the stable launcher.
-    print("Starting Jarvis and waiting for its visible native window.", flush=True)
-    launch(slot, asset["directory"], root)
-    atomic_json(root / "active.json", {"slot": slot.name, "model": asset["directory"]})
-    atomic_json(
-        root / "installation-report.json",
-        {
-            "schema": 1,
-            "platform": platform.platform(),
-            "python": platform.python_version(),
-            "source": fingerprint,
-            "slot": slot.name,
-            "checks": checks,
-            "gui_smoke": "passed",
-            "native_window": "observed",
-            "windows_mvp_acceptance": "pending",
-            "live_mail": "pending",
-            "live_model": "pending",
-            "voice_hardware": "pending",
-            "voice_setup": "needs_user_action" if checks.get("warnings") else "detected_unverified",
-        },
-    )
-    print("Application window observed. Live voice/mail/model and full Windows MVP remain pending.")
-    for warning in checks.get("warnings", []):
-        print(warning)
+        report.record("activation", "passed")
+        report.finish("automatic_checks_passed")
+        print(
+            "Automatic diagnostics passed. "
+            "Live voice/mail/model and full Windows MVP remain pending."
+        )
+        print(f"Read the report: {root / 'installation-report.md'}")
+        for warning in checks.get("warnings", []):
+            print(warning)
+    except BaseException as error:
+        try:
+            report.finish("cancelled" if isinstance(error, KeyboardInterrupt) else "failed")
+        except OSError:
+            print(
+                "Installation report could not be saved. Check directory permissions.",
+                file=sys.stderr,
+            )
+        raise
 
 
 def supported_host() -> bool:
@@ -359,13 +501,19 @@ def supported_host() -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Jarvis Windows setup (run Install-Jarvis.ps1).")
     parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--run-id", help="Bootstrap UUID identifying this installation attempt.")
+    parser.add_argument(
+        "--source-commit", help="Published commit selected by the explicit updater."
+    )
     args = parser.parse_args()
     if not supported_host():
         print("Setup requires an interactive Windows 11 x64 session.", file=sys.stderr)
         return 2
     repository = Path(__file__).resolve().parents[3]
     try:
-        install(repository, args.root.resolve())
+        install(
+            repository, args.root.absolute(), run_id=args.run_id, source_commit=args.source_commit
+        )
         return 0
     except KeyboardInterrupt:
         print(

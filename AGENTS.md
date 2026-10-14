@@ -62,6 +62,21 @@ docs/WINDOWS_ACCEPTANCE.md. The CMD uses process-only execution policy, never pe
 policy changes; honor Group Policy, SmartScreen, UAC and user-owned credential entry.
 Do not treat fixture checks or a shown shell as completion of the full MVP scenario.
 
+An owner request such as "install again", "reinstall", "update Jarvis" or "установи заново"
+on a previously installed laptop means obtain the latest published `main`, then install and
+diagnose it. Use `scripts/windows/Update-Jarvis.cmd`, inspect the printed update report and
+the matching installation/bootstrap reports, and observe the real window and launcher.
+Local repair/offline verification explicitly uses `Install-Jarvis.cmd`; it does not fetch
+new source and must not be reported as an update. Read `docs/WINDOWS_UPDATE.md`.
+Close only observed Jarvis windows after handling its pending task. Preserve user files,
+settings and OS credentials. Never discard changes with reset/clean, stash without request,
+or rebase local work to make an update possible. The updater uses an isolated checkout for
+dirty, non-main or diverged histories. If the old checkout has no updater, fetch current
+`main` and prepare a clean checkout of that exact commit using Git before running its
+installer; do not require Python/pip preparation. Changes still only on another computer
+are unavailable until published and merged into `main`; record the selected commit rather
+than claiming a newer version from a successful reinstall of old files.
+
 ## Architecture
 
 - Python 3.12+, `src` layout, one local application, no unnecessary services.
