@@ -1,4 +1,4 @@
-"""Calculator input stays bound to a fresh observation and one approved digit invocation."""
+"""A whole calculator number is bound to one observation, approval and verified digit sequence."""
 
 import json
 import os
@@ -38,6 +38,7 @@ def controls(monkeypatch: pytest.MonkeyPatch) -> tuple[Mock, list[Mock]]:
         ("num1Button", "Button", "One"),
         ("CalculatorResults", "Text", "Display is 0"),
         ("CalculatorExpression", "Text", "Expression is "),
+        *((f"num{digit}Button", "Button", digit) for digit in "023456789"),
     ):
         control = Mock()
         control.element_info.automation_id = identifier
@@ -62,12 +63,13 @@ def controls(monkeypatch: pytest.MonkeyPatch) -> tuple[Mock, list[Mock]]:
     process.pid = 123
     process.exe.return_value = str(executable)
     process.create_time.return_value = 1000.0
+    monkeypatch.setattr(calculator, "formatted_number", lambda number: str(int(number)))
     return desktop, items
 
 
-def observation(desktop: Mock) -> CalculatorTarget:
+def observation(desktop: Mock, number: str = "1") -> CalculatorTarget:
     result = calculator.dispatch(
-        desktop, NativeRequest(operation="calculator_observe", target=target(), digit="1")
+        desktop, NativeRequest(operation="calculator_observe", target=target(), number=number)
     )
     assert result.calculator is not None
     return result.calculator
@@ -84,7 +86,7 @@ def test_observe_then_invoke_once_and_independently_verify(
         display.element_info, "name", "Display is 1"
     )
     result = calculator.dispatch(
-        desktop, NativeRequest(operation="calculator_digit", target=target(), calculator=observed)
+        desktop, NativeRequest(operation="calculator_number", target=target(), calculator=observed)
     )
     assert result.calculator_value_sha256 == text_digest("1")
     checked = calculator.dispatch(
@@ -96,7 +98,7 @@ def test_observe_then_invoke_once_and_independently_verify(
     with pytest.raises(ToolError, match="target_changed"):
         calculator.dispatch(
             desktop,
-            NativeRequest(operation="calculator_digit", target=target(), calculator=observed),
+            NativeRequest(operation="calculator_number", target=target(), calculator=observed),
         )
     button.iface_invoke.Invoke.assert_called_once_with()
 
@@ -119,7 +121,7 @@ async def test_button_must_come_from_the_same_task_observation(
         engine = PermissionEngine(registry, store, audit)
         runner = Runner(registry, engine, OfflineProvider(), AsyncMock(), AsyncMock())
         action = engine.prepare(
-            "windows.calculator_digit",
+            "windows.calculator_number",
             {"target": target().model_dump(), "calculator": state.model_dump()},
             Mode.EXECUTE,
         )
@@ -137,7 +139,7 @@ async def test_button_must_come_from_the_same_task_observation(
         assert not runner._observed_target(action)
         runner.steps.append(
             Step(
-                "windows.get_calculator_digit",
+                "windows.get_calculator_number",
                 Outcome(
                     uuid4(),
                     Status.SUCCESS,
@@ -147,10 +149,10 @@ async def test_button_must_come_from_the_same_task_observation(
         )
         assert runner._observed_target(action)
         forged = state.model_copy(
-            update={"button": state.button.model_copy(update={"name": "Other"})}
+            update={"buttons": [state.buttons[0].model_copy(update={"name": "Other"})]}
         )
         changed = engine.prepare(
-            "windows.calculator_digit",
+            "windows.calculator_number",
             {"target": target().model_dump(), "calculator": forged.model_dump()},
             Mode.EXECUTE,
         )
@@ -174,7 +176,7 @@ def test_changed_state_never_invokes(controls: tuple[Mock, list[Mock]], change: 
     with pytest.raises(ToolError):
         calculator.dispatch(
             desktop,
-            NativeRequest(operation="calculator_digit", target=target(), calculator=observed),
+            NativeRequest(operation="calculator_number", target=target(), calculator=observed),
         )
     items[1].iface_invoke.Invoke.assert_not_called()
 
@@ -211,23 +213,23 @@ async def test_effect_requires_approval_and_simulation_calls_nothing(
         engine = PermissionEngine(registry, store, audit)
         authority = store.take_authority(audit.approved)
         args = {"target": target().model_dump(), "calculator": observed.model_dump()}
-        action = engine.prepare("windows.calculator_digit", args, Mode.EXECUTE)
+        action = engine.prepare("windows.calculator_number", args, Mode.EXECUTE)
         assert isinstance(action, Action) and action.risk is Risk.CONFIRM
         assert (await engine.execute(action)).status is Status.DENIED
         backend.call.assert_not_called()
-        simulation = engine.prepare("windows.calculator_digit", args, Mode.SIMULATION)
+        simulation = engine.prepare("windows.calculator_number", args, Mode.SIMULATION)
         assert isinstance(simulation, Action)
         assert (
             await engine.execute(simulation, authority.approve(simulation))
         ).status is Status.SIMULATED
         backend.call.assert_not_called()
-        approved = engine.prepare("windows.calculator_digit", args, Mode.EXECUTE)
+        approved = engine.prepare("windows.calculator_number", args, Mode.EXECUTE)
         assert isinstance(approved, Action)
         token = authority.approve(approved)
         assert (await engine.execute(approved, token)).status is Status.SUCCESS
         assert [call.args[0].operation for call in backend.call.call_args_list] == [
             "calculator_check",
-            "calculator_digit",
+            "calculator_number",
             "calculator_verify",
         ]
         assert (await engine.execute(approved, token)).status is Status.INVALID
@@ -235,10 +237,11 @@ async def test_effect_requires_approval_and_simulation_calls_nothing(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("verb", ["набери", "введи", "напиши", "напечатай", "нажми"])
+@pytest.mark.parametrize("number", ["1", "26", "102202", "999999999999999"])
 async def test_offline_recipe_uses_observed_calculator_controls(
-    controls: tuple[Mock, list[Mock]], verb: str
+    controls: tuple[Mock, list[Mock]], verb: str, number: str
 ) -> None:
-    command = f"открой калькулятор и {verb} 1"
+    command = f"открой калькулятор и {verb} {number}"
     provider = OfflineProvider()
     steps: list[Step] = []
 
@@ -260,13 +263,13 @@ async def test_offline_recipe_uses_observed_calculator_controls(
         )
     )
     assert await propose() == {
-        "tool": "windows.get_calculator_digit",
-        "args": {"target": target().model_dump(), "digit": "1"},
+        "tool": "windows.get_calculator_number",
+        "args": {"target": target().model_dump(), "number": number},
     }
-    state = observation(controls[0])
+    state = observation(controls[0], number)
     steps.append(
         Step(
-            "windows.get_calculator_digit",
+            "windows.get_calculator_number",
             Outcome(
                 uuid4(),
                 Status.SUCCESS,
@@ -275,7 +278,7 @@ async def test_offline_recipe_uses_observed_calculator_controls(
         )
     )
     assert await propose() == {
-        "tool": "windows.calculator_digit",
+        "tool": "windows.calculator_number",
         "args": {"target": target().model_dump(), "calculator": state.model_dump()},
     }
 
@@ -284,8 +287,10 @@ async def test_offline_recipe_uses_observed_calculator_controls(
 @pytest.mark.parametrize(
     "command",
     [
-        "открой калькулятор и набери 12",
-        "открой калькулятор и напиши 12",
+        "открой калькулятор и набери 1234567890123456",
+        "открой калькулятор и напиши 2+6",
+        "открой калькулятор и набери -26",
+        "открой калькулятор и набери 2,6",
         "открой браузер и нажми кнопку",
         "запусти код и закрой окно",
     ],
@@ -293,3 +298,110 @@ async def test_offline_recipe_uses_observed_calculator_controls(
 async def test_unsupported_chains_never_become_application_names(command: str) -> None:
     proposal = await OfflineProvider().propose(PlannerInput(command, (), (), Mode.EXECUTE, "[]"))
     assert proposal.kind == "clarify"
+
+
+@pytest.mark.parametrize("number", ["26", "101", "00026", "0", "999999999999999"])
+def test_whole_number_is_entered_once_in_order_and_read_back(
+    controls: tuple[Mock, list[Mock]], number: str
+) -> None:
+    desktop, items = controls
+    observed = observation(desktop, number)
+    pressed: list[str] = []
+    for button in items:
+        identifier = button.element_info.automation_id
+        if identifier.startswith("num"):
+            digit = identifier[3]
+
+            def press(value: str = digit) -> None:
+                pressed.append(value)
+                items[2].element_info.name = "Display is " + str(int("".join(pressed)))
+
+            button.iface_invoke.Invoke.side_effect = press
+    result = calculator.dispatch(
+        desktop, NativeRequest(operation="calculator_number", target=target(), calculator=observed)
+    )
+    assert "".join(pressed) == number
+    assert result.calculator_value_sha256 == text_digest(str(int(number)))
+    assert calculator.dispatch(
+        desktop, NativeRequest(operation="calculator_verify", target=target(), calculator=observed)
+    ).calculator_value_sha256 == text_digest(str(int(number)))
+
+
+@pytest.mark.parametrize("failure", ["wrong_display", "changed_button", "invoke_error", "timeout"])
+def test_partial_entry_never_repeats_a_digit_or_continues_after_uncertainty(
+    controls: tuple[Mock, list[Mock]], failure: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    desktop, items = controls
+    observed = observation(desktop, "26")
+    buttons = {item.element_info.automation_id: item for item in items}
+
+    def first() -> None:
+        if failure == "invoke_error":
+            raise ToolError("native_failure")
+        if failure == "wrong_display":
+            items[2].element_info.name = "Display is 9"
+        elif failure == "changed_button":
+            items[2].element_info.name = "Display is 2"
+            buttons["num6Button"].runtime = [99]
+
+    buttons["num2Button"].iface_invoke.Invoke.side_effect = first
+    if failure == "timeout":
+        monkeypatch.setattr(
+            "jarvis.platforms.windows.calculator.time.monotonic", Mock(side_effect=[0, 2])
+        )
+    with pytest.raises(ToolError):
+        calculator.dispatch(
+            desktop,
+            NativeRequest(operation="calculator_number", target=target(), calculator=observed),
+        )
+    buttons["num2Button"].iface_invoke.Invoke.assert_called_once_with()
+    buttons["num6Button"].iface_invoke.Invoke.assert_not_called()
+
+
+def test_readback_uses_user_grouping_without_removing_decimal_or_arithmetic_characters(
+    controls: tuple[Mock, list[Mock]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    desktop, items = controls
+    observed = observation(desktop, "26000")
+    monkeypatch.setattr(calculator, "formatted_number", lambda number: "26\u00a0000")
+    items[2].element_info.name = "Display is 26\u202f000"
+    assert calculator.dispatch(
+        desktop, NativeRequest(operation="calculator_verify", target=target(), calculator=observed)
+    ).calculator_value_sha256 == text_digest("26000")
+    for value in ("26,000", "26.000", "26+000", "260000", "26 00 0"):
+        items[2].element_info.name = "Display is " + value
+        with pytest.raises(ToolError, match="target_changed"):
+            calculator.dispatch(
+                desktop,
+                NativeRequest(operation="calculator_verify", target=target(), calculator=observed),
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    [
+        "открой калькулятор и введи число 26",
+        "Открой калькулятор и набери 26.",
+        "запусти calc и напечатай 26!",
+    ],
+)
+async def test_number_phrasing_does_not_ask_an_unnecessary_question(command: str) -> None:
+    proposal = await OfflineProvider().propose(PlannerInput(command, (), (), Mode.EXECUTE, "[]"))
+    assert proposal.tool == "windows.open_app"
+
+
+@pytest.mark.parametrize("number", ["", "-26", "2.6", "2,6", "2+6", "1\n", "١٢", "1" * 16])
+def test_numeric_request_is_bounded_and_cannot_name_a_non_numeric_control(number: str) -> None:
+    with pytest.raises(ValueError):
+        NativeRequest(operation="calculator_observe", target=target(), number=number)
+
+
+def test_locale_format_is_restored_after_grouping(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_locale = Mock(side_effect=["previous", "user", "restored"])
+    monkeypatch.setattr("jarvis.platforms.windows.calculator.locale.setlocale", set_locale)
+    monkeypatch.setattr(
+        "jarvis.platforms.windows.calculator.locale.format_string", Mock(return_value="26 000")
+    )
+    assert calculator.formatted_number("26000") == "26 000"
+    assert set_locale.call_args_list[-1].args[1] == "previous"

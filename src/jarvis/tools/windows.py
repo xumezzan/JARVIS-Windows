@@ -125,21 +125,30 @@ class CalculatorElement(ToolModel):
     visible: bool = True
 
 
-class CalculatorTarget(ToolModel):
-    """One observed digit button and the calculator state it would change."""
+CalculatorNumber = Annotated[
+    str, StringConstraints(min_length=1, max_length=15, pattern=r"^[0-9]+$")
+]
 
-    digit: str = Field(pattern=r"^[0-9]$")
+
+class CalculatorTarget(ToolModel):
+    """Observed numeric buttons and the calculator state one approved number changes."""
+
+    number: CalculatorNumber
     pid: int = Field(gt=0)
     process_started: float = Field(gt=0, allow_inf_nan=False)
     executable: str = Field(min_length=1, max_length=1000)
-    button: CalculatorElement
+    buttons: list[CalculatorElement] = Field(min_length=1, max_length=10)
     display: CalculatorElement
     expression: CalculatorElement
 
     @model_validator(mode="after")
     def fixed_controls(self) -> "CalculatorTarget":
+        expected = [f"num{digit}Button" for digit in sorted(set(self.number))]
+        if [button.automation_id for button in self.buttons] != expected or any(
+            button.control_type != "Button" for button in self.buttons
+        ):
+            raise ValueError("Only the observed numeric buttons for this number are supported.")
         for element, identifier, role in (
-            (self.button, f"num{self.digit}Button", "Button"),
             (self.display, "CalculatorResults", "Text"),
             (self.expression, "CalculatorExpression", "Text"),
         ):
@@ -169,7 +178,7 @@ Operation = Literal[
     "verify",
     "calculator_observe",
     "calculator_check",
-    "calculator_digit",
+    "calculator_number",
     "calculator_verify",
 ]
 
@@ -182,7 +191,7 @@ class NativeRequest(ToolModel):
     text: str | None = Field(default=None, max_length=4000)
     overwrite: bool = False
     result: WindowsResult | None = None
-    digit: str | None = Field(default=None, pattern=r"^[0-9]$")
+    number: CalculatorNumber | None = None
     calculator: CalculatorTarget | None = None
 
 

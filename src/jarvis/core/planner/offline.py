@@ -35,7 +35,8 @@ class OfflineProvider:
         )
         calculator = re.fullmatch(
             r"(?:открой|открыть|запусти|запустить)\s+(?:калькулятор|calculator|calc)"
-            r"\s+и\s+(?:набери|введи|напиши|напечатай|нажми)\s+([0-9])",
+            r"\s+и\s+(?:набери|введи|напиши|напечатай|нажми)\s+"
+            r"(?:(?:число|цифру)\s+)?([0-9]{1,15})[.!?]?",
             command,
             re.IGNORECASE,
         )
@@ -48,11 +49,12 @@ class OfflineProvider:
             target = result.get("target")
             if count == 1 and target:
                 return call(
-                    "windows.get_calculator_digit", {"target": target, "digit": calculator.group(1)}
+                    "windows.get_calculator_number",
+                    {"target": target, "number": calculator.group(1)},
                 )
             if count == 2 and target and result.get("calculator"):
                 return call(
-                    "windows.calculator_digit",
+                    "windows.calculator_number",
                     {"target": target, "calculator": result["calculator"]},
                 )
             return Proposal(kind="finish")
@@ -64,8 +66,8 @@ class OfflineProvider:
             return Proposal(
                 kind="clarify",
                 question=(
-                    "В офлайн-режиме калькулятор поддерживает ввод одной цифры 0–9 "
-                    "при исходном нуле: «открой калькулятор и набери 1». "
+                    "Какое целое число ввести? Например: «открой калькулятор и набери 26». "
+                    "Поддерживается до 15 цифр без знака и дробной части при исходном нуле. "
                     "Существующее вычисление не очищается."
                 ),
             )
@@ -154,8 +156,8 @@ class OfflineProvider:
                     kind="clarify",
                     question=(
                         "Эта составная команда пока не поддерживается в офлайн-режиме. "
-                        "Можно открыть приложение отдельной командой или ввести одну цифру: "
-                        "«открой калькулятор и набери 1»."
+                        "Можно открыть приложение отдельной командой или ввести число: "
+                        "«открой калькулятор и набери 26»."
                     ),
                 )
             if APP_NAME.fullmatch(name):

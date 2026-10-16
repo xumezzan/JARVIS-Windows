@@ -395,7 +395,7 @@ class Runner:
                 windows = [result.get("target"), *result.get("windows", [])]
                 if args["target"] not in windows:
                     continue
-                if action.tool == "windows.calculator_digit":
+                if action.tool == "windows.calculator_number":
                     if args.get("calculator") == result.get("calculator"):
                         return True
                     continue
