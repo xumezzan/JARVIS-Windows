@@ -199,6 +199,7 @@ DEEDS: dict[str, Callable[[dict[str, object], bool], str]] = {
     "windows.focus_app": lambda args, spoken: "переключился на " + _app(args),
     # The typed text itself is the owner's content, so the report says where, never what.
     "windows.type_text": lambda args, spoken: "напечатал текст в " + _app(args),
+    "windows.calculator_digit": lambda args, spoken: "ввёл цифру в калькулятор",
     "browser.open": lambda args, spoken: "открыл в браузере " + _host(args.get("url")),
     "browser.navigate": lambda args, spoken: "перешёл на " + _host(args.get("url")),
     "browser.search": lambda args, spoken: (

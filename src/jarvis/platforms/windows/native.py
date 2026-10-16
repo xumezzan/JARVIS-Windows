@@ -57,6 +57,8 @@ SCRIPT_HOSTS = {
 
 # Spoken shorthands that do not appear as Start menu names on every installation.
 ALIASES = {
+    "калькулятор": "calc",
+    "calculator": "calc",
     "блокнот": "notepad",
     "браузер": "chrome",
     "хром": "chrome",
@@ -483,6 +485,10 @@ class NativeDesktop:
             raise ToolError("native_failure") from None
 
     def dispatch(self, request: NativeRequest) -> WindowsResult:
+        if request.operation.startswith("calculator_"):
+            from jarvis.platforms.windows.calculator import dispatch
+
+            return dispatch(self, request)
         match request.operation:
             case "list":
                 return WindowsResult(windows=self.windows(request.app))

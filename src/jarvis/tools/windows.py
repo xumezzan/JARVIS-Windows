@@ -116,16 +116,61 @@ class TypeText(ToolModel):
         return self
 
 
+class CalculatorElement(ToolModel):
+    runtime_id: list[int] = Field(min_length=1, max_length=32)
+    automation_id: str = Field(min_length=1, max_length=80)
+    control_type: Literal["Button", "Text"]
+    class_name: str = Field(max_length=200)
+    name: str = Field(max_length=200)
+    visible: bool = True
+
+
+class CalculatorTarget(ToolModel):
+    """One observed digit button and the calculator state it would change."""
+
+    digit: str = Field(pattern=r"^[0-9]$")
+    pid: int = Field(gt=0)
+    process_started: float = Field(gt=0, allow_inf_nan=False)
+    executable: str = Field(min_length=1, max_length=1000)
+    button: CalculatorElement
+    display: CalculatorElement
+    expression: CalculatorElement
+
+    @model_validator(mode="after")
+    def fixed_controls(self) -> "CalculatorTarget":
+        for element, identifier, role in (
+            (self.button, f"num{self.digit}Button", "Button"),
+            (self.display, "CalculatorResults", "Text"),
+            (self.expression, "CalculatorExpression", "Text"),
+        ):
+            if element.automation_id != identifier or element.control_type != role:
+                raise ValueError("Only observed calculator digit controls are supported.")
+        return self
+
+
 class WindowsResult(ToolModel):
     windows: list[WindowTarget] = Field(default_factory=list, max_length=100)
     editors: list[EditorTarget] = Field(default_factory=list, max_length=20)
     target: WindowTarget | None = None
     focused: bool = False
     text_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    calculator: CalculatorTarget | None = None
+    calculator_value_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 
 Operation = Literal[
-    "list", "open", "focus", "type", "fields", "check_open", "check_target", "verify"
+    "list",
+    "open",
+    "focus",
+    "type",
+    "fields",
+    "check_open",
+    "check_target",
+    "verify",
+    "calculator_observe",
+    "calculator_check",
+    "calculator_digit",
+    "calculator_verify",
 ]
 
 
@@ -137,6 +182,8 @@ class NativeRequest(ToolModel):
     text: str | None = Field(default=None, max_length=4000)
     overwrite: bool = False
     result: WindowsResult | None = None
+    digit: str | None = Field(default=None, pattern=r"^[0-9]$")
+    calculator: CalculatorTarget | None = None
 
 
 class WindowsBackend(Protocol):
@@ -311,3 +358,6 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
             cancellation=cancellation,
         )
     )
+    from jarvis.tools.calculator import register_calculator
+
+    register_calculator(registry, backend)

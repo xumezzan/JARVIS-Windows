@@ -33,6 +33,42 @@ class OfflineProvider:
         typed = re.fullmatch(
             r"открой блокнот и напиши (?:«([\s\S]+)»|([\s\S]+))", command, re.IGNORECASE
         )
+        calculator = re.fullmatch(
+            r"(?:открой|открыть|запусти|запустить)\s+(?:калькулятор|calculator|calc)"
+            r"\s+и\s+(?:набери|введи|напиши|напечатай|нажми)\s+([0-9])",
+            command,
+            re.IGNORECASE,
+        )
+        if calculator:
+            if count == 0:
+                return call("windows.open_app", {"app": "калькулятор"})
+            if data.mode is Mode.SIMULATION:
+                return Proposal(kind="finish")
+            result = json.loads(data.steps[-1].outcome.result_json or "{}")
+            target = result.get("target")
+            if count == 1 and target:
+                return call(
+                    "windows.get_calculator_digit", {"target": target, "digit": calculator.group(1)}
+                )
+            if count == 2 and target and result.get("calculator"):
+                return call(
+                    "windows.calculator_digit",
+                    {"target": target, "calculator": result["calculator"]},
+                )
+            return Proposal(kind="finish")
+        if re.match(
+            r"(?:открой|открыть|запусти|запустить)\s+(?:калькулятор|calculator|calc)\s+и\s+",
+            command,
+            re.IGNORECASE,
+        ):
+            return Proposal(
+                kind="clarify",
+                question=(
+                    "В офлайн-режиме калькулятор поддерживает ввод одной цифры 0–9 "
+                    "при исходном нуле: «открой калькулятор и набери 1». "
+                    "Существующее вычисление не очищается."
+                ),
+            )
         if command.casefold() in ("открой выбранное приложение", "открой моё приложение"):
             apps = {
                 hint.value
@@ -109,6 +145,19 @@ class OfflineProvider:
         launch = LAUNCH.fullmatch(command)
         if launch:
             name = " ".join(launch.group(1).split())
+            if re.search(
+                r"\s+и\s+(?:набери|введи|напечатай|нажми|выбери|закрой|открой|запусти)\b",
+                name,
+                re.IGNORECASE,
+            ):
+                return Proposal(
+                    kind="clarify",
+                    question=(
+                        "Эта составная команда пока не поддерживается в офлайн-режиме. "
+                        "Можно открыть приложение отдельной командой или ввести одну цифру: "
+                        "«открой калькулятор и набери 1»."
+                    ),
+                )
             if APP_NAME.fullmatch(name):
                 if count == 0:
                     return call("windows.open_app", {"app": name})
