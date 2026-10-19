@@ -118,6 +118,12 @@ class OfflineProvider:
                     {"target": target, "text": typed.group(1) or typed.group(2)},
                 )
             return Proposal(kind="finish")
+        found = FIND.fullmatch(command)
+        if found:
+            query = " ".join(found.group(1).split())[:200]
+            if count == 0 and query:
+                return call("files.find", {"query": query})
+            return Proposal(kind="finish")
         opened = re.fullmatch(r"открой (https://\S+)", command, re.IGNORECASE)
         search = re.fullmatch(r"найди ([\s\S]+)", command, re.IGNORECASE)
         combined = re.fullmatch(r"открой chrome и найди ([\s\S]+)", command, re.IGNORECASE)
@@ -137,12 +143,6 @@ class OfflineProvider:
                 result = json.loads(data.steps[-1].outcome.result_json or "{}")
                 if result.get("page"):
                     return call("browser.read", {"target": result["page"]["target"]})
-            return Proposal(kind="finish")
-        found = FIND.fullmatch(command)
-        if found:
-            query = " ".join(found.group(1).split())[:200]
-            if count == 0 and query:
-                return call("files.find", {"query": query})
             return Proposal(kind="finish")
         launch = LAUNCH.fullmatch(command)
         if launch:
