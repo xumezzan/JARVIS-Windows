@@ -395,6 +395,10 @@ class Runner:
                 windows = [result.get("target"), *result.get("windows", [])]
                 if args["target"] not in windows:
                     continue
+                if action.tool == "windows.calculator_number":
+                    if args.get("calculator") == result.get("calculator"):
+                        return True
+                    continue
                 if args.get("editor") is None:
                     return True
                 # A named field must come from the same observation as its window.

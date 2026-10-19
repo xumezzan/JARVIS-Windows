@@ -1,4 +1,4 @@
-"""The two things this window remembers about its owner between launches.
+"""Local appearance and planner choices remembered between launches.
 
 An assistant that greets you by name has to have been told the name, and there is nowhere
 in this application that already knows it: the memory profile stores short labels about
@@ -9,6 +9,9 @@ never a place for anything secret.
 
 The theme lives here for the same reason - it is a preference, and asking for it again at
 every launch is how a setting becomes a chore.
+
+The planner choice is a preference too. Remembering cloud selection never grants
+transmission consent or supplies a model; those remain separate gates.
 """
 
 import json
@@ -20,6 +23,7 @@ MAX_NAME = 40
 # Deliberately narrow: a name, not a note. Nothing here ever becomes a path, an argument
 # or a command line, and the same rule that guards the memory labels guards this field.
 ALLOWED = " -.'’"
+PROVIDERS = ("offline", "cloud")
 
 
 def valid_name(value: str) -> bool:
@@ -28,13 +32,14 @@ def valid_name(value: str) -> bool:
 
 
 class HomePreferences:
-    """Owner name and theme, remembered locally and forgiving of a broken file."""
+    """Owner name, theme and planner choice, forgiving of a broken file."""
 
     def __init__(self, path: Path, themes: tuple[str, ...]) -> None:
         self.path = path
         self.themes = themes
         self.name = ""
         self.theme = themes[0]
+        self.provider = "offline"
         self._load()
 
     def _load(self) -> None:
@@ -52,19 +57,35 @@ class HomePreferences:
             theme = data.get("theme")
             if isinstance(theme, str) and theme in self.themes:
                 self.theme = theme
+            provider = data.get("provider")
+            if isinstance(provider, str) and provider in PROVIDERS:
+                self.provider = provider
         except (OSError, ValueError, TypeError):
             # A settings file that cannot be read is a greeting without a name, never a
             # failure to start: the window matters more than the preference.
             self.name = ""
             self.theme = self.themes[0]
+            self.provider = "offline"
 
     def remember(self, name: str, theme: str) -> None:
         self.name = unicodedata.normalize("NFKC", name).strip() if valid_name(name) else ""
         self.theme = theme if theme in self.themes else self.themes[0]
+        self._save()
+
+    def remember_provider(self, provider: str) -> None:
+        selected = provider if provider in PROVIDERS else "offline"
+        if selected != self.provider:
+            self.provider = selected
+            self._save()
+
+    def _save(self) -> None:
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self.path.write_text(
-                json.dumps({"name": self.name, "theme": self.theme}, ensure_ascii=False),
+                json.dumps(
+                    {"name": self.name, "theme": self.theme, "provider": self.provider},
+                    ensure_ascii=False,
+                ),
                 encoding="utf-8",
             )
         except OSError:

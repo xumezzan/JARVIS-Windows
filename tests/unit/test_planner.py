@@ -74,6 +74,28 @@ MESSAGE = {"recipient": "test", "body": "PRIVATE_COMMAND_SENTINEL"}
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", [Mode.SIMULATION, Mode.EXECUTE])
+@pytest.mark.parametrize(
+    "command,tool,arguments",
+    [
+        ("найди файл отчёт.txt", "files.find", {"query": "отчёт.txt"}),
+        ("НАЙДИ ФАЙЛ   план   встречи.md", "files.find", {"query": "план встречи.md"}),
+        ("найди OpenAI", "browser.search", {"query": "OpenAI"}),
+        ("найди форматы файлов", "browser.search", {"query": "форматы файлов"}),
+    ],
+)
+async def test_offline_file_search_stays_local_and_web_search_keeps_its_route(
+    mode: Mode, command: str, tool: str, arguments: dict[str, str]
+) -> None:
+    provider = OfflineProvider()
+    proposal = await provider.propose(PlannerInput(command, (), (), mode, "[]"))
+    assert proposal.kind == "call" and proposal.tool == tool
+    assert json.loads(proposal.arguments) == arguments
+    step = Step(tool, Outcome(uuid4(), Status.SUCCESS))
+    assert (await provider.propose(PlannerInput(command, (), (step,), mode, "[]"))).kind == "finish"
+
+
+@pytest.mark.asyncio
 async def test_multistep_actual_facts_and_redacted_audit(harness: Harness) -> None:
     runner = harness.runner(
         Scripted([call("local.check", {}), call("local.append_message", MESSAGE)])

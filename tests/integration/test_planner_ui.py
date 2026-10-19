@@ -50,6 +50,37 @@ def test_offline_multistep(qtbot: QtBot, tmp_path: Path, simulation: bool) -> No
         window.shutdown()
 
 
+def test_standalone_provider_selection_is_restored_but_still_needs_consent(
+    qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = PlannerWindow(AppConfig(tmp_path))
+    qtbot.addWidget(first)
+    try:
+        first.provider_choice.setCurrentIndex(1)
+    finally:
+        first.shutdown()
+        first.close()
+
+    def refused_provider(*args: object) -> None:
+        pytest.fail("Restoring a selection must not construct a cloud provider without consent.")
+
+    monkeypatch.setattr("jarvis.ui.planner_window.DeepSeekProvider", refused_provider)
+    restored = PlannerWindow(AppConfig(tmp_path))
+    qtbot.addWidget(restored)
+    try:
+        assert restored.provider_choice.currentIndex() == 1
+        assert not restored.cloud_box.isHidden()
+        assert not restored.cloud_consent.isChecked()
+        qtbot.waitUntil(lambda: restored.memory.worker is None, timeout=PATIENCE)
+        restored.command.setPlainText("проверь систему")
+        restored.start()
+        assert restored.worker is None
+        assert "разрешить передачу" in restored.status.text()
+    finally:
+        restored.shutdown()
+        restored.close()
+
+
 @pytest.mark.parametrize("approve", [True, False])
 def test_exact_ui_approval_only(qtbot: QtBot, tmp_path: Path, approve: bool) -> None:
     window = PlannerWindow(

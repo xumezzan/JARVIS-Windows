@@ -55,7 +55,9 @@ MONTHS = (
 # that came out differently each time would be a caution the owner stops reading. Nothing
 # here is written by a model: these are the same sentences, chosen by the run itself.
 HEADLINE: dict[str, tuple[str, ...]] = {
-    "finished": ("Готово.", "Сделал.", "Всё, готово.", "Готово, задача закрыта."),
+    # A provider can stop before covering the whole request. Only the deeds below are
+    # verified, so this frame never turns a planner stop into a whole-task success claim.
+    "finished": ("Выполнил следующие действия.", "Вот что удалось выполнить."),
     "simulated": ("Это была симуляция: ничего на самом деле не выполнялось.",),
     "no_action": ("Я ничего не сделал.", "Делать было нечего.", "Тут нечего было делать."),
     "error": ("Остановился на ошибке.", "Не получилось — остановился.", "Прервался на ошибке."),
@@ -199,6 +201,8 @@ DEEDS: dict[str, Callable[[dict[str, object], bool], str]] = {
     "windows.focus_app": lambda args, spoken: "переключился на " + _app(args),
     # The typed text itself is the owner's content, so the report says where, never what.
     "windows.type_text": lambda args, spoken: "напечатал текст в " + _app(args),
+    "windows.calculator_digit": lambda args, spoken: "ввёл цифру в калькулятор",
+    "windows.calculator_number": lambda args, spoken: "ввёл число в калькулятор",
     "browser.open": lambda args, spoken: "открыл в браузере " + _host(args.get("url")),
     "browser.navigate": lambda args, spoken: "перешёл на " + _host(args.get("url")),
     "browser.search": lambda args, spoken: (

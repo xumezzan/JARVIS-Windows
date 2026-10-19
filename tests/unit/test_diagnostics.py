@@ -511,7 +511,7 @@ def test_selected_commit_is_recorded_with_successful_activation(
     assert read_report(root)["source_commit"] == commit
     assert json.loads((root / "active.json").read_text())["source_commit"] == commit
     assert json.loads((root / "slots/b/receipt.json").read_text())["source_commit"] == commit
-    assert commit in (root / "installation-report.md").read_text()
+    assert commit in (root / "installation-report.md").read_text(encoding="utf-8")
 
 
 def test_failed_update_does_not_put_selected_commit_in_active_version(
@@ -538,5 +538,5 @@ def test_invalid_commit_is_refused_without_recording_input(
     with pytest.raises(SetupError):
         setup.install(repository, root, source_commit="SECRET untrusted source")
     assert read_report(root)["status"] == "failed"
-    assert "SECRET" not in (root / "installation-report.json").read_text()
+    assert "SECRET" not in (root / "installation-report.json").read_text(encoding="utf-8")
     assert setup.active_slot(root) == "a"

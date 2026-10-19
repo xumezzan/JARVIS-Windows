@@ -1,6 +1,7 @@
 """Native adapter decision logic with fake UIA objects; not native Windows acceptance."""
 
 import winreg
+from hashlib import sha256
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -8,9 +9,9 @@ import pytest
 from tests.windows_support import target
 
 from jarvis.platforms.windows import native
-from jarvis.platforms.windows.native import NativeDesktop
+from jarvis.platforms.windows.native import LaunchEntry, NativeDesktop
 from jarvis.tools.base import ToolError
-from jarvis.tools.windows import NativeRequest, text_digest
+from jarvis.tools.windows import NativeRequest, WindowTarget, text_digest
 
 
 @pytest.fixture
@@ -20,6 +21,64 @@ def desktop() -> NativeDesktop:
     adapter.user32 = Mock()
     adapter.psutil = Mock()
     return adapter
+
+
+@pytest.mark.parametrize("ending", ["\r", "\r\n", "\n"])
+@pytest.mark.parametrize("value_fallback", [False, True])
+def test_native_read_preserves_paragraphs_for_all_line_endings(
+    desktop: NativeDesktop, ending: str, value_fallback: bool
+) -> None:
+    raw = f"первая{ending}{ending}вторая \t{ending}"
+    editor = Mock()
+    editor.iface_text.DocumentRange.GetText.return_value = raw
+    if value_fallback:
+        editor.iface_text.DocumentRange.GetText.side_effect = RuntimeError("No TextPattern")
+    editor.iface_value.CurrentValue = raw
+    assert desktop.read(editor) == "первая\n\nвторая \t\n"
+
+
+def test_windows_text_digest_equates_only_line_endings() -> None:
+    expected = "первая\n\nвторая \t\n"
+    wanted = sha256(expected.encode("utf-8")).hexdigest()
+    for ending in ("\r", "\r\n", "\n"):
+        assert text_digest(expected.replace("\n", ending)) == wanted
+    for changed in (
+        expected.rstrip("\n"),
+        expected + "\n",
+        expected.replace("\n\n", "\n"),
+        expected.replace(" \t", " "),
+        expected.replace("первая", "другая"),
+    ):
+        assert text_digest(changed) != wanted
+
+
+def test_rich_edit_multiline_input_and_independent_readback(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RichEdit exposes CR paragraphs after accepting ordinary LF replacement text."""
+    text = "# Сводка\n\nПервая строка.\n- Вторая строка.\n"
+    stored = [""]
+    editor, window = Mock(), Mock()
+    editor.iface_text.DocumentRange.GetText.side_effect = lambda size: stored[0]
+    monkeypatch.setattr(desktop, "resolve", lambda *args, **kwargs: window)
+    monkeypatch.setattr(desktop, "controls", lambda *args: [editor])
+    monkeypatch.setattr(desktop, "editor_target", lambda *args: target().editor)
+    monkeypatch.setattr(desktop, "writable", lambda *args: True)
+
+    def insert(window: object, control: object, value: str, overwrite: bool) -> None:
+        assert control is editor and not overwrite
+        stored[0] = value.replace("\n", "\r")
+
+    monkeypatch.setattr(desktop, "write", insert)
+    result = desktop.dispatch(NativeRequest(operation="type", target=target(), text=text))
+    wanted = sha256(text.encode("utf-8")).hexdigest()
+    assert result.text_sha256 == wanted
+    verified = desktop.dispatch(NativeRequest(operation="verify", target=target(), result=result))
+    assert verified.text_sha256 == wanted
+    # A document containing only paragraph marks is still existing content.
+    stored[0] = "\r"
+    with pytest.raises(ToolError, match="target_changed"):
+        desktop.dispatch(NativeRequest(operation="type", target=target(), text="new"))
 
 
 @pytest.mark.parametrize(
@@ -282,3 +341,135 @@ def test_a_window_without_a_writable_field_is_not_a_typing_target(
     assert other is not None
     with pytest.raises(ToolError, match="target_changed"):
         desktop.chosen_editor(Mock(), other.model_copy(update={"automation_id": "dialog"}))
+
+
+def observed_windows(desktop: NativeDesktop, *targets: WindowTarget) -> list[Mock]:
+    """Real snapshot/selection logic over inert top-level windows and process identities."""
+    windows, processes = {}, {}
+    for wanted in targets:
+        window = Mock(handle=wanted.handle)
+        window.process_id.return_value = wanted.pid
+        window.window_text.return_value = wanted.title
+        window.element_info.runtime_id = wanted.runtime_id
+        window.descendants.return_value = []
+        windows[wanted.handle] = window
+        process = Mock(pid=wanted.pid)
+        process.exe.return_value = wanted.executable
+        process.create_time.return_value = wanted.process_started
+        processes[wanted.pid] = process
+    desktop.desktop.windows.return_value = list(windows.values())
+    desktop.psutil.Process.side_effect = processes.__getitem__
+
+    def lookup(*, handle: int) -> Mock:
+        wrapper = Mock()
+        wrapper.wrapper_object.return_value = windows[handle]
+        return wrapper
+
+    desktop.desktop.window.side_effect = lookup
+    return list(windows.values())
+
+
+def writable_notepad(window: Mock) -> None:
+    editor = Mock(handle=101)
+    editor.is_visible.return_value = editor.is_enabled.return_value = True
+    editor.element_info.runtime_id = [3, 4]
+    editor.element_info.control_type = "Edit"
+    editor.element_info.automation_id = "15"
+    editor.element_info.class_name = "Edit"
+    editor.element_info.name = ""
+    editor.element_info.element.CurrentIsPassword = False
+    editor.iface_value.CurrentIsReadOnly = False
+    editor.iface_text.DocumentRange.GetText.return_value = ""
+    tab = Mock()
+    tab.element_info.runtime_id = [5, 6]
+    tab.iface_selection_item.CurrentIsSelected = True
+
+    def descendants(*, control_type: str) -> list[Mock]:
+        return {"Edit": [editor], "Document": [], "TabItem": [tab]}[control_type]
+
+    window.descendants.side_effect = descendants
+
+
+def unrelated_target() -> WindowTarget:
+    return target().model_copy(
+        update={
+            "app": "chrome",
+            "handle": 300,
+            "pid": 400,
+            "executable": "C:/Program Files/Chrome/chrome.exe",
+            "runtime_id": [7, 8],
+            "title": "Unrelated window",
+            "editor": None,
+            "empty": False,
+        }
+    )
+
+
+def test_filter_windows_before_inspecting_editors(desktop: NativeDesktop) -> None:
+    unrelated, notepad = observed_windows(desktop, unrelated_target(), target())
+    unrelated.descendants.side_effect = AssertionError("Unrelated UIA tree must not be read")
+    writable_notepad(notepad)
+    result = desktop.dispatch(NativeRequest(operation="list", app="notepad"))
+    assert result.windows == [target()]
+    unrelated.descendants.assert_not_called()
+    assert notepad.descendants.call_count == 3
+
+
+@pytest.mark.parametrize("already_open", [False, True])
+def test_open_scans_skip_unrelated_editors_and_return_selected_notepad_field(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch, already_open: bool
+) -> None:
+    unrelated, notepad = observed_windows(desktop, unrelated_target(), target())
+    unrelated.descendants.side_effect = AssertionError("Unrelated UIA tree must not be read")
+    writable_notepad(notepad)
+    launch = Mock()
+    monkeypatch.setattr(desktop, "launch", launch)
+    monkeypatch.setattr(
+        desktop, "resolve_app", lambda app: LaunchEntry("Notepad", Path("notepad.exe"), "notepad")
+    )
+    if not already_open:
+        desktop.desktop.windows.side_effect = [[unrelated], [unrelated], [unrelated, notepad]]
+        monkeypatch.setattr("jarvis.platforms.windows.native.time.time", lambda: 1234.0)
+    result = desktop.dispatch(NativeRequest(operation="open", app="notepad"))
+    assert result.target == target()
+    unrelated.descendants.assert_not_called()
+    assert notepad.descendants.call_count == 3
+    desktop.desktop.window.assert_called_once_with(handle=target().handle)
+    assert launch.call_count == (0 if already_open else 1)
+
+
+def test_open_late_existing_window_is_revalidated_and_keeps_its_editor(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wanted = target().model_copy(update={"title": "My Notepad"})
+    unrelated, notepad = observed_windows(desktop, unrelated_target(), wanted)
+    writable_notepad(notepad)
+    monkeypatch.setattr(desktop, "launch", Mock())
+    monkeypatch.setattr(
+        desktop, "resolve_app", lambda app: LaunchEntry("My Notepad", Path("notepad.lnk"), "")
+    )
+    ticks = iter((0.0, 7.0))
+    monkeypatch.setattr("jarvis.platforms.windows.native.time.monotonic", lambda: next(ticks))
+    result = desktop.dispatch(NativeRequest(operation="open", app="my notepad"))
+    assert result.target == wanted
+    unrelated.descendants.assert_not_called()
+    assert notepad.descendants.call_count == 3
+    desktop.desktop.window.assert_called_once_with(handle=wanted.handle)
+
+
+def test_open_refuses_changed_selected_identity_before_reading_editor(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old, replacement = observed_windows(
+        desktop, target(), unrelated_target().model_copy(update={"handle": 500})
+    )
+    desktop.desktop.windows.return_value = [old]
+    desktop.desktop.window.side_effect = None
+    desktop.desktop.window.return_value.wrapper_object.return_value = replacement
+    monkeypatch.setattr(
+        desktop, "resolve_app", lambda app: LaunchEntry("Notepad", Path("notepad.exe"), "notepad")
+    )
+    with pytest.raises(ToolError, match="target_changed"):
+        desktop.dispatch(NativeRequest(operation="open", app="notepad"))
+    old.descendants.assert_not_called()
+    replacement.descendants.assert_not_called()

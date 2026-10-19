@@ -33,6 +33,44 @@ class OfflineProvider:
         typed = re.fullmatch(
             r"открой блокнот и напиши (?:«([\s\S]+)»|([\s\S]+))", command, re.IGNORECASE
         )
+        calculator = re.fullmatch(
+            r"(?:открой|открыть|запусти|запустить)\s+(?:калькулятор|calculator|calc)"
+            r"\s+и\s+(?:набери|введи|напиши|напечатай|нажми)\s+"
+            r"(?:(?:число|цифру)\s+)?([0-9]{1,15})[.!?]?",
+            command,
+            re.IGNORECASE,
+        )
+        if calculator:
+            if count == 0:
+                return call("windows.open_app", {"app": "калькулятор"})
+            if data.mode is Mode.SIMULATION:
+                return Proposal(kind="finish")
+            result = json.loads(data.steps[-1].outcome.result_json or "{}")
+            target = result.get("target")
+            if count == 1 and target:
+                return call(
+                    "windows.get_calculator_number",
+                    {"target": target, "number": calculator.group(1)},
+                )
+            if count == 2 and target and result.get("calculator"):
+                return call(
+                    "windows.calculator_number",
+                    {"target": target, "calculator": result["calculator"]},
+                )
+            return Proposal(kind="finish")
+        if re.match(
+            r"(?:открой|открыть|запусти|запустить)\s+(?:калькулятор|calculator|calc)\s+и\s+",
+            command,
+            re.IGNORECASE,
+        ):
+            return Proposal(
+                kind="clarify",
+                question=(
+                    "Какое целое число ввести? Например: «открой калькулятор и набери 26». "
+                    "Поддерживается до 15 цифр без знака и дробной части при исходном нуле. "
+                    "Существующее вычисление не очищается."
+                ),
+            )
         if command.casefold() in ("открой выбранное приложение", "открой моё приложение"):
             apps = {
                 hint.value
@@ -80,6 +118,12 @@ class OfflineProvider:
                     {"target": target, "text": typed.group(1) or typed.group(2)},
                 )
             return Proposal(kind="finish")
+        found = FIND.fullmatch(command)
+        if found:
+            query = " ".join(found.group(1).split())[:200]
+            if count == 0 and query:
+                return call("files.find", {"query": query})
+            return Proposal(kind="finish")
         opened = re.fullmatch(r"открой (https://\S+)", command, re.IGNORECASE)
         search = re.fullmatch(r"найди ([\s\S]+)", command, re.IGNORECASE)
         combined = re.fullmatch(r"открой chrome и найди ([\s\S]+)", command, re.IGNORECASE)
@@ -100,15 +144,22 @@ class OfflineProvider:
                 if result.get("page"):
                     return call("browser.read", {"target": result["page"]["target"]})
             return Proposal(kind="finish")
-        found = FIND.fullmatch(command)
-        if found:
-            query = " ".join(found.group(1).split())[:200]
-            if count == 0 and query:
-                return call("files.find", {"query": query})
-            return Proposal(kind="finish")
         launch = LAUNCH.fullmatch(command)
         if launch:
             name = " ".join(launch.group(1).split())
+            if re.search(
+                r"\s+и\s+(?:набери|введи|напечатай|нажми|выбери|закрой|открой|запусти)\b",
+                name,
+                re.IGNORECASE,
+            ):
+                return Proposal(
+                    kind="clarify",
+                    question=(
+                        "Эта составная команда пока не поддерживается в офлайн-режиме. "
+                        "Можно открыть приложение отдельной командой или ввести число: "
+                        "«открой калькулятор и набери 26»."
+                    ),
+                )
             if APP_NAME.fullmatch(name):
                 if count == 0:
                     return call("windows.open_app", {"app": name})

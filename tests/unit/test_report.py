@@ -99,6 +99,28 @@ def test_what_was_typed_is_never_repeated_back() -> None:
     assert SECRET not in " ".join(written(result))
 
 
+def test_a_stopped_plan_reports_only_verified_deeds_without_claiming_the_whole_goal() -> None:
+    """A live file-to-Notepad task stopped after focus, leaving the requested text absent."""
+    result = PlanResult(
+        "finished",
+        (
+            step("files.write_text", {"path": "D:/Documents/message-draft.txt", "text": SECRET}),
+            step("windows.open_app", {"app": "блокнот"}),
+            step("windows.focus_app", {"target": {"app": "notepad"}}),
+        ),
+    )
+    lines = written(result)
+    assert lines[0] in {"Выполнил следующие действия.", "Вот что удалось выполнить."}
+    assert lines[1:] == (
+        "Записал файл message-draft.txt.",
+        "Открыл блокнот.",
+        "Переключился на notepad.",
+    )
+    said = spoken(result)
+    assert said == lines[0] + " Переключился на notepad."
+    assert "Напечатал" not in " ".join(lines) and SECRET not in said
+
+
 def test_an_unconfirmed_effect_is_reported_as_unconfirmed() -> None:
     result = PlanResult(
         "timeout",

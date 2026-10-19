@@ -7,13 +7,16 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from tests.windows_support import WindowsProbe, target
 
 from jarvis.core.planner.contracts import PlannerInput, ProviderError, Step
+from jarvis.core.planner.deepseek_provider import DeepSeekProvider
 from jarvis.core.planner.openai_provider import OpenAIProvider
 from jarvis.permissions.engine import Outcome
 from jarvis.permissions.policies import Mode, Status
 from jarvis.security.credentials import load_api_key
 from jarvis.tools.local import local_registry
+from jarvis.tools.windows import ListWindows, OpenApp, TypeText, register_windows
 
 
 def context() -> PlannerInput:
@@ -50,6 +53,63 @@ async def test_exact_function_schema_and_no_persistence_or_hosted_tools() -> Non
     assert set(check["parameters"]["required"]) == {"delay_ms", "fail"}
     assert check["parameters"]["additionalProperties"] is False
     assert "previous_response_id" not in payload and "background" not in payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("vendor", ["deepseek", "openai"])
+async def test_window_selection_help_and_typing_survive_the_provider_protocol(vendor: str) -> None:
+    registry, _ = local_registry()
+    probe = WindowsProbe()
+    register_windows(registry, probe)
+    args = TypeText(target=target(), text="Synthetic transfer").model_dump(mode="json")
+    seen: list[dict[str, Any]] = []
+
+    async def transport(payload: dict[str, Any]) -> bytes:
+        seen.append(payload)
+        function = {"name": "windows__type_text", "arguments": json.dumps(args)}
+        if vendor == "openai":
+            return json.dumps(
+                {"status": "completed", "output": [{"type": "function_call", **function}]}
+            ).encode()
+        return json.dumps(
+            {
+                "choices": [
+                    {
+                        "finish_reason": "tool_calls",
+                        "message": {"tool_calls": [{"type": "function", "function": function}]},
+                    }
+                ]
+            }
+        ).encode()
+
+    provider = (
+        OpenAIProvider("test-model", transport=transport)
+        if vendor == "openai"
+        else DeepSeekProvider("test-model", transport=transport)
+    )
+    data = PlannerInput(
+        "Synthetic file-to-editor transfer", (), (), Mode.EXECUTE, json.dumps(registry.discover())
+    )
+    proposal = await provider.propose(data)
+    tools = {
+        item["name"]: item
+        for supplied in seen[0]["tools"]
+        for item in (supplied if vendor == "openai" else supplied["function"],)
+    }
+    list_app = tools["windows__get_open_windows"]["parameters"]["properties"]["app"]
+    open_app = tools["windows__open_app"]["parameters"]["properties"]["app"]
+    assert list_app["description"] == ListWindows.model_fields["app"].description
+    assert open_app["description"] == OpenApp.model_fields["app"].description
+    assert list_app["description"] and open_app["description"] != list_app["description"]
+    assert any(option.get("type") == "null" for option in list_app["anyOf"])
+    assert open_app["type"] == "string" and "anyOf" not in open_app
+    assert proposal.tool == "windows.type_text"
+    typed = registry.get(proposal.tool)
+    assert typed is not None
+    assert TypeText.model_validate_json(typed.normalize(json.loads(proposal.arguments))).text == (
+        "Synthetic transfer"
+    )
+    assert not probe.calls, "schema discovery and parsing must never invoke a native adapter"
 
 
 @pytest.mark.asyncio

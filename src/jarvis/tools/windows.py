@@ -22,8 +22,13 @@ AppId = Annotated[
 ]
 
 
+def normalize_newlines(text: str) -> str:
+    """Equate Windows CRLF and RichEdit CR paragraphs without dropping any line."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def text_digest(text: str) -> str:
-    return sha256(text.replace("\r\n", "\n").encode("utf-8")).hexdigest()
+    return sha256(normalize_newlines(text).encode("utf-8")).hexdigest()
 
 
 class EditorTarget(ToolModel):
@@ -68,11 +73,24 @@ class WindowTarget(ToolModel):
 
 
 class ListWindows(ToolModel):
-    app: AppId | None = None
+    app: AppId | None = Field(
+        default=None,
+        description=(
+            "Exact executable key copied from an observed WindowTarget.app, for example "
+            "'notepad'. This is not a spoken or localized application name. "
+            "Use null to list all open windows when no key has been observed."
+        ),
+    )
 
 
 class OpenApp(ToolModel):
-    app: AppId
+    app: AppId = Field(
+        description=(
+            "Installed application's spoken name, for example 'Блокнот' or 'Notepad'. "
+            "Windows resolves the name and returns an observed window target. "
+            "Do not supply a path, arguments or native window identifiers."
+        )
+    )
 
 
 class FocusApp(ToolModel):
@@ -116,16 +134,70 @@ class TypeText(ToolModel):
         return self
 
 
+class CalculatorElement(ToolModel):
+    runtime_id: list[int] = Field(min_length=1, max_length=32)
+    automation_id: str = Field(min_length=1, max_length=80)
+    control_type: Literal["Button", "Text"]
+    class_name: str = Field(max_length=200)
+    name: str = Field(max_length=200)
+    visible: bool = True
+
+
+CalculatorNumber = Annotated[
+    str, StringConstraints(min_length=1, max_length=15, pattern=r"^[0-9]+$")
+]
+
+
+class CalculatorTarget(ToolModel):
+    """Observed numeric buttons and the calculator state one approved number changes."""
+
+    number: CalculatorNumber
+    pid: int = Field(gt=0)
+    process_started: float = Field(gt=0, allow_inf_nan=False)
+    executable: str = Field(min_length=1, max_length=1000)
+    buttons: list[CalculatorElement] = Field(min_length=1, max_length=10)
+    display: CalculatorElement
+    expression: CalculatorElement
+
+    @model_validator(mode="after")
+    def fixed_controls(self) -> "CalculatorTarget":
+        expected = [f"num{digit}Button" for digit in sorted(set(self.number))]
+        if [button.automation_id for button in self.buttons] != expected or any(
+            button.control_type != "Button" for button in self.buttons
+        ):
+            raise ValueError("Only the observed numeric buttons for this number are supported.")
+        for element, identifier, role in (
+            (self.display, "CalculatorResults", "Text"),
+            (self.expression, "CalculatorExpression", "Text"),
+        ):
+            if element.automation_id != identifier or element.control_type != role:
+                raise ValueError("Only observed calculator digit controls are supported.")
+        return self
+
+
 class WindowsResult(ToolModel):
     windows: list[WindowTarget] = Field(default_factory=list, max_length=100)
     editors: list[EditorTarget] = Field(default_factory=list, max_length=20)
     target: WindowTarget | None = None
     focused: bool = False
     text_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    calculator: CalculatorTarget | None = None
+    calculator_value_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
 
 Operation = Literal[
-    "list", "open", "focus", "type", "fields", "check_open", "check_target", "verify"
+    "list",
+    "open",
+    "focus",
+    "type",
+    "fields",
+    "check_open",
+    "check_target",
+    "verify",
+    "calculator_observe",
+    "calculator_check",
+    "calculator_number",
+    "calculator_verify",
 ]
 
 
@@ -137,6 +209,8 @@ class NativeRequest(ToolModel):
     text: str | None = Field(default=None, max_length=4000)
     overwrite: bool = False
     result: WindowsResult | None = None
+    number: CalculatorNumber | None = None
+    calculator: CalculatorTarget | None = None
 
 
 class WindowsBackend(Protocol):
@@ -311,3 +385,6 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
             cancellation=cancellation,
         )
     )
+    from jarvis.tools.calculator import register_calculator
+
+    register_calculator(registry, backend)
