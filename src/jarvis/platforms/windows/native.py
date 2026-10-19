@@ -252,7 +252,7 @@ class NativeDesktop:
     def candidates(self, app: AppId, entry: LaunchEntry, titles: bool) -> list[WindowTarget]:
         wanted = normalize(app)
         alias = normalize(ALIASES.get(wanted, ""))
-        found = self.windows()
+        found = self.windows(include_editor=False)
         for select in (
             lambda item: bool(entry.key) and item.app == entry.key,
             lambda item: normalize(item.app) in {wanted, alias} - {""},
@@ -405,13 +405,22 @@ class NativeDesktop:
             empty=empty,
         )
 
-    def windows(self, app: AppId | None = None) -> list[WindowTarget]:
+    def with_editor(self, target: WindowTarget) -> WindowTarget:
+        """Inspect only the selected window, after rechecking its observed identity."""
+        return self.snapshot(self.resolve(target))
+
+    def windows(
+        self, app: AppId | None = None, *, include_editor: bool = True
+    ) -> list[WindowTarget]:
         result = []
         for window in self.desktop.windows(visible_only=True):
             try:
-                snapshot = self.snapshot(window)
-                if app is None or snapshot.app == app:
-                    result.append(snapshot)
+                # Recursive editor inspection can block in an unrelated application.
+                # Select by top-level identity first; opening uses these shallow scans.
+                snapshot = self.snapshot(window, include_editor=False)
+                if app is not None and snapshot.app != app:
+                    continue
+                result.append(self.with_editor(snapshot) if include_editor else snapshot)
             except Exception:
                 continue  # Unrelated, inaccessible or closing windows are not targets.
             if len(result) == 100:
@@ -503,25 +512,25 @@ class NativeDesktop:
                 entry = self.resolve_app(request.app)
                 existing = self.candidates(request.app, entry, titles=False)
                 if existing:
-                    return WindowsResult(target=existing[0])
-                known = {item.handle for item in self.windows()}
+                    return WindowsResult(target=self.with_editor(existing[0]))
+                known = {item.handle for item in self.windows(include_editor=False)}
                 opened = time.time() - 1
                 self.launch(entry)
                 deadline = time.monotonic() + 6
                 while time.monotonic() < deadline:
                     fresh = [
                         item
-                        for item in self.windows()
+                        for item in self.windows(include_editor=False)
                         if item.handle not in known and item.process_started >= opened
                     ]
                     matched = [item for item in fresh if entry.key and item.app == entry.key]
                     if matched or fresh:
-                        return WindowsResult(target=(matched or fresh)[0])
+                        return WindowsResult(target=self.with_editor((matched or fresh)[0]))
                     time.sleep(0.2)
                 # A running instance may simply have taken focus without a new window.
                 existing = self.candidates(request.app, entry, titles=True)
                 if existing:
-                    return WindowsResult(target=existing[0])
+                    return WindowsResult(target=self.with_editor(existing[0]))
                 raise ToolError("native_timeout")
             case "check_target":
                 if request.target is None:

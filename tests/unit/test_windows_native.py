@@ -8,9 +8,9 @@ import pytest
 from tests.windows_support import target
 
 from jarvis.platforms.windows import native
-from jarvis.platforms.windows.native import NativeDesktop
+from jarvis.platforms.windows.native import LaunchEntry, NativeDesktop
 from jarvis.tools.base import ToolError
-from jarvis.tools.windows import NativeRequest, text_digest
+from jarvis.tools.windows import NativeRequest, WindowTarget, text_digest
 
 
 @pytest.fixture
@@ -282,3 +282,135 @@ def test_a_window_without_a_writable_field_is_not_a_typing_target(
     assert other is not None
     with pytest.raises(ToolError, match="target_changed"):
         desktop.chosen_editor(Mock(), other.model_copy(update={"automation_id": "dialog"}))
+
+
+def observed_windows(desktop: NativeDesktop, *targets: WindowTarget) -> list[Mock]:
+    """Real snapshot/selection logic over inert top-level windows and process identities."""
+    windows, processes = {}, {}
+    for wanted in targets:
+        window = Mock(handle=wanted.handle)
+        window.process_id.return_value = wanted.pid
+        window.window_text.return_value = wanted.title
+        window.element_info.runtime_id = wanted.runtime_id
+        window.descendants.return_value = []
+        windows[wanted.handle] = window
+        process = Mock(pid=wanted.pid)
+        process.exe.return_value = wanted.executable
+        process.create_time.return_value = wanted.process_started
+        processes[wanted.pid] = process
+    desktop.desktop.windows.return_value = list(windows.values())
+    desktop.psutil.Process.side_effect = processes.__getitem__
+
+    def lookup(*, handle: int) -> Mock:
+        wrapper = Mock()
+        wrapper.wrapper_object.return_value = windows[handle]
+        return wrapper
+
+    desktop.desktop.window.side_effect = lookup
+    return list(windows.values())
+
+
+def writable_notepad(window: Mock) -> None:
+    editor = Mock(handle=101)
+    editor.is_visible.return_value = editor.is_enabled.return_value = True
+    editor.element_info.runtime_id = [3, 4]
+    editor.element_info.control_type = "Edit"
+    editor.element_info.automation_id = "15"
+    editor.element_info.class_name = "Edit"
+    editor.element_info.name = ""
+    editor.element_info.element.CurrentIsPassword = False
+    editor.iface_value.CurrentIsReadOnly = False
+    editor.iface_text.DocumentRange.GetText.return_value = ""
+    tab = Mock()
+    tab.element_info.runtime_id = [5, 6]
+    tab.iface_selection_item.CurrentIsSelected = True
+
+    def descendants(*, control_type: str) -> list[Mock]:
+        return {"Edit": [editor], "Document": [], "TabItem": [tab]}[control_type]
+
+    window.descendants.side_effect = descendants
+
+
+def unrelated_target() -> WindowTarget:
+    return target().model_copy(
+        update={
+            "app": "chrome",
+            "handle": 300,
+            "pid": 400,
+            "executable": "C:/Program Files/Chrome/chrome.exe",
+            "runtime_id": [7, 8],
+            "title": "Unrelated window",
+            "editor": None,
+            "empty": False,
+        }
+    )
+
+
+def test_filter_windows_before_inspecting_editors(desktop: NativeDesktop) -> None:
+    unrelated, notepad = observed_windows(desktop, unrelated_target(), target())
+    unrelated.descendants.side_effect = AssertionError("Unrelated UIA tree must not be read")
+    writable_notepad(notepad)
+    result = desktop.dispatch(NativeRequest(operation="list", app="notepad"))
+    assert result.windows == [target()]
+    unrelated.descendants.assert_not_called()
+    assert notepad.descendants.call_count == 3
+
+
+@pytest.mark.parametrize("already_open", [False, True])
+def test_open_scans_skip_unrelated_editors_and_return_selected_notepad_field(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch, already_open: bool
+) -> None:
+    unrelated, notepad = observed_windows(desktop, unrelated_target(), target())
+    unrelated.descendants.side_effect = AssertionError("Unrelated UIA tree must not be read")
+    writable_notepad(notepad)
+    launch = Mock()
+    monkeypatch.setattr(desktop, "launch", launch)
+    monkeypatch.setattr(
+        desktop, "resolve_app", lambda app: LaunchEntry("Notepad", Path("notepad.exe"), "notepad")
+    )
+    if not already_open:
+        desktop.desktop.windows.side_effect = [[unrelated], [unrelated], [unrelated, notepad]]
+        monkeypatch.setattr("jarvis.platforms.windows.native.time.time", lambda: 1234.0)
+    result = desktop.dispatch(NativeRequest(operation="open", app="notepad"))
+    assert result.target == target()
+    unrelated.descendants.assert_not_called()
+    assert notepad.descendants.call_count == 3
+    desktop.desktop.window.assert_called_once_with(handle=target().handle)
+    assert launch.call_count == (0 if already_open else 1)
+
+
+def test_open_late_existing_window_is_revalidated_and_keeps_its_editor(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wanted = target().model_copy(update={"title": "My Notepad"})
+    unrelated, notepad = observed_windows(desktop, unrelated_target(), wanted)
+    writable_notepad(notepad)
+    monkeypatch.setattr(desktop, "launch", Mock())
+    monkeypatch.setattr(
+        desktop, "resolve_app", lambda app: LaunchEntry("My Notepad", Path("notepad.lnk"), "")
+    )
+    ticks = iter((0.0, 7.0))
+    monkeypatch.setattr("jarvis.platforms.windows.native.time.monotonic", lambda: next(ticks))
+    result = desktop.dispatch(NativeRequest(operation="open", app="my notepad"))
+    assert result.target == wanted
+    unrelated.descendants.assert_not_called()
+    assert notepad.descendants.call_count == 3
+    desktop.desktop.window.assert_called_once_with(handle=wanted.handle)
+
+
+def test_open_refuses_changed_selected_identity_before_reading_editor(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old, replacement = observed_windows(
+        desktop, target(), unrelated_target().model_copy(update={"handle": 500})
+    )
+    desktop.desktop.windows.return_value = [old]
+    desktop.desktop.window.side_effect = None
+    desktop.desktop.window.return_value.wrapper_object.return_value = replacement
+    monkeypatch.setattr(
+        desktop, "resolve_app", lambda app: LaunchEntry("Notepad", Path("notepad.exe"), "notepad")
+    )
+    with pytest.raises(ToolError, match="target_changed"):
+        desktop.dispatch(NativeRequest(operation="open", app="notepad"))
+    old.descendants.assert_not_called()
+    replacement.descendants.assert_not_called()
