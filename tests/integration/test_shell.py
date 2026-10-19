@@ -344,6 +344,8 @@ def test_cloud_consent_is_asked_once_and_survives_a_restart(qtbot: QtBot, tmp_pa
         given = cloud_answer("gpt-5.4-mini", True)
         assert window._cloud_ready(planner)
         assert given["opened_with"] == "gpt-5.4-mini" and given["can_confirm"] is True
+        # Agreeing to transmission does not choose the cloud planner for the owner.
+        assert window.provider_mode.currentIndex() == planner.provider_choice.currentIndex() == 0
         # Asked once: a second command never sees the dialog again.
         assert window._cloud_ready(planner)
     finally:
@@ -356,6 +358,7 @@ def test_cloud_consent_is_asked_once_and_survives_a_restart(qtbot: QtBot, tmp_pa
     assert revived is not None
     try:
         assert revived.cloud_consent.isChecked() and revived.model.text() == "gpt-5.4-mini"
+        assert restarted.provider_mode.currentIndex() == revived.provider_choice.currentIndex() == 0
         assert restarted._cloud_ready(revived)
         # Unticking in the planner takes the permission back for good.
         revived.cloud_consent.setChecked(False)
@@ -386,3 +389,63 @@ def test_declined_cloud_consent_starts_nothing(qtbot: QtBot, window: MainWindow)
     start(qtbot, window, "проверь систему")
     assert not window.running and window.state == UiState.IDLE
     assert "не подтверждён" in window.validation_label.text()
+
+
+@pytest.mark.parametrize("selected_in", ["main", "planner"])
+def test_explicit_provider_selection_is_shared_and_restored_without_granting_consent(
+    qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selected_in: str
+) -> None:
+    def refused_provider(*args: object) -> None:
+        pytest.fail("A remembered selection must not bypass transmission consent.")
+
+    monkeypatch.setattr("jarvis.ui.planner_window.DeepSeekProvider", refused_provider)
+    config = AppConfig(tmp_path)
+    log = ShellLog(tmp_path / "logs")
+    first = MainWindow(config, log, probe_connections=False)
+    qtbot.addWidget(first)
+    planner = first.planner_window
+    assert planner is not None
+    try:
+        choice = first.provider_mode if selected_in == "main" else planner.provider_choice
+        choice.setCurrentIndex(1)
+        assert first.provider_mode.currentIndex() == planner.provider_choice.currentIndex() == 1
+        first.name_input.setText("Хумоюн")
+        first._remember_preferences()
+    finally:
+        first.shutdown()
+        first.close()
+
+    saved = (tmp_path / "home.json").read_bytes()
+    restarted = MainWindow(config, log, probe_connections=False)
+    qtbot.addWidget(restarted)
+    revived = restarted.planner_window
+    assert revived is not None
+    try:
+        assert restarted.provider_mode.currentIndex() == revived.provider_choice.currentIndex() == 1
+        assert "облачная модель" in restarted.mode_label.text()
+        assert not revived.cloud_box.isHidden()
+        assert (tmp_path / "home.json").read_bytes() == saved
+        assert restarted.preferences.name == "Хумоюн"
+        assert not revived.cloud_consent.isChecked()
+        cloud_answer("gpt-5.4-mini", False)
+        restarted.command_input.setPlainText("проверь систему")
+        restarted.submit()
+        assert not restarted.running and revived.worker is None
+        assert "не подтверждён" in restarted.validation_label.text()
+        # Either surface can put it back offline, including for the next launch.
+        choice = revived.provider_choice if selected_in == "main" else restarted.provider_mode
+        choice.setCurrentIndex(0)
+        assert restarted.provider_mode.currentIndex() == revived.provider_choice.currentIndex() == 0
+    finally:
+        restarted.shutdown()
+        restarted.close()
+
+    offline = MainWindow(config, log, probe_connections=False)
+    qtbot.addWidget(offline)
+    try:
+        assert offline.planner_window is not None
+        assert offline.provider_mode.currentIndex() == 0
+        assert offline.planner_window.provider_choice.currentIndex() == 0
+    finally:
+        offline.shutdown()
+        offline.close()

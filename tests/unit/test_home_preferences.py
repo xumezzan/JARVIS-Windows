@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from jarvis.ui.preferences import HomePreferences, valid_name
 
 THEMES = ("Midnight", "Graphite")
@@ -59,3 +61,48 @@ def test_an_unwritable_path_still_greets_this_session(tmp_path: Path) -> None:
     store.remember("Хумоюн", "Graphite")
     # The window greets them now; the next launch simply starts without the name again.
     assert store.name == "Хумоюн" and store.theme == "Graphite"
+
+
+def test_provider_selection_survives_appearance_edits_and_restart(tmp_path: Path) -> None:
+    path = tmp_path / "home.json"
+    store = HomePreferences(path, THEMES)
+    assert store.provider == "offline"
+    store.remember_provider("cloud")
+    store.remember("Хумоюн", "Graphite")
+    restored = HomePreferences(path, THEMES)
+    assert restored.provider == "cloud"
+    assert restored.name == "Хумоюн" and restored.theme == "Graphite"
+    restored.remember_provider("offline")
+    assert HomePreferences(path, THEMES).provider == "offline"
+
+
+@pytest.mark.parametrize("provider", [None, True, 1, "", "openai", "C:/cloud", {}, []])
+def test_missing_or_unknown_provider_stays_offline(tmp_path: Path, provider: object) -> None:
+    path = tmp_path / "home.json"
+    path.write_text(
+        json.dumps({"name": "Хумоюн", "theme": "Graphite", "provider": provider}), encoding="utf-8"
+    )
+    store = HomePreferences(path, THEMES)
+    assert store.provider == "offline"
+    assert store.name == "Хумоюн" and store.theme == "Graphite"
+
+
+def test_legacy_preferences_do_not_choose_a_cloud_provider(tmp_path: Path) -> None:
+    path = tmp_path / "home.json"
+    path.write_text(
+        json.dumps({"name": "Хумоюн", "theme": "Graphite", "granted": True}), encoding="utf-8"
+    )
+    saved = path.read_bytes()
+    store = HomePreferences(path, THEMES)
+    assert store.provider == "offline"
+    assert store.name == "Хумоюн" and store.theme == "Graphite"
+    assert path.read_bytes() == saved
+
+
+def test_invalid_provider_cannot_be_remembered(tmp_path: Path) -> None:
+    path = tmp_path / "home.json"
+    store = HomePreferences(path, THEMES)
+    store.remember_provider("cloud")
+    store.remember_provider("unreviewed-provider")
+    assert store.provider == "offline"
+    assert HomePreferences(path, THEMES).provider == "offline"

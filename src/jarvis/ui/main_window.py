@@ -134,8 +134,8 @@ class MainWindow(QMainWindow):
         self.today_worker: TodayWorker | None = None
         self.probe: ConnectionProbe | None = None
         self._probe_connections_enabled = probe_connections
-        # Two things this window remembers about its owner: what to call them, and which
-        # palette they chose. Both are local, and neither is worth asking for twice.
+        # Local appearance and planner choices survive a restart. Cloud consent remains
+        # separate: selecting a planner never grants permission to transmit a command.
         self.preferences = HomePreferences(config.data_dir / "home.json", tuple(PALETTES))
         self.setWindowTitle("JARVIS • Desktop Preview")
         self.resize(1480, 940)
@@ -497,7 +497,9 @@ class MainWindow(QMainWindow):
         self.provider_mode.addItems(
             ["Офлайн: учебные команды", "Облако: DeepSeek, сложные задачи — OpenAI"]
         )
+        self.provider_mode.setCurrentIndex(1 if self.preferences.provider == "cloud" else 0)
         self.provider_mode.setAccessibleName("Планировщик команд")
+        self.provider_mode.currentIndexChanged.connect(self._remember_provider)
         self.provider_mode.currentIndexChanged.connect(self._show_mode_line)
         pickers.addWidget(self.provider_mode, 1)
         modes.addLayout(pickers)
@@ -865,7 +867,7 @@ class MainWindow(QMainWindow):
         """One planner session owns the registry, engine, audit and approval authority."""
         if self.planner_window is None:
             try:
-                planner = PlannerWindow(self.config, self)
+                planner = PlannerWindow(self.config, self, preferences=self.preferences)
             except Exception:
                 self.action_label.setText(
                     "Не удалось открыть планировщик. Проверьте журнал и зависимости."
@@ -877,6 +879,7 @@ class MainWindow(QMainWindow):
             planner.progress_event.connect(self._planner_progress)
             planner.task_finished.connect(self._planner_finished)
             self.planner_window = planner
+            planner.provider_choice.currentIndexChanged.connect(self.provider_mode.setCurrentIndex)
             self.voice = planner.voice
             # The assistant answers out loud from this window; the planner keeps the switch.
             self.voice.speech_enabled.setChecked(True)
@@ -909,6 +912,12 @@ class MainWindow(QMainWindow):
         self.preferences.remember(self.name_input.text(), self.theme_picker.currentText())
         self.name_input.setText(self.preferences.name)
         self._show_greeting()
+
+    @Slot(int)
+    def _remember_provider(self, index: int) -> None:
+        self.preferences.remember_provider("cloud" if index == 1 else "offline")
+        if self.planner_window is not None:
+            self.planner_window.provider_choice.setCurrentIndex(index)
 
     @Slot(bool)
     def _show_modes(self, shown: bool) -> None:

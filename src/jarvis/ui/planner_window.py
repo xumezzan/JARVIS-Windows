@@ -50,7 +50,9 @@ from jarvis.ui.mail_panel import MailPanel
 from jarvis.ui.mcp_panel import McpPanel
 from jarvis.ui.memory_panel import MemoryPanel
 from jarvis.ui.planner_worker import PlannerWorker, Prompt
+from jarvis.ui.preferences import HomePreferences
 from jarvis.ui.routine_panel import RoutinePanel
+from jarvis.ui.theme import PALETTES
 from jarvis.ui.voice_panel import VoicePanel
 
 
@@ -77,12 +79,16 @@ class PlannerWindow(QDialog):
         voice_panel: VoicePanel | None = None,
         mail_session: MailSession | None = None,
         embed_voice: bool = True,
+        preferences: HomePreferences | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Jarvis — планировщик команд")
         self.setWindowModality(Qt.WindowModality.WindowModal)
         self.resize(900, 790)
         self.config = config
+        self.preferences = preferences or HomePreferences(
+            config.data_dir / "home.json", tuple(PALETTES)
+        )
         self.override_provider = provider
         self.router: EscalatingRouter | None = None
         self.limits = limits or Limits.long()
@@ -158,6 +164,7 @@ class PlannerWindow(QDialog):
                 "Облако: DeepSeek, сложные задачи — OpenAI",
             ]
         )
+        self.provider_choice.setCurrentIndex(1 if self.preferences.provider == "cloud" else 0)
         layout.addWidget(self.provider_choice)
         self.cloud_box = QWidget()
         cloud = QVBoxLayout(self.cloud_box)
@@ -194,10 +201,8 @@ class PlannerWindow(QDialog):
         self.cloud_consent.toggled.connect(self.remember_cloud)
         self.model.editingFinished.connect(self.remember_cloud)
         layout.addWidget(self.cloud_box)
-        self.cloud_box.hide()
-        self.provider_choice.currentIndexChanged.connect(
-            lambda index: self.cloud_box.setVisible(index == 1)
-        )
+        self.cloud_box.setVisible(self.provider_choice.currentIndex() == 1)
+        self.provider_choice.currentIndexChanged.connect(self._remember_provider)
         self.command = QPlainTextEdit()
         self.command.setMaximumHeight(110)
         self.command.setPlaceholderText(
@@ -303,6 +308,11 @@ class PlannerWindow(QDialog):
     def remember_cloud(self) -> None:
         """Keep the last answer for the next launch. Unticking here is how it is taken back."""
         self.cloud_memory.remember(self.model.text().strip(), self.cloud_consent.isChecked())
+
+    @Slot(int)
+    def _remember_provider(self, index: int) -> None:
+        self.cloud_box.setVisible(index == 1)
+        self.preferences.remember_provider("cloud" if index == 1 else "offline")
 
     def _voice_busy(self, value: bool) -> None:
         busy = value or self.voice.planning or self.mail.busy
