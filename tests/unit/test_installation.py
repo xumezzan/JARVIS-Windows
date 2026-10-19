@@ -220,7 +220,7 @@ def test_two_slot_failure_keeps_active_app_and_data(
         setup.install(repository, root)
         assert setup.active_slot(root) == ("a" if phase == "repeat" else "b")
         assert ("prepare" in called) == (phase == "success")
-        report = json.loads((root / "installation-report.json").read_text())
+        report = json.loads((root / "installation-report.json").read_text(encoding="utf-8"))
         assert report["windows_mvp_acceptance"] == "pending"
     else:
         with pytest.raises(SetupError):
