@@ -12,7 +12,7 @@ from pathlib import Path
 
 from keyring.backend import KeyringBackend
 
-from jarvis.core.planner.contracts import Limits
+from jarvis.core.planner.contracts import Clarification, Limits
 from jarvis.core.planner.offline import OfflineProvider
 from jarvis.core.planner.runner import Runner
 from jarvis.memory.models import PROFILE_TTL, Entry
@@ -187,7 +187,7 @@ async def _planner(path: Path) -> None:
     async def approve(action: Action) -> ApprovalToken | None:
         raise RuntimeError("offline_check_failed")
 
-    async def clarify(question: str) -> str | None:
+    async def clarify(question: Clarification) -> str | None:
         raise RuntimeError("offline_check_failed")
 
     try:

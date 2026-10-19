@@ -1,7 +1,7 @@
 """Immutable messages across provider, runner and UI boundaries."""
 
 from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from typing import Annotated, Literal, Protocol
 
 from pydantic import Field, model_validator
 
@@ -18,17 +18,34 @@ class Proposal(ToolModel):
     tool: str = Field(default="", max_length=100)
     arguments: str = Field(default="{}", max_length=65536, repr=False)
     question: str = Field(default="", max_length=1000, repr=False)
+    choices: list[Annotated[str, Field(min_length=1, max_length=120)]] = Field(
+        default_factory=list, max_length=4, repr=False
+    )
 
     @model_validator(mode="after")
     def distinct_modes(self) -> "Proposal":
         if self.kind == "call":
-            if not self.tool or self.question:
+            if not self.tool or self.question or self.choices:
                 raise ValueError("Invalid call proposal.")
-        elif self.tool or self.arguments != "{}" or (self.kind == "finish" and self.question):
+        elif (
+            self.tool
+            or self.arguments != "{}"
+            or (self.kind == "finish" and (self.question or self.choices))
+        ):
             raise ValueError("Invalid control proposal.")
         elif self.kind == "clarify" and not self.question.strip():
             raise ValueError("Empty clarification.")
+        if any(not choice.strip() or choice != choice.strip() for choice in self.choices):
+            raise ValueError("Invalid clarification choice.")
+        if len({choice.casefold() for choice in self.choices}) != len(self.choices):
+            raise ValueError("Duplicate clarification choices.")
         return self
+
+
+@dataclass(frozen=True)
+class Clarification:
+    question: str = field(repr=False)
+    choices: tuple[str, ...] = field(default=(), repr=False)
 
 
 @dataclass(frozen=True)

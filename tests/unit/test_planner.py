@@ -11,6 +11,7 @@ import pytest
 
 from jarvis.core.planner.contracts import (
     Answer,
+    Clarification,
     Limits,
     PlannerInput,
     Proposal,
@@ -50,7 +51,7 @@ class Harness:
     async def approve(self, action: Action) -> ApprovalToken:
         return self.authority.approve(action)
 
-    async def clarify(self, question: str) -> str:
+    async def clarify(self, question: Clarification) -> str:
         return "проверь систему"
 
     def runner(self, provider: Scripted | OfflineProvider, limits: Limits | None = None) -> Runner:

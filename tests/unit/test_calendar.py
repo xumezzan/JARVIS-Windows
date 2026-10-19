@@ -376,7 +376,7 @@ def observed(tool: str, payload: str) -> bool:
     """The runner's own rule, exercised on fabricated observations."""
     from uuid import uuid4
 
-    from jarvis.core.planner.contracts import Step
+    from jarvis.core.planner.contracts import Clarification, Step
     from jarvis.core.planner.runner import Runner
     from jarvis.observability.audit import ErrorCode
     from jarvis.permissions.approvals import Action
@@ -389,7 +389,7 @@ def observed(tool: str, payload: str) -> bool:
     async def approve(action: Action) -> None:
         return None
 
-    async def clarify(question: str) -> None:
+    async def clarify(question: Clarification) -> None:
         return None
 
     engine = PermissionEngine.__new__(PermissionEngine)

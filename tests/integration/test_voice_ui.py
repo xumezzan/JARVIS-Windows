@@ -161,14 +161,13 @@ def test_voice_cancel_pending_planner(qtbot: QtBot, tmp_path: Path, phase: str) 
         hold = panel.hold
         if phase != "provider":
             qtbot.waitUntil(
-                lambda: window.approval_dialog is not None or window.question_dialog is not None,
+                lambda: window.approval_dialog is not None or window.pending_question is not None,
                 timeout=PATIENCE,
             )
-            dialog = window.approval_dialog or window.question_dialog
-            assert dialog is not None
-            found = dialog.findChild(HoldButton)
-            assert found is not None
-            hold = found
+            if window.approval_dialog is not None:
+                found = window.approval_dialog.findChild(HoldButton)
+                assert found is not None
+                hold = found
         with qtbot.waitSignal(window.task_finished) as result:
             record(qtbot, panel, hold)
         assert result.args == ["cancelled"]

@@ -24,7 +24,7 @@ from jarvis.config import AppConfig
 from jarvis.core.composition import MCP_FILE, build
 from jarvis.core.context.assembly import assemble
 from jarvis.core.meeting import Briefer
-from jarvis.core.planner.contracts import Limits, PlanResult, Provider, Step
+from jarvis.core.planner.contracts import Clarification, Limits, PlanResult, Provider, Step
 from jarvis.core.planner.deepseek_provider import DeepSeekProvider
 from jarvis.core.planner.offline import OfflineProvider
 from jarvis.core.planner.openai_provider import OpenAIProvider
@@ -52,6 +52,7 @@ from jarvis.ui.memory_panel import MemoryPanel
 from jarvis.ui.planner_worker import PlannerWorker, Prompt
 from jarvis.ui.preferences import HomePreferences
 from jarvis.ui.routine_panel import RoutinePanel
+from jarvis.ui.task_chat import TaskChat
 from jarvis.ui.theme import PALETTES
 from jarvis.ui.voice_panel import VoicePanel
 
@@ -113,13 +114,10 @@ class PlannerWindow(QDialog):
         self.briefer = Briefer(self.registry, self.engine)
         self.briefing_worker: BriefingWorker | None = None
         self.last_result: PlanResult | None = None
-        # The surface that owns approval and clarification dialogs; the main window sets
-        # itself here so a command typed there never needs this window on screen.
+        # Approval stays a distinct dialog. Questions use the initiating surface's chat.
         self.prompt_parent: QWidget = self
         self.approval_dialog: ApprovalDialog | None = None
-        self.question_dialog: QDialog | None = None
-        self.answer_input: QLineEdit | None = None
-        self.answer_button: QPushButton | None = None
+        self.pending_question: Prompt | None = None
         self._closing = False
         self._closed = False
         self._mail_active = False
@@ -260,6 +258,12 @@ class PlannerWindow(QDialog):
         layout.addLayout(buttons)
         self.status = note("Готово. По умолчанию: офлайн-провайдер и симуляция.")
         layout.addWidget(self.status)
+        self.chat = TaskChat()
+        self.question_host = self.chat
+        self.chat.answered.connect(self.answer_question)
+        self.chat.cancel_requested.connect(self.stop)
+        layout.addWidget(self.chat)
+        self.chat.hide()
         self.checklist = Checklist()
         layout.addWidget(self.checklist)
         self.output = QPlainTextEdit()
@@ -384,6 +388,9 @@ class PlannerWindow(QDialog):
             else:
                 provider = OfflineProvider()
         self.output.clear()
+        if self.question_host is self.chat:
+            self.chat.start(command)
+            self.chat.show()
         if not context.knowledge.empty:
             # Say exactly what the command pulled in, rather than letting it travel unseen.
             named = ", ".join(
@@ -534,36 +541,39 @@ class PlannerWindow(QDialog):
 
             dialog.finished.connect(approved)
             dialog.open()
-        elif prompt.kind == "clarification" and isinstance(prompt.value, str):
-            self.status.setText("Нужно уточнение команды.")
+        elif prompt.kind == "clarification" and isinstance(prompt.value, Clarification):
+            self.status.setText("Жду ответ в чате.")
             self.checklist.wait("clarification")
-            self.voice.announce(prompt.value)
-            question = QDialog(self.prompt_parent)
-            question.setWindowTitle("Уточнение команды")
-            question.setWindowModality(Qt.WindowModality.WindowModal)
-            question.resize(620, 250)
-            body = QVBoxLayout(question)
-            body.addWidget(note("Вопрос планировщика; это не подтверждение действия."))
-            body.addWidget(note(prompt.value))
-            answer = QLineEdit()
-            answer.setMaxLength(4000)
-            body.addWidget(answer)
-            button = QPushButton("Ответить")
-            button.clicked.connect(lambda: question.accept() if answer.text().strip() else None)
-            body.addWidget(button)
-            body.addWidget(self.voice.stop_controls(question))
-            self.question_dialog, self.answer_input, self.answer_button = question, answer, button
+            self.pending_question = prompt
+            host = self.question_host
+            host.show()
+            host.ask(prompt.id, prompt.value)
+            self.progress_event.emit("clarification", prompt.value)
+            self.voice.announce(prompt.value.question)
 
-            def answered(result: int) -> None:
-                self.question_dialog = None
-                self.checklist.wait(None)
-                worker.respond(
-                    prompt.id, answer.text() if result == QDialog.DialogCode.Accepted else None
-                )
-                question.deleteLater()
+    @Slot(str, str)
+    def answer_question(self, prompt_id: str, answer: str) -> None:
+        prompt, worker = self.pending_question, self.worker
+        if (
+            prompt is None
+            or prompt.id != prompt_id
+            or worker is None
+            or worker.runner.cancelled.is_set()
+            or self._closing
+            or not answer.strip()
+            or len(answer) > 4000
+        ):
+            return
+        self.pending_question = None
+        self.question_host.dismiss()
+        self.checklist.wait(None)
+        self.status.setText("Ответ принят. Продолжаю задачу…")
+        self.progress_event.emit("answered", None)
+        worker.respond(prompt_id, answer)
 
-            question.finished.connect(answered)
-            question.open()
+    def _dismiss_question(self) -> None:
+        self.pending_question = None
+        self.question_host.dismiss()
 
     def _approve_without_review(self, prompt_id: str, action: Action) -> None:
         """Autonomous mode: the user enabled standing approval instead of per-step review.
@@ -654,9 +664,9 @@ class PlannerWindow(QDialog):
             self.worker.cancel()
             self.stop_button.setEnabled(False)
             self.status.setText("Остановка; уже выданные действия не отзываются…")
-        for dialog in (self.approval_dialog, self.question_dialog):
-            if dialog is not None:
-                dialog.reject()
+        self._dismiss_question()
+        if self.approval_dialog is not None:
+            self.approval_dialog.reject()
 
     @Slot()
     def _finished(self) -> None:
@@ -664,9 +674,9 @@ class PlannerWindow(QDialog):
         if worker is None:
             return
         worker.wait()
-        for dialog in (self.approval_dialog, self.question_dialog):
-            if dialog is not None:
-                dialog.reject()
+        self._dismiss_question()
+        if self.approval_dialog is not None:
+            self.approval_dialog.reject()
         self.worker = None
         self.last_result = worker.outcome
         self.checklist.settle()
@@ -674,6 +684,8 @@ class PlannerWindow(QDialog):
         self._list_unfinished()
         # What was done, in the owner's words, above the engine's own account of it.
         self.output.appendPlainText("\n".join(written(worker.outcome)))
+        if self.question_host is self.chat:
+            self.chat.append("Jarvis", "\n".join(written(worker.outcome)))
         self.status.setText(worker.outcome.summary)
         self._busy(False)
         self.voice.finish_plan(worker.outcome)

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.core.planner.contracts import Budget, Limits, Proposal, Step
+from jarvis.core.planner.contracts import Budget, Clarification, Limits, Proposal, Step
 from jarvis.core.planner.offline import call
 from jarvis.core.planner.resume import restore
 from jarvis.core.planner.runner import Runner
@@ -57,7 +57,7 @@ class Bench:
         self.seen.append(self.phase())
         return self.authority.approve(action)
 
-    async def clarify(self, question: str) -> str:
+    async def clarify(self, question: Clarification) -> str:
         self.seen.append(self.phase())
         return "уточнение владельца"
 
