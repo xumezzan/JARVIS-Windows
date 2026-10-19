@@ -10,6 +10,7 @@ from uuid import uuid4
 from jarvis.core.context.learning import Learner
 from jarvis.core.planner.contracts import (
     Answer,
+    Clarification,
     Limits,
     PlannerInput,
     PlanResult,
@@ -33,7 +34,7 @@ from jarvis.tools.registry import ToolRegistry
 MICROSOFT = ("outlook.", "calendar.")
 
 Approve = Callable[[Action], Awaitable[ApprovalToken | None]]
-Clarify = Callable[[str], Awaitable[str | None]]
+Clarify = Callable[[Clarification], Awaitable[str | None]]
 
 
 class Runner:
@@ -163,11 +164,11 @@ class Runner:
         )
         return result
 
-    async def _ask(self, question: str) -> str | None:
+    async def _ask(self, question: str, choices: tuple[str, ...] = ()) -> str | None:
         """Waiting for the owner's words is a state of the run, not a pause inside a step."""
         self._mark("waiting_input")
         try:
-            return await self.clarify(question)
+            return await self.clarify(Clarification(question, choices))
         finally:
             self._mark("running")
 
@@ -246,7 +247,7 @@ class Runner:
             if proposal.kind == "clarify":
                 if len(answers) >= self.limits.max_questions:
                     return PlanResult("limit", tuple(self.steps))
-                answer = await self._ask(proposal.question)
+                answer = await self._ask(proposal.question, tuple(proposal.choices))
                 if answer is None:
                     return PlanResult("cancelled", tuple(self.steps))
                 if not answer.strip() or len(answer) > 4000:

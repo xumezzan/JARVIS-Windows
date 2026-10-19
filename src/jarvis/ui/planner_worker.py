@@ -9,7 +9,7 @@ from uuid import uuid4
 from PySide6.QtCore import QThread, Signal
 
 from jarvis.core.context.learning import Learner
-from jarvis.core.planner.contracts import Limits, PlanResult, Provider, Step
+from jarvis.core.planner.contracts import Clarification, Limits, PlanResult, Provider, Step
 from jarvis.core.planner.runner import Runner
 from jarvis.core.workflow.journal import Journal
 from jarvis.knowledge.harvest import Harvester
@@ -26,7 +26,7 @@ from jarvis.tools.registry import ToolRegistry
 class Prompt:
     id: str
     kind: Literal["approval", "clarification"]
-    value: Action | str
+    value: Action | Clarification
 
 
 class PlannerWorker(QThread):
@@ -72,7 +72,9 @@ class PlannerWorker(QThread):
         self.loop: asyncio.AbstractEventLoop | None = None
         self.waiting: tuple[str, asyncio.Future[object]] | None = None
 
-    async def _ask(self, kind: Literal["approval", "clarification"], value: Action | str) -> object:
+    async def _ask(
+        self, kind: Literal["approval", "clarification"], value: Action | Clarification
+    ) -> object:
         future: asyncio.Future[object] = asyncio.get_running_loop().create_future()
         prompt = Prompt(uuid4().hex, kind, value)
         self.waiting = (prompt.id, future)
@@ -86,7 +88,7 @@ class PlannerWorker(QThread):
         value = await self._ask("approval", action)
         return value if isinstance(value, ApprovalToken) else None
 
-    async def _clarify(self, question: str) -> str | None:
+    async def _clarify(self, question: Clarification) -> str | None:
         value = await self._ask("clarification", question)
         return value if isinstance(value, str) else None
 

@@ -150,11 +150,11 @@ def test_clarification_resumes(qtbot: QtBot, tmp_path: Path) -> None:
     try:
         window.command.setPlainText("сделай что-нибудь")
         window.start()
-        qtbot.waitUntil(lambda: window.question_dialog is not None)
-        assert window.answer_input is not None and window.answer_button is not None
-        window.answer_input.setText("проверь систему дважды")
+        qtbot.waitUntil(lambda: window.pending_question is not None)
+        assert window.chat.pending_id is not None
+        window.chat.answer_input.setText("проверь систему дважды")
         with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
-            QTest.mouseClick(window.answer_button, Qt.MouseButton.LeftButton)
+            QTest.mouseClick(window.chat.answer_button, Qt.MouseButton.LeftButton)
         assert result.args == ["simulated"]
         assert window.output.toPlainText().count("local.check:") == 2
     finally:
@@ -180,13 +180,13 @@ def test_stop_pending_work(qtbot: QtBot, tmp_path: Path, phase: str) -> None:
             qtbot.waitUntil(lambda: bool(provider.inputs))
         else:
             qtbot.waitUntil(
-                lambda: window.approval_dialog is not None or window.question_dialog is not None
+                lambda: window.approval_dialog is not None or window.pending_question is not None
             )
         with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
             QTest.mouseClick(window.stop_button, Qt.MouseButton.LeftButton)
         assert result.args == ["cancelled"]
         assert window.worker is None and window.outbox.count == 0
-        assert window.approval_dialog is None and window.question_dialog is None
+        assert window.approval_dialog is None and window.pending_question is None
     finally:
         window.shutdown()
 

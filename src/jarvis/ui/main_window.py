@@ -45,6 +45,7 @@ from jarvis.ui.planner_window import PlannerWindow
 from jarvis.ui.preferences import MAX_NAME, HomePreferences
 from jarvis.ui.setup_window import SetupWindow
 from jarvis.ui.states import STATE_LABELS, UiState
+from jarvis.ui.task_chat import TaskChat
 from jarvis.ui.theme import PALETTES, build_stylesheet, load_fonts
 from jarvis.ui.today_worker import TodayWorker
 from jarvis.ui.voice_panel import HoldButton, VoicePanel
@@ -96,6 +97,7 @@ STATUS_TONES: dict[UiState, str] = {
     UiState.LISTENING: "busy",
     UiState.THINKING: "busy",
     UiState.AWAITING_APPROVAL: "warn",
+    UiState.AWAITING_INPUT: "warn",
     UiState.EXECUTING: "busy",
     UiState.SUCCESS: "live",
     UiState.ERROR: "error",
@@ -399,7 +401,7 @@ class MainWindow(QMainWindow):
         self.examples_box = self.quick_actions
         center.addWidget(self.quick_actions)
 
-        self.task_card, task_body = self._card("Сейчас делаю")
+        self.task_card, task_body = self._card("Чат с Jarvis")
         self.transcript = QPlainTextEdit()
         self.transcript.setObjectName("transcript")
         self.transcript.setReadOnly(True)
@@ -407,6 +409,13 @@ class MainWindow(QMainWindow):
         self.transcript.setPlaceholderText("Здесь появится команда, которую я принял")
         self.transcript.setFixedHeight(46)
         task_body.addWidget(self.transcript)
+        # Keep the accepted command for existing task/voice consumers; the chat renders it.
+        self.transcript.hide()
+        self.chat = TaskChat()
+        self.chat.question_shown.connect(
+            lambda: QTimer.singleShot(0, lambda: self.scroll_area.ensureWidgetVisible(self.chat))
+        )
+        task_body.addWidget(self.chat)
         self.progress = QProgressBar()
         self.progress.setRange(0, 1)
         self.progress.setValue(0)
@@ -811,6 +820,9 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def submit(self) -> None:
+        if self.running and self.chat.pending_id is not None:
+            self.chat.submit()
+            return
         if self.running or self._closing:
             return
         command = self.command_input.toPlainText().strip()
@@ -828,6 +840,8 @@ class MainWindow(QMainWindow):
             return
         # A hidden planner still owns the session; this window shows its prompts and results.
         planner.prompt_parent = self
+        planner.question_host = self.chat
+        self.chat.start(command)
         self.transcript.setPlainText(command)
         self.validation_label.setText(
             "Команда выполняется по-настоящему."
@@ -878,6 +892,8 @@ class MainWindow(QMainWindow):
             planner.finished.connect(self._planner_closed)
             planner.progress_event.connect(self._planner_progress)
             planner.task_finished.connect(self._planner_finished)
+            self.chat.answered.connect(planner.answer_question)
+            self.chat.cancel_requested.connect(planner.stop)
             self.planner_window = planner
             planner.provider_choice.currentIndexChanged.connect(self.provider_mode.setCurrentIndex)
             self.voice = planner.voice
@@ -1037,6 +1053,7 @@ class MainWindow(QMainWindow):
         # the card that shows the work takes their place.
         self.examples_box.setVisible(False)
         self.task_card.setVisible(True)
+        self.action_label.show()
         self._set_busy(True)
         self._set_state(UiState.THINKING)
         self._record(ShellEvent.SUBMITTED)
@@ -1052,6 +1069,10 @@ class MainWindow(QMainWindow):
             return
         if not self.running:
             # A run started from the planner window itself; mirror it here too.
+            if self.planner_window is not None:
+                command = self.planner_window.command.toPlainText()
+                self.transcript.setPlainText(command)
+                self.chat.start(command)
             self._begin()
         self.checklist.record(kind, value)
         if kind == "budget" and isinstance(value, tuple):
@@ -1060,6 +1081,15 @@ class MainWindow(QMainWindow):
         elif kind == "thinking":
             self._set_state(UiState.THINKING)
             self.action_label.setText(f"Планирование шага {value}…")
+        elif kind == "clarification":
+            self._set_state(UiState.AWAITING_INPUT)
+            self.checklist.wait("clarification")
+            self.validation_label.setText("Ответьте в чате — продолжу эту же задачу.")
+            self.action_label.setText("Жду ответ в чате.")
+        elif kind == "answered":
+            self._set_state(UiState.THINKING)
+            self.checklist.wait(None)
+            self.validation_label.setText("Ответ принят. Продолжаю задачу…")
         elif kind == "executing":
             self._set_state(UiState.EXECUTING)
             self.action_label.setText(f"Выполняется: {value}")
@@ -1097,12 +1127,17 @@ class MainWindow(QMainWindow):
         rows = [*written(result)] if result is not None else [EVENT_TEXT[event]]
         if result is not None and result.error in ERROR_ADVICE:
             rows.append(ERROR_ADVICE[result.error])
+        chat_rows = tuple(rows)
         if result is not None:
             rows.extend(
                 f"{index}. {step.tool}: {step.outcome.status.value}"
                 for index, step in enumerate(result.steps, 1)
             )
         self.action_label.setText("\n".join(rows))
+        self.chat.dismiss()
+        self.chat.append("Jarvis", "\n".join(chat_rows))
+        self.action_label.hide()
+        self.validation_label.setText("Ctrl+Enter — выполнить новую команду")
         self._record(event)
         self._request_id = None
         self.command_input.setFocus()
@@ -1243,6 +1278,7 @@ class MainWindow(QMainWindow):
             return
         # A visible planner owns its own prompts again.
         planner.prompt_parent = planner
+        planner.question_host = planner.chat
         typed = self.command_input.toPlainText()
         if typed.strip():
             planner.command.setPlainText(typed)

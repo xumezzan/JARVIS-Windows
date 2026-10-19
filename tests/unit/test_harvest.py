@@ -221,7 +221,7 @@ async def test_a_run_records_what_its_tools_saw(tmp_path: Path) -> None:
     """The planner's own path: a successful step reaches the graph, a failed one does not."""
     import asyncio
 
-    from jarvis.core.planner.contracts import Proposal
+    from jarvis.core.planner.contracts import Clarification, Proposal
     from jarvis.core.planner.offline import call
     from jarvis.core.planner.runner import Runner
     from jarvis.observability.audit import AuditLog
@@ -253,7 +253,7 @@ async def test_a_run_records_what_its_tools_saw(tmp_path: Path) -> None:
     async def approve(action: Action) -> ApprovalToken:
         return authority.approve(action)
 
-    async def clarify(question: str) -> str:
+    async def clarify(question: Clarification) -> str:
         return "проверь систему"
 
     runner = Runner(registry, engine, Scripted(), approve, clarify, harvester=Recorder())

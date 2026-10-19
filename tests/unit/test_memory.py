@@ -15,7 +15,7 @@ from tests.unit.test_openai_provider import context
 from tests.unit.test_planner import MESSAGE, Harness, Scripted
 from tests.windows_support import WindowsProbe, target
 
-from jarvis.core.planner.contracts import Limits, PlannerInput
+from jarvis.core.planner.contracts import Clarification, Limits, PlannerInput
 from jarvis.core.planner.offline import OfflineProvider, call
 from jarvis.core.planner.openai_provider import OpenAIProvider
 from jarvis.core.planner.runner import Runner
@@ -275,7 +275,7 @@ async def test_injection_never_approves_or_changes_mode(harness: Harness) -> Non
 async def test_contacts_require_clarification_before_provider(harness: Harness) -> None:
     seen = []
 
-    async def clarify(question: str) -> str:
+    async def clarify(question: Clarification) -> str:
         seen.append(question)
         return "проверь систему"
 
@@ -301,7 +301,7 @@ async def test_contacts_require_clarification_before_provider(harness: Harness) 
 
 @pytest.mark.asyncio
 async def test_contact_clarification_cancels_with_no_calls(harness: Harness) -> None:
-    async def clarify(question: str) -> str | None:
+    async def clarify(question: Clarification) -> str | None:
         await asyncio.sleep(60)
         return None
 
@@ -332,7 +332,7 @@ async def test_memory_cannot_supply_stale_windows_target(tmp_path: Path, mode: M
     async def approve(action: Action) -> ApprovalToken | None:
         pytest.fail("Unobserved target must be rejected before approval")
 
-    async def clarify(question: str) -> str | None:
+    async def clarify(question: Clarification) -> str | None:
         return None
 
     try:

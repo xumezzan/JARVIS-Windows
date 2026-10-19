@@ -113,6 +113,14 @@ QFrame#card:focus { border: 1px solid $focus; }
 QFrame#divider { background: $line; border: none; }
 QFrame#inset { background: $raised; border: 1px solid $line; border-radius: 12px; }
 QFrame#inset QLabel { background: transparent; }
+QFrame#taskChat, QWidget#chatHistory, QWidget#chatReply { background: transparent; }
+QFrame#chatUser { background: $glow; border: 1px solid $border; border-radius: 12px; }
+QFrame#chatAssistant { background: $raised; border: 1px solid $line; border-radius: 12px; }
+QLabel#chatAuthor { color: $primary; font-size: 11px; font-weight: 600; }
+QPushButton#replyChoice { background: $raised; border: 1px solid $border;
+    border-radius: 10px; padding: 0; text-align: left; }
+QPushButton#replyChoice:hover, QPushButton#replyChoice:focus { border-color: $primary;
+    background: $glow; }
 
 /* ---- Navigation rail ------------------------------------------------------------- */
 QPushButton#nav { background: transparent; border: 1px solid transparent; color: $muted;

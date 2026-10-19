@@ -84,6 +84,7 @@ class OfflineProvider:
                         "Какое приложение открыть? Укажите: открой блокнот, открой chrome "
                         "или открой vs code. Память не выбирает за вас."
                     ),
+                    choices=["открой блокнот", "открой chrome", "открой vs code"],
                 )
             return (
                 call("windows.open_app", {"app": next(iter(apps))})
@@ -172,4 +173,5 @@ class OfflineProvider:
                 "«найди OpenAI». "
                 "Для произвольных формулировок включите провайдер OpenAI."
             ),
+            choices=["проверь систему", "открой блокнот", "найди OpenAI"],
         )

@@ -12,7 +12,7 @@ from tests.unit.test_planner import Scripted
 
 from jarvis.core.context.assembly import Budget, assemble
 from jarvis.core.context.learning import MAX_MEANINGS, MAX_PHRASES, MemoryLearner, meanings
-from jarvis.core.planner.contracts import Step
+from jarvis.core.planner.contracts import Clarification, Step
 from jarvis.core.planner.offline import call
 from jarvis.core.planner.runner import Runner
 from jarvis.knowledge.models import EntityDraft
@@ -60,7 +60,7 @@ class Harness:
         token: ApprovalToken = authority.approve(action)
         return token
 
-    async def clarify(self, question: str) -> str:
+    async def clarify(self, question: Clarification) -> str:
         return "проверь систему"
 
 
