@@ -55,7 +55,9 @@ MONTHS = (
 # that came out differently each time would be a caution the owner stops reading. Nothing
 # here is written by a model: these are the same sentences, chosen by the run itself.
 HEADLINE: dict[str, tuple[str, ...]] = {
-    "finished": ("Готово.", "Сделал.", "Всё, готово.", "Готово, задача закрыта."),
+    # A provider can stop before covering the whole request. Only the deeds below are
+    # verified, so this frame never turns a planner stop into a whole-task success claim.
+    "finished": ("Выполнил следующие действия.", "Вот что удалось выполнить."),
     "simulated": ("Это была симуляция: ничего на самом деле не выполнялось.",),
     "no_action": ("Я ничего не сделал.", "Делать было нечего.", "Тут нечего было делать."),
     "error": ("Остановился на ошибке.", "Не получилось — остановился.", "Прервался на ошибке."),

@@ -68,11 +68,24 @@ class WindowTarget(ToolModel):
 
 
 class ListWindows(ToolModel):
-    app: AppId | None = None
+    app: AppId | None = Field(
+        default=None,
+        description=(
+            "Exact executable key copied from an observed WindowTarget.app, for example "
+            "'notepad'. This is not a spoken or localized application name. "
+            "Use null to list all open windows when no key has been observed."
+        ),
+    )
 
 
 class OpenApp(ToolModel):
-    app: AppId
+    app: AppId = Field(
+        description=(
+            "Installed application's spoken name, for example 'Блокнот' or 'Notepad'. "
+            "Windows resolves the name and returns an observed window target. "
+            "Do not supply a path, arguments or native window identifiers."
+        )
+    )
 
 
 class FocusApp(ToolModel):
