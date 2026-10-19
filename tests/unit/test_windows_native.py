@@ -1,6 +1,7 @@
 """Native adapter decision logic with fake UIA objects; not native Windows acceptance."""
 
 import winreg
+from hashlib import sha256
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -20,6 +21,64 @@ def desktop() -> NativeDesktop:
     adapter.user32 = Mock()
     adapter.psutil = Mock()
     return adapter
+
+
+@pytest.mark.parametrize("ending", ["\r", "\r\n", "\n"])
+@pytest.mark.parametrize("value_fallback", [False, True])
+def test_native_read_preserves_paragraphs_for_all_line_endings(
+    desktop: NativeDesktop, ending: str, value_fallback: bool
+) -> None:
+    raw = f"первая{ending}{ending}вторая \t{ending}"
+    editor = Mock()
+    editor.iface_text.DocumentRange.GetText.return_value = raw
+    if value_fallback:
+        editor.iface_text.DocumentRange.GetText.side_effect = RuntimeError("No TextPattern")
+    editor.iface_value.CurrentValue = raw
+    assert desktop.read(editor) == "первая\n\nвторая \t\n"
+
+
+def test_windows_text_digest_equates_only_line_endings() -> None:
+    expected = "первая\n\nвторая \t\n"
+    wanted = sha256(expected.encode("utf-8")).hexdigest()
+    for ending in ("\r", "\r\n", "\n"):
+        assert text_digest(expected.replace("\n", ending)) == wanted
+    for changed in (
+        expected.rstrip("\n"),
+        expected + "\n",
+        expected.replace("\n\n", "\n"),
+        expected.replace(" \t", " "),
+        expected.replace("первая", "другая"),
+    ):
+        assert text_digest(changed) != wanted
+
+
+def test_rich_edit_multiline_input_and_independent_readback(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RichEdit exposes CR paragraphs after accepting ordinary LF replacement text."""
+    text = "# Сводка\n\nПервая строка.\n- Вторая строка.\n"
+    stored = [""]
+    editor, window = Mock(), Mock()
+    editor.iface_text.DocumentRange.GetText.side_effect = lambda size: stored[0]
+    monkeypatch.setattr(desktop, "resolve", lambda *args, **kwargs: window)
+    monkeypatch.setattr(desktop, "controls", lambda *args: [editor])
+    monkeypatch.setattr(desktop, "editor_target", lambda *args: target().editor)
+    monkeypatch.setattr(desktop, "writable", lambda *args: True)
+
+    def insert(window: object, control: object, value: str, overwrite: bool) -> None:
+        assert control is editor and not overwrite
+        stored[0] = value.replace("\n", "\r")
+
+    monkeypatch.setattr(desktop, "write", insert)
+    result = desktop.dispatch(NativeRequest(operation="type", target=target(), text=text))
+    wanted = sha256(text.encode("utf-8")).hexdigest()
+    assert result.text_sha256 == wanted
+    verified = desktop.dispatch(NativeRequest(operation="verify", target=target(), result=result))
+    assert verified.text_sha256 == wanted
+    # A document containing only paragraph marks is still existing content.
+    stored[0] = "\r"
+    with pytest.raises(ToolError, match="target_changed"):
+        desktop.dispatch(NativeRequest(operation="type", target=target(), text="new"))
 
 
 @pytest.mark.parametrize(

@@ -25,6 +25,7 @@ from jarvis.tools.windows import (
     TypeText,
     WindowsResult,
     WindowTarget,
+    normalize_newlines,
     text_digest,
 )
 
@@ -365,7 +366,7 @@ class NativeDesktop:
             value = str(editor.iface_text.DocumentRange.GetText(8001))
         except Exception:
             value = str(editor.iface_value.CurrentValue)
-        return value.replace("\r\n", "\n")
+        return normalize_newlines(value)
 
     def editor_target(self, window: Any, editor: Any) -> EditorTarget:
         return EditorTarget(

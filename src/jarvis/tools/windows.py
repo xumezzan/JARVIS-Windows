@@ -22,8 +22,13 @@ AppId = Annotated[
 ]
 
 
+def normalize_newlines(text: str) -> str:
+    """Equate Windows CRLF and RichEdit CR paragraphs without dropping any line."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def text_digest(text: str) -> str:
-    return sha256(text.replace("\r\n", "\n").encode("utf-8")).hexdigest()
+    return sha256(normalize_newlines(text).encode("utf-8")).hexdigest()
 
 
 class EditorTarget(ToolModel):
