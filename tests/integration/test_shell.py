@@ -168,13 +168,13 @@ def test_unknown_command_asks_in_the_main_window(qtbot: QtBot, window: MainWindo
     start(qtbot, window, "сделай что-нибудь")
     planner = window.planner_window
     assert planner is not None
-    qtbot.waitUntil(lambda: planner.question_dialog is not None, timeout=15000)
-    question = planner.question_dialog
-    assert question is not None and question.parent() is window
-    assert planner.answer_input is not None and planner.answer_button is not None
-    planner.answer_input.setText("проверь систему")
+    qtbot.waitUntil(lambda: planner.pending_question is not None, timeout=15000)
+    assert planner.question_host is window.chat
+    assert QApplication.activeModalWidget() is None
+    assert window.state == UiState.AWAITING_INPUT
+    window.chat.answer_input.setText("проверь систему")
     with qtbot.waitSignal(window.task_finished, timeout=15000) as result:
-        QTest.mouseClick(planner.answer_button, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(window.chat.answer_button, Qt.MouseButton.LeftButton)
     assert result.args == ["simulated"]
 
 
@@ -232,7 +232,7 @@ def test_arbitrary_command_is_plain_text_and_not_logged(qtbot: QtBot, window: Ma
     start(qtbot, window, text)
     planner = window.planner_window
     assert planner is not None
-    qtbot.waitUntil(lambda: planner.question_dialog is not None, timeout=15000)
+    qtbot.waitUntil(lambda: planner.pending_question is not None, timeout=15000)
     with qtbot.waitSignal(window.task_finished, timeout=15000):
         planner.stop()
     assert window.transcript.toPlainText() == text

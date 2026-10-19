@@ -8,6 +8,7 @@ class UiState(StrEnum):
     LISTENING = "listening"
     THINKING = "thinking"
     AWAITING_APPROVAL = "awaiting approval"
+    AWAITING_INPUT = "awaiting input"
     EXECUTING = "executing"
     SUCCESS = "success"
     ERROR = "error"
@@ -19,6 +20,7 @@ STATE_LABELS: dict[UiState, str] = {
     UiState.LISTENING: "Запись речи",
     UiState.THINKING: "Планирование шага",
     UiState.AWAITING_APPROVAL: "Ожидание подтверждения",
+    UiState.AWAITING_INPUT: "Жду ответ в чате",
     UiState.EXECUTING: "Выполнение команды",
     UiState.SUCCESS: "Команда завершена",
     UiState.ERROR: "Ошибка выполнения",

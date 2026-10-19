@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from jarvis.core.planner.contracts import Proposal
+from jarvis.core.planner.contracts import Clarification, Proposal
 from jarvis.core.planner.offline import call
 from jarvis.core.planner.runner import Runner
 from jarvis.core.workflow.journal import RunJournal
@@ -246,7 +246,7 @@ class Bench:
     async def approve(self, action: Action) -> ApprovalToken:
         return self.authority.approve(action)
 
-    async def clarify(self, question: str) -> str:
+    async def clarify(self, question: Clarification) -> str:
         return "проверь систему"
 
     def runner(self, proposals: list[Proposal], journal: RunJournal) -> Runner:

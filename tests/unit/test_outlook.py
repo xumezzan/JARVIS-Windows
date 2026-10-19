@@ -12,6 +12,7 @@ import pytest_asyncio
 from keyring.backend import KeyringBackend
 from tests.mail_support import FakeCredentials, FakeGraph
 
+from jarvis.core.planner.contracts import Clarification
 from jarvis.mail.credentials import MailFailure
 from jarvis.mail.models import Message
 from jarvis.mail.oauth_helper import CacheStore
@@ -365,8 +366,8 @@ async def test_planner_requires_current_account_and_exact_recipient(
 
     questions: list[str] = []
 
-    async def clarify(question: str) -> str:
-        questions.append(question)
+    async def clarify(question: Clarification) -> str:
+        questions.append(question.question)
         return "Кому recipient@example.test; копий нет"
 
     async def approve(action: Action) -> ApprovalToken:
