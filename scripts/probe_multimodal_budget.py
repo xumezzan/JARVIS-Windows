@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from jarvis.config import AppConfig
 from jarvis.core.planner.contracts import PlannerInput, Step
-from jarvis.core.planner.openai_provider import OpenAIProvider
+from jarvis.core.planner.openai_provider import OpenAIProvider, payload_bytes
 from jarvis.desktop.service import DesktopService
 from jarvis.permissions.engine import Outcome
 from jarvis.permissions.policies import Mode, Status
@@ -77,10 +77,10 @@ def worst_case(registry: ToolRegistry) -> PlannerInput:
     )
 
 
-def measure(registry: ToolRegistry) -> int:
+def measure(registry: ToolRegistry, *, ceiling: int = 180_000) -> int:
     payload, _ = OpenAIProvider("probe-no-network")._request_payload(worst_case(registry))
-    size = len(json.dumps(payload, ensure_ascii=False).encode())
-    assert size < 180_000, f"Payload budget regression: {size} bytes"
+    size = len(payload_bytes(payload))
+    assert size < ceiling, f"Payload budget regression: {size} bytes >= {ceiling}"
     return size
 
 
@@ -90,6 +90,7 @@ async def main() -> None:
     os.environ.pop("JARVIS_VOSK_MODEL", None)
     from PySide6.QtWidgets import QApplication
 
+    from jarvis.ui.compact_planner import PlannerWindow as CompactPlannerWindow
     from jarvis.ui.planner_window import PlannerWindow
 
     app = QApplication([])
@@ -98,20 +99,26 @@ async def main() -> None:
         qt_root = root / "qt"
         qt_root.mkdir()
         window = PlannerWindow(AppConfig(qt_root))
+        compact_root = root / "compact"
+        compact_root.mkdir()
+        compact = CompactPlannerWindow(AppConfig(compact_root))
         service = DesktopService(AppConfig(root / "desktop"), lambda event: None)
         try:
-            for name, registry in (
-                ("PlannerWindow", window.registry),
-                ("DesktopService", service.registry),
+            for name, registry, ceiling in (
+                ("PlannerWindow + connectors", window.registry, 262_144),
+                ("CompactPlannerWindow", compact.registry, 180_000),
+                ("DesktopService", service.registry, 180_000),
             ):
                 print(
-                    f"{name}: {measure(registry)} bytes < 180000; "
+                    f"{name}: {measure(registry, ceiling=ceiling)} bytes < {ceiling}; "
                     "96 x 120 Unicode names; base64=65536"
                 )
         finally:
             window.shutdown()
+            compact.shutdown()
             await service.shutdown()
             window.deleteLater()
+            compact.deleteLater()
             app.processEvents()
 
 

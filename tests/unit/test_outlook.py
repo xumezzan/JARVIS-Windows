@@ -83,6 +83,7 @@ async def mail(tmp_path: Path) -> Any:
     "tool,risk",
     [
         ("outlook.send", Risk.CONFIRM),
+        # A draft reaches nobody, so it runs unattended; sending still asks.
         ("outlook.save_draft", Risk.SAFE),
         ("outlook.local_draft", Risk.SAFE),
     ],
@@ -247,6 +248,29 @@ async def test_untrusted_mail_never_grants_authority(mail: MailHarness) -> None:
     assert not mail.graph.writes
 
 
+@pytest.mark.asyncio
+async def test_a_listing_says_which_letters_are_still_unread(mail: MailHarness) -> None:
+    """The read flag is the difference between "letters from this person" and the thing
+    the owner actually asks for before a meeting: what is still waiting."""
+    assert mail.session.account is not None
+    action = mail.prepare("outlook.list", {"account": mail.session.account.model_dump()})
+    result = await mail.engine.execute(action)
+    assert result.status is Status.SUCCESS and result.result_json
+    assert "isRead" in mail.graph.selected
+    rows = json.loads(json.loads(result.result_json)["data"])
+    assert rows[0]["isRead"] is False
+    # Still exactly the fields that were asked for, and nothing Graph added on its own.
+    assert set(rows[0]) == {
+        "id",
+        "subject",
+        "from",
+        "receivedDateTime",
+        "isDraft",
+        "isRead",
+        "importance",
+    }
+
+
 @pytest.mark.parametrize(
     "recipient",
     ["Саша", "Name <a@example.test>", "a@example.test\r\nBcc:b@example.test", "a@localhost"],
@@ -308,16 +332,27 @@ async def test_oauth_failure_and_changed_home_id(mail: MailHarness) -> None:
 
 
 @pytest.mark.asyncio
-async def test_attachment_helper_regular_size_and_symlink(tmp_path: Path) -> None:
+async def test_attachment_helper_rejects_symlink(tmp_path: Path) -> None:
+    from jarvis.mail.attachments import read_attachment
+
+    file = tmp_path / "attachment.txt"
+    file.write_bytes(b"exact test data")
+    alias = tmp_path / "alias.txt"
+    try:
+        alias.symlink_to(file)
+    except OSError:
+        pytest.skip("Symlink creation needs Windows Developer Mode or an elevated session.")
+    with pytest.raises(MailFailure):
+        await read_attachment(str(alias))
+
+
+@pytest.mark.asyncio
+async def test_attachment_helper_regular_and_size(tmp_path: Path) -> None:
     from jarvis.mail.attachments import read_attachment
 
     file = tmp_path / "attachment.txt"
     file.write_bytes(b"exact test data")
     assert await read_attachment(str(file)) == b"exact test data"
-    alias = tmp_path / "alias.txt"
-    alias.symlink_to(file)
-    with pytest.raises(MailFailure):
-        await read_attachment(str(alias))
     file.write_bytes(b"x" * 32769)
     with pytest.raises(MailFailure):
         await read_attachment(str(file))
@@ -361,7 +396,7 @@ async def test_planner_requires_current_account_and_exact_recipient(
 def test_msal_oauth_lifecycle_with_synthetic_library(monkeypatch: pytest.MonkeyPatch) -> None:
     import msal  # type: ignore[import-untyped]
 
-    from jarvis.mail.oauth_helper import SCOPES, authenticate
+    from jarvis.mail.oauth_helper import SURFACES, authenticate
 
     calls: list[str] = []
 
@@ -371,27 +406,74 @@ def test_msal_oauth_lifecycle_with_synthetic_library(monkeypatch: pytest.MonkeyP
             assert kwargs["enable_broker_on_windows"] is False
 
         def acquire_token_interactive(self, **kwargs: Any) -> dict[str, str]:
-            assert kwargs["scopes"] == SCOPES and kwargs["prompt"] == "select_account"
-            calls.append("interactive")
+            if kwargs.get("prompt") == "select_account":
+                # Signing in: the person picks the account, and it is the mailbox's scopes.
+                assert kwargs["scopes"] == SURFACES["mail"]
+                calls.append("interactive")
+            else:
+                # One more surface for the same person, hinted so no other identity signs.
+                assert kwargs["scopes"] == SURFACES["teams"]
+                assert kwargs["login_hint"] == "owner@example.test"
+                calls.append("consent")
             return {"access_token": "synthetic-noncredential"}
 
         def acquire_token_silent(self, scopes: list[str], account: object) -> dict[str, str]:
-            calls.append("silent")
+            calls.append("silent " + scopes[-1])
             return {"access_token": "synthetic-noncredential"}
 
         def get_accounts(self) -> list[dict[str, str]]:
-            return [{"home_account_id": "fixture-home"}]
+            return [{"home_account_id": "fixture-home", "username": "owner@example.test"}]
 
     monkeypatch.setattr(msal, "PublicClientApplication", App)
     store = CacheStore(MemoryKeyring())
     client = "00000000-0000-0000-0000-000000000001"
     assert authenticate("connect", client, "", store)["home_id"] == "fixture-home"
     assert authenticate("silent", client, "fixture-home", store)["home_id"] == "fixture-home"
+    teams = authenticate("consent", client, "fixture-home", store, surface="teams")
+    assert teams["home_id"] == "fixture-home"
+    assert authenticate("silent", client, "fixture-home", store, surface="teams")
     with pytest.raises(ValueError):
         authenticate("silent", client, "changed-home", store)
+    # A surface is added to a sign-in and can never start one: `connect` empties the token
+    # cache first, so allowing it here would cost the owner their mailbox to ask for Teams.
+    with pytest.raises(ValueError):
+        authenticate("connect", client, "", store, surface="teams")
+    with pytest.raises(ValueError):
+        authenticate("consent", client, "fixture-home", store, surface="everything")
     assert authenticate("disconnect", "", "", store) == {}
     assert not store.load()
-    assert calls == ["interactive", "silent"]
+    assert calls == [
+        "interactive",
+        "silent " + SURFACES["mail"][-1],
+        "consent",
+        "silent " + SURFACES["teams"][-1],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_another_surface_rides_on_the_same_sign_in() -> None:
+    credentials, graph = FakeCredentials(), FakeGraph()
+    session = MailSession(credentials, graph)
+    context = ExecutionContext(Event())
+    account = await session.connect("00000000-0000-0000-0000-000000000001", context)
+
+    await session.surface_token(account, "teams", context)
+    assert credentials.surfaces[-1] == "teams"
+    # Mail keeps asking for mail, whatever else was consented on the same account.
+    await session.token(account, context)
+    assert credentials.surfaces[-1] == "mail"
+    await session.consent(account, "teams", context)
+    assert credentials.calls[-1] == "consent"
+
+    # A surface nobody consented to fails; the mailbox goes on working.
+    credentials.refused.add("teams")
+    with pytest.raises(MailFailure):
+        await session.surface_token(account, "teams", context)
+    assert await session.token(account, context)
+
+    session.detach()
+    with pytest.raises(MailFailure):
+        await session.consent(account, "teams", context)
 
 
 def test_oauth_transport_blocks_non_microsoft_authorities() -> None:

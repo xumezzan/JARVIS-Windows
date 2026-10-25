@@ -1,36 +1,62 @@
-"""Real Qt gestures with deterministic audio; planner effects still require exact UI approval."""
+"""Real Qt gestures with deterministic audio; planner effects still require exact approval."""
 
+import json
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from pytestqt.qtbot import QtBot
 from tests.unit.test_planner import MESSAGE, Scripted
-from tests.voice_support import VoiceFixture
+from tests.voice_support import VoiceFixture, WakeFixture
 
 from jarvis.config import AppConfig
 from jarvis.core.planner.contracts import Proposal
 from jarvis.core.planner.offline import call
+from jarvis.observability.audit import AuditLog
+from jarvis.permissions.approvals import Action, ApprovalStore, Channel
+from jarvis.permissions.policies import Mode, Risk
+from jarvis.ui.approval_dialog import ApprovalDialog
 from jarvis.ui.planner_window import PlannerWindow
 from jarvis.ui.voice_panel import HoldButton, VoicePanel
 from jarvis.ui.voice_worker import VoiceWorker
+from jarvis.voice.approval import Confirmation
+from jarvis.voice.contracts import ERROR_TEXT
+
+# How long the interface is given to get somewhere. pytest-qt's own default is five
+# seconds, which is fine on a developer's machine and a coin flip on a shared CI runner:
+# these waits start a window, a worker thread and a planner before the thing they watch
+# for can appear. Two of them failed that way on two runs in a row, and a suite that fails
+# at random teaches people to ignore red, which is worse than a wait being slow.
+#
+# It weakens nothing. Every wait here watches for something that must happen; none proves
+# an absence by timing out. A genuine hang still fails, ten seconds later.
+PATIENCE = 15000
 
 
-def make_window(qtbot: QtBot, tmp_path: Path, fixture: VoiceFixture) -> PlannerWindow:
-    panel = VoicePanel(recorder=fixture, recognizer=fixture, speaker=fixture)
+def make_window(
+    qtbot: QtBot, tmp_path: Path, fixture: VoiceFixture, wake: WakeFixture | None = None
+) -> PlannerWindow:
+    panel = VoicePanel(
+        recorder=fixture, recognizer=fixture, speaker=fixture, wake=wake or WakeFixture()
+    )
     window = PlannerWindow(AppConfig(tmp_path), voice_panel=panel)
     qtbot.addWidget(window)
     window.show()
+    # The memory panel reads its store on the next turn and holds the run button until it
+    # is done. Waiting on "no worker is running" would answer True before the read has
+    # even started, so the wait is on the read itself having happened.
+    qtbot.waitUntil(lambda: window.memory.profile_read, timeout=PATIENCE)
     return window
 
 
 def record(qtbot: QtBot, panel: VoicePanel, button: HoldButton | None = None) -> None:
     hold = button or panel.hold
     QTest.mousePress(hold, Qt.MouseButton.LeftButton)
-    qtbot.waitUntil(lambda: "Идёт запись" in panel.status.text())
+    qtbot.waitUntil(lambda: "Идёт запись" in panel.status.text(), timeout=PATIENCE)
     QTest.mouseRelease(hold, Qt.MouseButton.LeftButton)
-    qtbot.waitUntil(lambda: panel.worker is None)
+    qtbot.waitUntil(lambda: panel.worker is None, timeout=PATIENCE)
 
 
 def test_installed_model_path_is_prefilled_without_capture(
@@ -63,7 +89,10 @@ def test_review_edit_and_explicit_submission(qtbot: QtBot, tmp_path: Path) -> No
         assert window.command.toPlainText() == fixture.text
         assert "неуверенное" in window.voice.status.text()
         window.command.setPlainText("проверь систему дважды")
-        with qtbot.waitSignal(window.task_finished) as result:
+        # Sampling the button once raced with the panels still settling, and a loaded
+        # machine can take longer than the default wait to finish two simulated steps.
+        qtbot.waitUntil(window.run_button.isEnabled, timeout=PATIENCE)
+        with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
             QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
         assert result.args == ["simulated"]
         assert window.output.toPlainText().count("local.check:") == 2
@@ -89,18 +118,18 @@ def test_cancel_every_audio_phase_no_stale_result(
             window.voice.speech_enabled.setChecked(True)
             window.command.setPlainText("проверь систему")
             window.start()
-            qtbot.waitUntil(fixture.speaking.is_set)
+            qtbot.waitUntil(fixture.speaking.is_set, timeout=PATIENCE)
         else:
             QTest.mousePress(window.voice.hold, Qt.MouseButton.LeftButton)
-            qtbot.waitUntil(fixture.recording.is_set)
+            qtbot.waitUntil(fixture.recording.is_set, timeout=PATIENCE)
             if phase == "transcribing":
                 QTest.mouseRelease(window.voice.hold, Qt.MouseButton.LeftButton)
-                qtbot.waitUntil(fixture.recognizing.is_set)
+                qtbot.waitUntil(fixture.recognizing.is_set, timeout=PATIENCE)
         if close:
             QTest.keyClick(window, Qt.Key.Key_Escape)
         else:
             QTest.mouseClick(window.voice.stop_button, Qt.MouseButton.LeftButton)
-        qtbot.waitUntil(lambda: window.voice.worker is None)
+        qtbot.waitUntil(lambda: window.voice.worker is None, timeout=PATIENCE)
         assert window.worker is None
         assert not window.voice.deadline.isActive()
         if phase != "speaking":
@@ -132,7 +161,8 @@ def test_voice_cancel_pending_planner(qtbot: QtBot, tmp_path: Path, phase: str) 
         hold = panel.hold
         if phase != "provider":
             qtbot.waitUntil(
-                lambda: window.approval_dialog is not None or window.question_dialog is not None
+                lambda: window.approval_dialog is not None or window.question_dialog is not None,
+                timeout=PATIENCE,
             )
             dialog = window.approval_dialog or window.question_dialog
             assert dialog is not None
@@ -161,7 +191,7 @@ def test_speech_cannot_approve_or_replace_running_command(qtbot: QtBot, tmp_path
         window.simulation.setChecked(False)
         window.command.setPlainText("исходная команда")
         window.start()
-        qtbot.waitUntil(lambda: window.approval_dialog is not None)
+        qtbot.waitUntil(lambda: window.approval_dialog is not None, timeout=PATIENCE)
         dialog = window.approval_dialog
         assert dialog is not None
         hold = dialog.findChild(HoldButton)
@@ -184,13 +214,13 @@ def test_no_tts_microphone_feedback(qtbot: QtBot, tmp_path: Path) -> None:
         window.voice.speech_enabled.setChecked(True)
         window.command.setPlainText("проверь систему")
         window.start()
-        qtbot.waitUntil(fixture.speaking.is_set)
+        qtbot.waitUntil(fixture.speaking.is_set, timeout=PATIENCE)
         QTest.mousePress(window.voice.hold, Qt.MouseButton.LeftButton)
         QTest.mouseRelease(window.voice.hold, Qt.MouseButton.LeftButton)
         assert fixture.captures == 0 and not window.run_button.isEnabled()
-        assert "Симуляция" in fixture.spoken[0]
+        assert "симуляция" in fixture.spoken[0]
         window.stop()
-        qtbot.waitUntil(lambda: window.voice.worker is None)
+        qtbot.waitUntil(lambda: window.voice.worker is None, timeout=PATIENCE)
     finally:
         window.shutdown()
 
@@ -202,7 +232,10 @@ def test_device_errors_allow_text_fallback(qtbot: QtBot, tmp_path: Path, error: 
     window = make_window(qtbot, tmp_path, fixture)
     try:
         record(qtbot, window.voice)
-        assert window.worker is None and window.run_button.isEnabled()
+        assert window.worker is None
+        # Typing stays available after a device failure; other panels of the window may
+        # still be settling, so wait for the button rather than sampling it once.
+        qtbot.waitUntil(window.run_button.isEnabled, timeout=PATIENCE)
         assert fixture.record_closed.is_set()
         window.command.setPlainText("проверь систему")
         with qtbot.waitSignal(window.task_finished):
@@ -216,7 +249,7 @@ def test_voice_lifetime_expires_review(qtbot: QtBot, tmp_path: Path) -> None:
     try:
         record(qtbot, window.voice)
         window.voice.deadline.start(20)
-        qtbot.waitUntil(lambda: not window.command.toPlainText())
+        qtbot.waitUntil(lambda: not window.command.toPlainText(), timeout=PATIENCE)
         assert window.worker is None
     finally:
         window.shutdown()
@@ -243,71 +276,332 @@ def test_escape_in_modal_cancels_voice_and_plan(qtbot: QtBot, tmp_path: Path) ->
     try:
         window.command.setPlainText("команда")
         window.start()
-        qtbot.waitUntil(lambda: window.approval_dialog is not None)
+        qtbot.waitUntil(lambda: window.approval_dialog is not None, timeout=PATIENCE)
         dialog = window.approval_dialog
         assert dialog is not None
         hold = dialog.findChild(HoldButton)
         assert hold is not None
         QTest.mousePress(hold, Qt.MouseButton.LeftButton)
-        qtbot.waitUntil(fixture.recording.is_set)
+        qtbot.waitUntil(fixture.recording.is_set, timeout=PATIENCE)
         with qtbot.waitSignal(window.task_finished) as result:
             QTest.keyClick(dialog, Qt.Key.Key_Escape)
-        qtbot.waitUntil(lambda: panel.worker is None)
+        qtbot.waitUntil(lambda: panel.worker is None, timeout=PATIENCE)
         assert result.args == ["cancelled"] and fixture.record_closed.is_set()
         assert window.outbox.count == 0 and not window.voice.deadline.isActive()
     finally:
         window.shutdown()
 
 
-@pytest.mark.parametrize(
-    "confidence,enabled,started", [(0.75, True, True), (0.749, True, False), (0.99, False, False)]
-)
-def test_optional_autostart_keeps_manual_review_below_threshold(
-    qtbot: QtBot,
-    tmp_path: Path,
-    confidence: float,
-    enabled: bool,
-    started: bool,
-) -> None:
-    fixture = VoiceFixture("проверь систему", confidence=confidence)
-    window = make_window(qtbot, tmp_path, fixture)
+def test_the_room_is_not_recorded_until_the_name_is_heard(qtbot: QtBot, tmp_path: Path) -> None:
+    fixture = VoiceFixture(text="сегодня дождь")
+    wake = WakeFixture()
+    window = make_window(qtbot, tmp_path, fixture, wake)
+    panel = window.voice
     try:
-        qtbot.waitUntil(lambda: window.memory.available and window.memory.worker is None)
-        window.voice.auto_start.setChecked(enabled)
-        record(qtbot, window.voice)
-        qtbot.waitUntil(lambda: window.worker is None and window.voice.worker is None)
-        assert bool(window.output.toPlainText()) == started, (
-            window.status.text(),
-            window.voice.status.text(),
-            window.command.toPlainText(),
-        )
-        assert fixture.spoken == (["Принял, выполняю"] if started else [])
-        assert window.command.toPlainText() == fixture.text
+        assert not panel.hands_free and panel.worker is None  # Never listening by default.
+        panel.set_hands_free(True)
+        qtbot.waitUntil(lambda: wake.cycles == 1, timeout=PATIENCE)
+        qtbot.waitUntil(lambda: "Жду обращения" in panel.indicator.text(), timeout=PATIENCE)
+        # A cycle that heard nothing of note arms again and records nothing at all.
+        wake.silence.set()
+        qtbot.waitUntil(lambda: wake.cycles == 2, timeout=PATIENCE)
+        wake.silence.clear()
+        assert fixture.captures == 0 and window.command.toPlainText() == ""
+        # The name was heard, so the phrase itself is recorded - and need not repeat it.
+        wake.heard.set()
+        qtbot.waitUntil(lambda: fixture.listens == 1, timeout=PATIENCE)
+        wake.heard.clear()
+        qtbot.waitUntil(lambda: "Идёт запись" in panel.indicator.text(), timeout=PATIENCE)
+        fixture.speech_ends.set()
+        qtbot.waitUntil(lambda: window.command.toPlainText() == "сегодня дождь", timeout=PATIENCE)
+        fixture.speech_ends.clear()
+        panel.set_hands_free(False)
+        qtbot.waitUntil(lambda: panel.worker is None, timeout=PATIENCE)
+        cycles, captures = wake.cycles, fixture.captures
+        qtbot.wait(400)
+        # Switching off really stops both the listener and the microphone.
+        assert (wake.cycles, fixture.captures) == (cycles, captures)
+        assert not panel.armed and panel.indicator.text().startswith("○")
     finally:
         window.shutdown()
 
 
-def test_autostart_still_waits_for_exact_action_approval(qtbot: QtBot, tmp_path: Path) -> None:
-    fixture = VoiceFixture("отправь сообщение")
-    panel = VoicePanel(recorder=fixture, recognizer=fixture, speaker=fixture)
+def test_a_named_command_still_drops_the_name(qtbot: QtBot, tmp_path: Path) -> None:
+    fixture = VoiceFixture(text="джарвис проверь систему")
+    wake = WakeFixture()
+    window = make_window(qtbot, tmp_path, fixture, wake)
+    panel = window.voice
+    try:
+        panel.set_hands_free(True)
+        qtbot.waitUntil(lambda: wake.cycles == 1, timeout=PATIENCE)
+        wake.heard.set()
+        qtbot.waitUntil(lambda: fixture.listens == 1, timeout=PATIENCE)
+        wake.heard.clear()
+        fixture.speech_ends.set()
+        qtbot.waitUntil(lambda: window.command.toPlainText() == "проверь систему", timeout=PATIENCE)
+    finally:
+        window.shutdown()
+
+
+def test_a_listener_that_cannot_run_switches_standing_listening_off(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    fixture = VoiceFixture()
+    wake = WakeFixture()
+    wake.error = "device"
+    window = make_window(qtbot, tmp_path, fixture, wake)
+    panel = window.voice
+    try:
+        panel.set_hands_free(True)
+        wake.silence.set()
+        qtbot.waitUntil(lambda: not panel.hands_free, timeout=PATIENCE)
+        assert ERROR_TEXT["device"] in panel.status.text()
+        cycles, captures = wake.cycles, fixture.captures
+        qtbot.wait(400)
+        # A listener that failed never falls back to recording the room instead.
+        assert (wake.cycles, fixture.captures) == (cycles, captures) and captures == 0
+        assert panel.indicator.text().startswith("○")
+    finally:
+        window.shutdown()
+
+
+def test_stopping_while_armed_leaves_nothing_listening(qtbot: QtBot, tmp_path: Path) -> None:
+    fixture = VoiceFixture()
+    wake = WakeFixture()
+    window = make_window(qtbot, tmp_path, fixture, wake)
+    panel = window.voice
+    try:
+        panel.set_hands_free(True)
+        qtbot.waitUntil(lambda: wake.cycles == 1, timeout=PATIENCE)
+        assert wake.armed.is_set()
+        panel.cancel()
+        qtbot.waitUntil(lambda: panel.worker is None, timeout=PATIENCE)
+        assert not panel.armed and panel.indicator.text().startswith("○")
+        assert fixture.captures == 0
+    finally:
+        window.shutdown()
+
+
+def awaiting_approval(
+    qtbot: QtBot,
+    tmp_path: Path,
+    fixture: VoiceFixture,
+    *,
+    subject: str = "Тест разрешений",
+    hands_free: bool = False,
+    wake: WakeFixture | None = None,
+) -> PlannerWindow:
+    """One real CONFIRM step of a running plan, stopped at its confirmation."""
+    listener = wake or WakeFixture()
+    panel = VoicePanel(recorder=fixture, recognizer=fixture, speaker=fixture, wake=listener)
     window = PlannerWindow(
         AppConfig(tmp_path),
         voice_panel=panel,
-        provider=Scripted([call("local.append_message", MESSAGE)]),
+        provider=Scripted([call("local.append_message", MESSAGE | {"subject": subject})]),
     )
     qtbot.addWidget(window)
     window.show()
+    # The memory panel reads its store on the next turn; starting before that read has
+    # happened means `start` refuses silently and the confirmation never appears.
+    qtbot.waitUntil(lambda: window.memory.profile_read, timeout=PATIENCE)
+    window.simulation.setChecked(False)
+    if hands_free:
+        # The command itself arrives by voice, the way it does with standing capture on.
+        spoken, fixture.text = fixture.text, "джарвис команда"
+        panel.set_hands_free(True)
+        qtbot.waitUntil(lambda: listener.cycles == 1, timeout=PATIENCE)
+        listener.heard.set()
+        qtbot.waitUntil(lambda: fixture.listens == 1, timeout=PATIENCE)
+        listener.heard.clear()
+        fixture.speech_ends.set()
+        qtbot.waitUntil(lambda: window.command.toPlainText() == "команда", timeout=PATIENCE)
+        fixture.speech_ends.clear()
+        fixture.text = spoken
+        # The transcript appears before the voice worker has finished with itself, and
+        # `start` refuses while one is still running - silently, which is what made this
+        # look like a slow machine rather than a race.
+        qtbot.waitUntil(lambda: panel.worker is None, timeout=PATIENCE)
+    else:
+        window.command.setPlainText("команда")
+    window.start()
+    qtbot.waitUntil(lambda: window.approval_dialog is not None, timeout=PATIENCE)
+    return window
+
+
+def approvals(window: PlannerWindow) -> list[str]:
+    records = [json.loads(record) for record in window.audit.recent()]
+    return [record["actor"] for record in records if record["event"] == "approved"]
+
+
+def test_the_spoken_detail_approves_the_exact_action(qtbot: QtBot, tmp_path: Path) -> None:
+    fixture = VoiceFixture("разрешений")
+    window = awaiting_approval(qtbot, tmp_path, fixture)
     try:
-        qtbot.waitUntil(lambda: window.memory.available and window.memory.worker is None)
-        window.voice.auto_start.setChecked(True)
-        window.cloud_consent.setChecked(True)
-        window.simulation.setChecked(False)
-        record(qtbot, panel)
-        qtbot.waitUntil(lambda: window.approval_dialog is not None)
-        assert window.outbox.count == 0
-        assert not window.cloud_consent.isChecked()
-        window.stop()
-        qtbot.waitUntil(lambda: window.worker is None)
-        assert window.outbox.count == 0
+        dialog = window.approval_dialog
+        assert dialog is not None and dialog.detail is not None
+        assert dialog.detail.word.casefold() == "разрешений"
+        # The confirmation appearing on screen never opens the microphone by itself.
+        assert fixture.captures == 0 and dialog.listen_button is not None
+        fixture.speech_ends.set()
+        with qtbot.waitSignal(window.task_finished) as result:
+            QTest.mouseClick(dialog.listen_button, Qt.MouseButton.LeftButton)
+        assert result.args == ["finished"] and window.outbox.count == 1
+        assert dialog.token is not None and dialog.token.channel is Channel.VOICE
+        assert approvals(window) == ["user_voice"]
+    finally:
+        window.shutdown()
+
+
+def test_standing_capture_arms_the_confirmation_and_frees_the_microphone(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    fixture = VoiceFixture("разрешений")
+    window = awaiting_approval(qtbot, tmp_path, fixture, hands_free=True)
+    try:
+        dialog = window.approval_dialog
+        assert dialog is not None
+        # Standing capture is already the owner's visible choice, so it asks without a press.
+        qtbot.waitUntil(lambda: window.voice.confirming is not None, timeout=PATIENCE)
+        with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
+            fixture.speech_ends.set()
+        assert result.args == ["finished"] and window.outbox.count == 1
+        assert dialog.token is not None and dialog.token.channel is Channel.VOICE
+    finally:
+        window.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("text", "confidence", "verdict"),
+    [
+        ("да, подтверждаю", 0.99, Confirmation.MISMATCH),
+        ("договор", 0.99, Confirmation.MISMATCH),
+        ("разрешений", 0.3, Confirmation.UNCERTAIN),
+    ],
+)
+def test_nothing_but_the_detail_reaches_the_authority(
+    qtbot: QtBot, tmp_path: Path, text: str, confidence: float, verdict: str
+) -> None:
+    fixture = VoiceFixture(text, confidence=confidence)
+    window = awaiting_approval(qtbot, tmp_path, fixture)
+    try:
+        dialog = window.approval_dialog
+        assert dialog is not None and dialog.listen_button is not None
+        fixture.speech_ends.set()
+        with qtbot.waitSignal(window.voice.confirmation) as heard:
+            QTest.mouseClick(dialog.listen_button, Qt.MouseButton.LeftButton)
+        assert heard.args == [verdict]
+        assert dialog.token is None and window.outbox.count == 0
+        assert window.approval_dialog is dialog and not approvals(window)
+        # The confirmation stays open, and the button it never replaced still works.
+        assert dialog.listen_button.isEnabled()
+        with qtbot.waitSignal(window.task_finished) as result:
+            QTest.mouseClick(dialog.approve_button, Qt.MouseButton.LeftButton)
+        assert result.args == ["finished"] and window.outbox.count == 1
+        assert approvals(window) == ["user_ui"]
+    finally:
+        window.shutdown()
+
+
+def test_a_spoken_refusal_confirms_nothing_and_leaves_no_effect(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    fixture = VoiceFixture("отмена")
+    window = awaiting_approval(qtbot, tmp_path, fixture)
+    try:
+        dialog = window.approval_dialog
+        assert dialog is not None and dialog.listen_button is not None
+        fixture.speech_ends.set()
+        with qtbot.waitSignal(window.task_finished) as result:
+            QTest.mouseClick(dialog.listen_button, Qt.MouseButton.LeftButton)
+        assert result.args == ["error"] and window.outbox.count == 0
+        assert dialog.token is None and not approvals(window)
+    finally:
+        window.shutdown()
+
+
+def test_the_detail_is_spoken_before_the_microphone_opens(qtbot: QtBot, tmp_path: Path) -> None:
+    fixture = VoiceFixture("разрешений")
+    window = awaiting_approval(qtbot, tmp_path, fixture)
+    try:
+        dialog = window.approval_dialog
+        assert dialog is not None and dialog.listen_button is not None
+        window.voice.speech_enabled.setChecked(True)
+        fixture.speech_ends.set()
+        with qtbot.waitSignal(window.task_finished):
+            QTest.mouseClick(dialog.listen_button, Qt.MouseButton.LeftButton)
+        # What is said is the application's own description plus the word that is on screen.
+        assert "разрешений" in fixture.spoken[0] and "Тестовое сообщение" in fixture.spoken[0]
+        assert window.outbox.count == 1
+    finally:
+        window.shutdown()
+
+
+def test_an_action_without_a_speakable_detail_keeps_only_its_button(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    fixture = VoiceFixture("разрешений")
+    window = awaiting_approval(qtbot, tmp_path, fixture, subject="")
+    try:
+        dialog = window.approval_dialog
+        assert dialog is not None
+        assert dialog.detail is None and dialog.listen_button is None and dialog.voice is None
+        assert fixture.captures == 0
+        with qtbot.waitSignal(window.task_finished) as result:
+            QTest.mouseClick(dialog.approve_button, Qt.MouseButton.LeftButton)
+        assert result.args == ["finished"] and approvals(window) == ["user_ui"]
+    finally:
+        window.shutdown()
+
+
+def test_an_expired_confirmation_cannot_be_spoken_into_a_token(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    clock = [0.0]
+    store = ApprovalStore(clock=lambda: clock[0])
+    audit = AuditLog(tmp_path / "audit.sqlite3")
+    authority = store.take_authority(audit.approved)
+    action = Action(
+        uuid4(),
+        "files.recycle",
+        json.dumps({"path": "D:/Документы/смета.txt"}, ensure_ascii=False),
+        Risk.CONFIRM,
+        Mode.EXECUTE,
+    )
+    store.request(action)
+    fixture = VoiceFixture("смета")
+    panel = VoicePanel(recorder=fixture, recognizer=fixture, speaker=fixture)
+    dialog = ApprovalDialog(action, authority, voice=panel)
+    qtbot.addWidget(panel)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    try:
+        assert dialog.detail is not None and dialog.listen_button is not None
+        clock[0] = 61  # The window this snapshot was prepared in has passed.
+        fixture.speech_ends.set()
+        with qtbot.waitSignal(panel.confirmation) as heard:
+            QTest.mouseClick(dialog.listen_button, Qt.MouseButton.LeftButton)
+        # The word was the right one; the snapshot it belonged to is gone, so nothing issued.
+        assert heard.args == [Confirmation.CONFIRMED]
+        assert dialog.token is None and "истекло" in dialog.error_label.text()
+        assert not [
+            record for record in audit.recent() if json.loads(record)["event"] == "approved"
+        ]
+    finally:
+        panel.shutdown()
+        dialog.close()
+        audit.close()
+
+
+def test_a_task_in_flight_is_not_interrupted_by_the_listener(qtbot: QtBot, tmp_path: Path) -> None:
+    fixture = VoiceFixture()
+    wake = WakeFixture()
+    window = awaiting_approval(qtbot, tmp_path, fixture, hands_free=True, wake=wake)
+    panel = window.voice
+    try:
+        cycles = wake.cycles
+        qtbot.wait(400)
+        # While a task is running the standing listener stays down; the confirmation owns
+        # the microphone, and a stray "Джарвис" cannot start a second capture underneath it.
+        assert wake.cycles == cycles and not panel.armed
     finally:
         window.shutdown()

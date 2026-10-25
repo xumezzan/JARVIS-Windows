@@ -59,6 +59,10 @@ class WindowsProbe:
                     return WindowsResult()
                 case "open":
                     return WindowsResult(target=target())
+                case "fields":
+                    editor = target().editor
+                    assert editor is not None
+                    return WindowsResult(target=request.target, editors=[editor])
                 case "check_target":
                     if request.text is not None and self.text:
                         raise ToolError("target_changed")

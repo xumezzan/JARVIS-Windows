@@ -193,7 +193,6 @@ def test_snapshot_does_not_restrict_executable(monkeypatch: pytest.MonkeyPatch) 
     process.exe.return_value = "/Applications/Example.exe"
     process.create_time.return_value = 1234.0
     desktop.psutil.Process.return_value = process
-    monkeypatch.setattr(desktop, "app_for", lambda path: None)
     observed = desktop.snapshot(window, include_editor=False)
     assert observed.app == "example" and observed.executable == "/Applications/Example.exe"
 
@@ -479,10 +478,15 @@ def test_nonempty_generic_editor_is_replaced_and_verified(monkeypatch: pytest.Mo
         }
     )
     monkeypatch.setattr(desktop, "resolve", lambda *args, **kwargs: window)
-    monkeypatch.setattr(desktop, "editor", lambda *args: editor)
+    monkeypatch.setattr(desktop, "controls", lambda *args: [editor])
+    monkeypatch.setattr(desktop, "writable", lambda *args: True)
     monkeypatch.setattr(desktop, "editor_target", lambda *args: observed.editor)
-    monkeypatch.setattr(desktop, "read", lambda *args: "new")
-    result = desktop.dispatch(NativeRequest(operation="type", target=observed, text="new"))
+    values = iter(("old", "new"))
+    monkeypatch.setattr(desktop, "read", lambda *args: next(values))
+    monkeypatch.setattr(desktop, "native_handle", lambda *args: 0)
+    result = desktop.dispatch(
+        NativeRequest(operation="type", target=observed, text="new", overwrite=True)
+    )
     editor.iface_value.SetValue.assert_called_once_with("new")
     assert result.text_sha256 == text_digest("new")
     desktop.user32.SendMessageTimeoutW.assert_not_called()
@@ -498,12 +502,14 @@ def test_changed_nonempty_editor_content_is_not_overwritten(
     observed = observed.model_copy(update={"app": "custom", "empty": False, "editor": expected})
     editor = control("Edit")
     monkeypatch.setattr(desktop, "resolve", lambda *args, **kwargs: control("Window"))
-    monkeypatch.setattr(desktop, "editor", lambda *args: editor)
+    monkeypatch.setattr(desktop, "controls", lambda *args: [editor])
+    monkeypatch.setattr(desktop, "writable", lambda *args: True)
     monkeypatch.setattr(
         desktop,
         "editor_target",
         lambda *args: expected.model_copy(update={"content_sha256": text_digest("changed")}),
     )
+    monkeypatch.setattr(desktop, "read", lambda *args: "changed")
     with pytest.raises(ToolError, match="target_changed"):
         desktop.dispatch(NativeRequest(operation="type", target=observed, text="new"))
     editor.iface_value.SetValue.assert_not_called()

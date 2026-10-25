@@ -361,9 +361,10 @@ class _NoMailCredentials:
 
     async def call(
         self,
-        operation: Literal["connect", "silent", "disconnect"],
+        operation: Literal["connect", "silent", "consent", "disconnect"],
         client_id: str,
         home_id: str = "",
+        surface: str = "",
     ) -> NoReturn:
         self.called = True
         raise RuntimeError("offline_check_failed")

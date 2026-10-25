@@ -4,7 +4,7 @@ Per-user repository bootstrap. No elevation, policy changes, credentials or live
 Run from a trusted checkout: & '.\scripts\windows\Install-Jarvis.ps1'
 #>
 [CmdletBinding()]
-param()
+param([ValidatePattern('^[a-f0-9]{40}$')][string]$SourceCommit)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -29,6 +29,7 @@ $jarvisBootstrap = [ordered]@{
     windows_mvp_acceptance = 'pending'
     application_report = 'installation-report.json'
     windows_build = $null
+    source_commit = $SourceCommit
     phases = @(
         [ordered]@{ id = 'host'; name = 'Windows 11 x64 и интерактивный сеанс'; status = 'not_checked'; error_category = 'host_requirements'; remedy = 'Запустите установщик в 64-битном PowerShell в интерактивном сеансе Windows 11 x64.' },
         [ordered]@{ id = 'managed_root_lock'; name = 'Каталог установки и исключительная блокировка'; status = 'not_checked'; error_category = 'installation_path_or_lock'; remedy = 'Закройте другой установщик. Проверьте доступ к каталогу; не удаляйте чужой каталог и не обходите ссылки или системную политику.' },
@@ -46,6 +47,21 @@ function Assert-PlainDirectory([string]$Path) {
         }
         $item = $item.Parent
     }
+}
+
+function Test-Marker([string]$Path) {
+    <#
+    Whether the ownership marker is there. The question is asked more than once on purpose:
+    Test-Path answers False both for "not there" and for "could not look", and a scanner
+    holding the file for a moment is enough to turn an ordinary update into "inspect this
+    directory before setup". The invariant is untouched - a directory without the marker
+    still stops the install - and only a momentary inability to see it is retried.
+    #>
+    foreach ($attempt in 1..3) {
+        if (Test-Path -LiteralPath $Path -PathType Leaf) { return $true }
+        Start-Sleep -Milliseconds 250
+    }
+    return $false
 }
 
 function Assert-PlainEntry([string]$Path) {
@@ -300,7 +316,7 @@ try {
         Assert-PlainDirectory $jarvisRoot
         $marker = Join-Path $jarvisRoot '.jarvis-install'
         Assert-PlainEntry $marker
-        if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
+        if (-not (Test-Marker $marker)) {
             throw 'Existing JarvisInstall directory has no ownership marker. Inspect it before setup.'
         }
     } else {
@@ -397,7 +413,9 @@ try {
     Set-BootstrapPhase 'runtime' 'passed'
     Set-BootstrapPhase 'application_setup' 'running'
     Write-Host 'Preparing Jarvis. First installation needs network and at least 3 GB free.'
-    & $python -I (Join-Path $PSScriptRoot 'install.py') --root $jarvisRoot --run-id $jarvisRunId
+    $installArguments = @('-I', (Join-Path $PSScriptRoot 'install.py'), '--root', $jarvisRoot, '--run-id', $jarvisRunId)
+    if ($SourceCommit) { $installArguments += @('--source-commit', $SourceCommit) }
+    & $python @installArguments
     if ($LASTEXITCODE -eq 130) {
         $jarvisCancelled = $true
         throw 'Application setup was cancelled. Rerun to continue; user data is preserved.'
@@ -406,19 +424,32 @@ try {
     Set-BootstrapPhase 'application_setup' 'passed'
     Set-BootstrapPhase 'launcher_shortcut' 'running'
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Launch-Jarvis.pyw') -Destination $jarvisRoot -Force
+    # The icon lives beside the launcher rather than inside a slot: slots are retired on
+    # update, and a shortcut pointing into a retired one loses its picture.
+    Copy-Item -LiteralPath (Join-Path $repository 'src\jarvis\ui\assets\jarvis.ico') -Destination $jarvisRoot -Force
     $shell = New-Object -ComObject WScript.Shell
-    $programs = [Environment]::GetFolderPath('Programs')
-    $shortcut = $shell.CreateShortcut((Join-Path $programs 'Jarvis.lnk'))
-    $shortcut.TargetPath = Join-Path (Split-Path -Parent $python) 'pythonw.exe'
-    $shortcut.Arguments = '-I "' + (Join-Path $jarvisRoot 'Launch-Jarvis.pyw') + '"'
-    $shortcut.WorkingDirectory = $jarvisRoot
-    $shortcut.Description = 'Jarvis - local assistant'
-    $shortcut.Save()
+    # Both places, and written the same way from one description, so they cannot drift
+    # apart on an update. The Start menu is where Windows expects an application to be;
+    # the desktop is where the owner asked for it, because searching the Start menu for
+    # something you open every day is a small tax paid every day.
+    $target = Join-Path (Split-Path -Parent $python) 'pythonw.exe'
+    $arguments = '-I "' + (Join-Path $jarvisRoot 'Launch-Jarvis.pyw') + '"'
+    $icon = (Join-Path $jarvisRoot 'jarvis.ico') + ',0'
+    foreach ($folder in @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Desktop'))) {
+        if (-not $folder -or -not (Test-Path -LiteralPath $folder)) { continue }
+        $shortcut = $shell.CreateShortcut((Join-Path $folder 'Jarvis.lnk'))
+        $shortcut.TargetPath = $target
+        $shortcut.Arguments = $arguments
+        $shortcut.WorkingDirectory = $jarvisRoot
+        $shortcut.Description = 'Jarvis - local assistant'
+        $shortcut.IconLocation = $icon
+        $shortcut.Save()
+    }
     Set-BootstrapPhase 'launcher_shortcut' 'passed'
     $jarvisBootstrap.status = 'passed'
     $jarvisBootstrap.finished_at_utc = [DateTime]::UtcNow.ToString('o')
     Write-BootstrapReport
-    Write-Host 'Jarvis window observed; Start menu shortcut created. Native MVP acceptance remains pending.'
+    Write-Host 'Jarvis window observed; Start menu and desktop shortcuts created. Native MVP acceptance remains pending.'
 } catch {
     $outcome = 'failed'
     if ($jarvisCancelled -or $_.Exception -is [System.Management.Automation.PipelineStoppedException]) { $outcome = 'cancelled' }

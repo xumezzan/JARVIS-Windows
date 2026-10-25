@@ -17,10 +17,10 @@ class UiState(StrEnum):
 STATE_LABELS: dict[UiState, str] = {
     UiState.IDLE: "Готов к вводу",
     UiState.LISTENING: "Запись речи",
-    UiState.THINKING: "Подготовка демонстрации",
+    UiState.THINKING: "Планирование шага",
     UiState.AWAITING_APPROVAL: "Ожидание подтверждения",
-    UiState.EXECUTING: "Демонстрация выполняется",
-    UiState.SUCCESS: "Демонстрация завершена",
-    UiState.ERROR: "Ошибка демонстрации",
-    UiState.CANCELLED: "Демонстрация отменена",
+    UiState.EXECUTING: "Выполнение команды",
+    UiState.SUCCESS: "Команда завершена",
+    UiState.ERROR: "Ошибка выполнения",
+    UiState.CANCELLED: "Выполнение отменено",
 }

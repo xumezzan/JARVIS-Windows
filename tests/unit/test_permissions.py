@@ -11,7 +11,13 @@ from uuid import uuid4
 import pytest
 
 from jarvis.observability.audit import AuditEvent, AuditKind, AuditLog, ErrorCode
-from jarvis.permissions.approvals import Action, ApprovalAuthority, ApprovalStore, ApprovalToken
+from jarvis.permissions.approvals import (
+    Action,
+    ApprovalAuthority,
+    ApprovalStore,
+    ApprovalToken,
+    Channel,
+)
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Mode, Risk, Status
 from jarvis.tools.base import ExecutionContext, ToolModel, ToolSpec
@@ -157,8 +163,10 @@ async def test_risk_policy(tmp_path: Path, risk: Risk, mode: Mode) -> None:
     prepared = engine.prepare("test.probe", {}, mode)
     result = await engine.execute(prepared) if isinstance(prepared, Action) else prepared
     expected = Status.SIMULATED if mode is Mode.SIMULATION else Status.SUCCESS
-    assert result.status is (expected if risk is Risk.SAFE else Status.DENIED)
-    assert probe.calls == (1 if risk is Risk.SAFE and mode is Mode.EXECUTE else 0)
+    # Without a token only the two levels that need none run; everything else is denied.
+    unattended = risk in (Risk.SAFE, Risk.ROUTINE)
+    assert result.status is (expected if unattended else Status.DENIED)
+    assert probe.calls == (1 if unattended and mode is Mode.EXECUTE else 0)
     assert probe.checks == probe.calls
     assert len(audit.recent()) >= 2
     audit.close()
@@ -417,6 +425,38 @@ def test_registry_discovery_duplicates_and_sealing(tmp_path: Path) -> None:
         registry.register(replace(probe.spec(), name="test.another"))
 
 
+@pytest.mark.asyncio
+# Ids are the member names: a parametrisation id of "voice" would read as the opt-in
+# microphone marker and skip this test.
+@pytest.mark.parametrize("channel", list(Channel), ids=[channel.name for channel in Channel])
+async def test_the_channel_is_recorded_and_changes_nothing_else(
+    harness: Harness, channel: Channel
+) -> None:
+    action = harness.prepare()
+    token = harness.authority.approve(action, channel)
+    approvals = [
+        json.loads(record)
+        for record in harness.audit.recent()
+        if json.loads(record)["event"] == "approved"
+    ]
+    assert [record["actor"] for record in approvals] == ["user_" + channel.value]
+    assert token.channel is channel
+    result = await harness.engine.execute(action, token)
+    # A spoken approval is the same capability: exact, expiring and used exactly once.
+    assert result.status is Status.SUCCESS and harness.probe.calls == 1
+    assert not harness.store.is_valid(token, action)
+    assert (await harness.engine.execute(harness.prepare(), token)).status is Status.DENIED
+
+
+def test_an_unknown_channel_issues_nothing(harness: Harness) -> None:
+    action = harness.prepare()
+    with pytest.raises(ValueError):
+        harness.authority.approve(action, "voice")  # type: ignore[arg-type]
+    assert not [
+        record for record in harness.audit.recent() if json.loads(record)["event"] == "approved"
+    ]
+
+
 def test_issuer_is_not_a_registered_tool_and_cannot_be_reclaimed(harness: Harness) -> None:
     with pytest.raises(ValueError):
         harness.store.take_authority(harness.audit.approved)
@@ -523,4 +563,32 @@ async def test_wrong_result_type_is_not_success(tmp_path: Path) -> None:
     result = await engine.execute(action)
     assert result.status is Status.ERROR
     assert probe.verifies == 0
+    audit.close()
+
+
+@pytest.mark.asyncio
+async def test_routine_runs_without_a_token_and_is_still_recorded(tmp_path: Path) -> None:
+    """The everyday level skips approval only; it keeps every other guarantee."""
+    audit = AuditLog(tmp_path / "audit.sqlite3")
+    probe = Probe()
+    registry = ToolRegistry()
+    registry.register(probe.spec(Risk.ROUTINE))
+    store = ApprovalStore()
+    authority = store.take_authority(audit.approved)
+    engine = PermissionEngine(registry, store, audit)
+
+    action = engine.prepare("test.probe", {}, Mode.EXECUTE)
+    assert isinstance(action, Action)
+    # No token exists for it, and none can be minted: approval is not merely skipped.
+    with pytest.raises(ValueError):
+        authority.approve(action)
+    assert (await engine.execute(action)).status is Status.SUCCESS
+    assert probe.calls == 1
+
+    # It is prepared and finished in the audit like any other action, under its own name.
+    recorded = "".join(audit.recent())
+    assert "ROUTINE" in recorded
+    # One execution per prepared action still holds without a token to consume.
+    assert (await engine.execute(action)).status is Status.INVALID
+    assert probe.calls == 1
     audit.close()

@@ -19,13 +19,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 def qapp(qapp: QApplication) -> Iterator[QApplication]:
     # Wrap pytest-qt's fixture for the whole QApplication lifetime, as in production.
     # Pure backend runs never request this fixture and do not initialize Qt.
-    from jarvis.ui.garbage_collection import GuiGarbageCollector
+    from jarvis.ui import garbage_collection, workers
 
-    collector = GuiGarbageCollector(qapp)
+    garbage_collection.install()
     try:
         yield qapp
     finally:
-        collector.close()
+        assert workers.drain()
+        garbage_collection.stop()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

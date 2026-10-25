@@ -1,13 +1,10 @@
 """Explicit Outlook setup and composition; only the existing approval dialog grants authority."""
 
-import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from threading import Event
-from uuid import uuid4
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -23,56 +20,27 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from jarvis.mail.credentials import MailFailure
+from jarvis.connectors.microsoft.drive.connector import SURFACE as FILES_SURFACE
+from jarvis.connectors.teams.connector import SURFACE as TEAMS_SURFACE
 from jarvis.mail.models import Account, Attachment, MailResult, Message
 from jarvis.mail.session import MailSession
-from jarvis.observability.audit import AuditEvent, AuditKind, AuditLog, ErrorCode
+from jarvis.observability.audit import AuditLog
 from jarvis.permissions.approvals import Action, ApprovalAuthority
 from jarvis.permissions.engine import Outcome, PermissionEngine
-from jarvis.permissions.policies import Decision, Mode, Risk, Status
+from jarvis.permissions.policies import Mode, Risk, Status
 from jarvis.tools.base import ExecutionContext
+from jarvis.ui import workers
 from jarvis.ui.approval_dialog import ApprovalDialog
+from jarvis.ui.connection_task import AccountWorker as MailWorker
+from jarvis.ui.connection_task import audited
 from jarvis.ui.tool_worker import ToolWorker
 
-
-class MailWorker(QThread):
-    def __init__(self, work: Callable[[ExecutionContext], Awaitable[object]]) -> None:
-        super().__init__()
-        self.work = work
-        self.cancelled = Event()
-        self.result: object = None
-        self.error = ""
-
-    def cancel(self) -> None:
-        self.cancelled.set()
-
-    def run(self) -> None:
-        async def run() -> object:
-            job = asyncio.ensure_future(self.work(ExecutionContext(self.cancelled)))
-
-            async def watch() -> None:
-                while not self.cancelled.is_set():
-                    await asyncio.sleep(0.02)
-
-            watcher = asyncio.create_task(watch())
-            try:
-                done, _ = await asyncio.wait(
-                    (job, watcher), timeout=160, return_when=asyncio.FIRST_COMPLETED
-                )
-                if job in done:
-                    return await job
-                raise MailFailure("mail_cancelled")
-            finally:
-                job.cancel()
-                watcher.cancel()
-                await asyncio.gather(job, watcher, return_exceptions=True)
-
-        try:
-            self.result = asyncio.run(run())
-        except MailFailure as error:
-            self.error = error.code
-        except Exception:
-            self.error = "mail_unavailable"
+# The Microsoft surfaces this window can ask for, beyond the mailbox it signs in.
+SURFACES = ((TEAMS_SURFACE, "Разрешить Teams"), (FILES_SURFACE, "Разрешить OneDrive"))
+DONE = {
+    TEAMS_SURFACE: "Teams разрешён для этого аккаунта: чаты читаются, отправка спрашивает.",
+    FILES_SURFACE: "OneDrive разрешён для этого аккаунта: файлы читаются, запись спрашивает.",
+}
 
 
 class MailPanel(QWidget):
@@ -106,7 +74,9 @@ class MailPanel(QWidget):
             self.note(
                 "Регистрация Microsoft: Mobile and desktop, redirect http://localhost. "
                 "Вход откроется в системном браузере. Пароль вводится только у Microsoft. "
-                "Разрешения: профиль, чтение/запись почты и отправка."
+                "Разрешения: профиль, чтение/запись почты и отправка. Teams и OneDrive — "
+                "отдельные кнопки и отдельные согласия на тот же аккаунт: чаты и файлы "
+                "читаются, отправка и запись спрашивают."
             )
         )
         self.consent = QCheckBox("Разрешаю подключить Outlook с указанными правами")
@@ -118,6 +88,14 @@ class MailPanel(QWidget):
         self.disconnect_button.clicked.connect(self.disconnect_account)
         row.addWidget(self.connect_button)
         row.addWidget(self.disconnect_button)
+        # One button per surface, because one consent per surface is the point: a tenant
+        # that refuses chats must not cost the owner their mailbox or their files.
+        self.surface_buttons: dict[str, QPushButton] = {}
+        for surface, label in SURFACES:
+            button = QPushButton(label)
+            button.clicked.connect(lambda _, name=surface: self.allow_surface(name))
+            self.surface_buttons[surface] = button
+            row.addWidget(button)
         form.addRow(row)
         self.simulation = QCheckBox("Симуляция почтовых инструментов")
         self.simulation.setChecked(True)
@@ -244,57 +222,13 @@ class MailPanel(QWidget):
             return
         self.set_busy(True)
         self.status.setText("Выполняется… Остановить можно кнопкой ниже.")
-
-        async def audited(context: ExecutionContext) -> object:
-            request_id = uuid4()
-            try:
-                self.audit.write(
-                    AuditEvent(
-                        AuditKind.STARTED,
-                        request_id,
-                        "outlook.account",
-                        None,
-                        Mode.EXECUTE,
-                        Decision.ALLOW,
-                        actor="user_ui_connection",
-                    )
-                )
-            except Exception:
-                raise MailFailure("mail_audit") from None
-            status = Status.ERROR
-            try:
-                result = await work(context)
-                status = Status.SUCCESS
-                return result
-            except asyncio.CancelledError:
-                status = Status.CANCELLED
-                raise
-            finally:
-                try:
-                    self.audit.write(
-                        AuditEvent(
-                            AuditKind.FINISHED,
-                            request_id,
-                            "outlook.account",
-                            None,
-                            Mode.EXECUTE,
-                            Decision.ALLOW,
-                            status,
-                            error=ErrorCode.NONE
-                            if status is Status.SUCCESS
-                            else ErrorCode.EXECUTION,
-                            may_have_effects=True,
-                            actor="user_ui_connection",
-                        )
-                    )
-                except Exception:
-                    self.session.detach()
-                    raise MailFailure("mail_audit") from None
-
-        worker = MailWorker(audited if connection else work)
+        # Connecting, consenting and disconnecting are audited the same way wherever the
+        # owner presses them, so the records come from one place rather than from each
+        # screen's own idea of what happened.
+        worker = MailWorker(audited(self.audit, work, self.session.detach) if connection else work)
         self.worker = worker
         worker.finished.connect(self.finished)
-        worker.start()
+        workers.start(worker)
 
     def reset_account(self) -> None:
         self.engine.cancel_all()
@@ -326,6 +260,26 @@ class MailPanel(QWidget):
         self.reset_account()
         self.consent.setChecked(False)
         self.launch(lambda context: self.session.connect(client_id, context), connection=True)
+
+    def allow_surface(self, surface: str) -> None:
+        """One more consent on the account that is already signed in.
+
+        Each surface is asked for separately rather than folded into the Outlook consent: a
+        tenant that refuses chat scopes then costs Jarvis the chats, and the mailbox and the
+        files go on working.
+        """
+        account = self.session.account
+        if self.busy or surface not in self.surface_buttons:
+            return
+        if account is None:
+            self.status.setText("Сначала подключите аккаунт Microsoft, потом выдайте доступ.")
+            return
+
+        async def allow(context: ExecutionContext) -> object:
+            await self.session.consent(account, surface, context)
+            return DONE[surface]
+
+        self.launch(allow, connection=True)
 
     def disconnect_account(self) -> None:
         if self.busy:
@@ -420,7 +374,7 @@ class MailPanel(QWidget):
                 if code == QDialog.DialogCode.Accepted and dialog.token is not None:
                     self.worker = ToolWorker(self.engine, result, dialog.token)
                     self.worker.finished.connect(self.finished)
-                    self.worker.start()
+                    workers.start(self.worker)
                 else:
                     self.engine.cancel(result)
                     self.action = None
@@ -433,7 +387,7 @@ class MailPanel(QWidget):
         else:
             self.worker = ToolWorker(self.engine, result)
             self.worker.finished.connect(self.finished)
-            self.worker.start()
+            workers.start(self.worker)
 
     def stop(self) -> None:
         if not self.busy:

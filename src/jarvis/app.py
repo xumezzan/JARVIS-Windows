@@ -4,26 +4,52 @@ import argparse
 import os
 import sys
 from collections.abc import Sequence
+from contextlib import suppress
 from importlib.metadata import version
 from pathlib import Path
 
 from jarvis.config import load_config
 
 
+def _printable() -> None:
+    """Let the console carry Russian, or show it imperfectly, but never crash on it.
+
+    The description and the messages are Russian, and a Windows console speaks whatever
+    code page its locale gives it. On one that cannot encode Cyrillic, `jarvis --help`
+    died with UnicodeEncodeError before printing anything - found by the first run of the
+    Windows checks, on a machine with an English locale rather than the owner's.
+
+    Isolated mode is the reason it cannot be left to the environment: `python -I -m jarvis`
+    ignores PYTHONUTF8 and PYTHONIOENCODING by design, and that is exactly how the launcher
+    and the installer start this application.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        # A stream that cannot be reconfigured - a pipe someone replaced, a closed handle -
+        # is left as it is. Printing is not worth failing to start over.
+        with suppress(AttributeError, OSError, ValueError):
+            stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Launch the shell; help and version remain usable without initializing Qt."""
+    _printable()
     parser = argparse.ArgumentParser(
         prog="jarvis",
-        description=("Jarvis: local assistant with reviewed tasks. Demo: no command execution."),
+        description="Jarvis: локальный ассистент с типизированными инструментами.",
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {version('jarvis-windows')}"
     )
     parser.add_argument(
-        "--smoke-test", action="store_true", help="Run one GUI demo, close, and report its result."
+        "--smoke-test",
+        action="store_true",
+        help="Run one simulated offline command, close, and report its result.",
     )
     parser.add_argument(
         "--startup-report", type=Path, help="Write a PID-bound visible-window receipt for setup."
+    )
+    parser.add_argument(
+        "--compact", action="store_true", help="Open the compact Qt shell preserved from PR #59."
     )
     args = parser.parse_args(argv)
     try:
@@ -32,12 +58,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Jarvis configuration error: {error}", file=sys.stderr)
         return 2
 
+    if args.compact:
+        if args.startup_report is not None:
+            parser.error("--startup-report uses the default application shell.")
+        from jarvis.ui.compact_window import run_compact
+
+        return run_compact(config, smoke_test=args.smoke_test)
+
     from PySide6.QtCore import QTimer
+    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
     from jarvis.observability.logging import ShellLog
-    from jarvis.ui.garbage_collection import GuiGarbageCollector
+    from jarvis.ui import garbage_collection, workers
     from jarvis.ui.main_window import MainWindow
+    from jarvis.ui.setup_window import first_run
+    from jarvis.ui.theme import ICON
 
     try:
         log = ShellLog(config.data_dir / "logs")
@@ -47,35 +83,62 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    if sys.platform == "win32":
+        import ctypes
+
+        # Without its own identity Windows files the window under the interpreter that
+        # started it: a Python icon in the taskbar, and nothing called Jarvis to find.
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Jarvis.Desktop")
     application = QApplication(["jarvis"])
-    collector = GuiGarbageCollector(application)
+    garbage_collection.install()
     application.setApplicationName("Jarvis")
     application.setOrganizationName("Jarvis")
-    window = MainWindow(config, log)
+    application.setWindowIcon(QIcon(str(ICON)))
+    # Automatic smoke exercises the offline engine, without looking at real credentials.
+    window = MainWindow(config, log, probe_connections=not args.smoke_test)
     application.aboutToQuit.connect(window.shutdown)
     smoke_result = 1
+    # A real command finishes in well under a second, so the smoke run must not close the
+    # window before the startup receipt has been written.
+    receipt_pending = args.startup_report is not None
+    smoke_done = False
 
     def finish_smoke(outcome: str) -> None:
-        nonlocal smoke_result
-        smoke_result = 0 if outcome == "success" else 1
-        print(f"Jarvis GUI smoke: {outcome}")
-        window.close()
+        nonlocal smoke_result, smoke_done
+        smoke_result = 0 if outcome in ("finished", "simulated") else 1
+        verdict = "success" if smoke_result == 0 else "failed"
+        print(f"Jarvis GUI smoke: {verdict} ({outcome})")
+        smoke_done = True
+        if not receipt_pending:
+            window.close()
 
     if args.smoke_test:
         window.task_finished.connect(finish_smoke)
-        window.demo_input.setPlainText("Проверка интерфейса Jarvis")
+        if window.voice is not None:
+            window.voice.speech_enabled.setChecked(False)
+        # Simulation and the offline provider: the smoke run never touches a real adapter.
+        window.run_mode.setCurrentIndex(1)
+        window.provider_mode.setCurrentIndex(0)
+        window.command_input.setPlainText("проверь систему")
         QTimer.singleShot(0, window.submit)
         QTimer.singleShot(config.task_timeout_ms + 2000, window.close)
     window.show()
+    if not args.smoke_test and first_run(config.data_dir):
+        # A new machine has no key, no mailbox and no tokens, and an assistant that can
+        # reach nothing looks exactly like one that is broken. It opens once; after that
+        # it is a button, because a setup screen shown every morning stops being read.
+        QTimer.singleShot(0, window.open_setup)
     if args.startup_report is not None:
         from jarvis.installation.setup import atomic_json
 
         def report_startup() -> None:
+            nonlocal receipt_pending
             try:
                 atomic_json(
                     args.startup_report,
                     {
                         "pid": os.getpid(),
+                        "ppid": os.getppid(),
                         "platform": application.platformName(),
                         "visible": window.isVisible(),
                     },
@@ -83,11 +146,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             except OSError:
                 print("Jarvis startup receipt could not be written.", file=sys.stderr)
                 window.close()
+                return
+            receipt_pending = False
+            if smoke_done:
+                window.close()
 
         QTimer.singleShot(500, report_startup)
     try:
         result = application.exec()
     finally:
         window.shutdown()
-        collector.close()
+        # A closed window is not a finished worker: a run whose panel was deleted still
+        # holds its thread, and leaving before it returns would abort the process.
+        if workers.drain():
+            garbage_collection.stop()
+        else:
+            smoke_result = result = 1
     return smoke_result if args.smoke_test else result

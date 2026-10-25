@@ -15,8 +15,14 @@ from jarvis.browser.host import BrowserHost
 from jarvis.config import AppConfig
 from jarvis.core.planner.contracts import PlannerInput, Proposal
 from jarvis.core.planner.offline import call
+from jarvis.core.report import HEADLINE
 from jarvis.security.browser_policy import NetworkPolicy
 from jarvis.ui.planner_window import PlannerWindow
+
+# The budget every interface wait in this suite uses. pytest-qt's own default is five
+# seconds, which is generous on the machine that writes a test and tight on a shared
+# runner doing four other things; a run that hangs still fails, three times later.
+PATIENCE = 15000
 
 
 def click_approval(window: PlannerWindow, qtbot: QtBot) -> None:
@@ -35,13 +41,44 @@ def test_offline_multistep(qtbot: QtBot, tmp_path: Path, simulation: bool) -> No
         assert window.simulation.isChecked() and window.provider_choice.currentIndex() == 0
         window.simulation.setChecked(simulation)
         window.command.setPlainText("проверь систему дважды")
-        with qtbot.waitSignal(window.task_finished) as result:
+        with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
             QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
         assert result.args == ["simulated" if simulation else "finished"]
         assert window.output.toPlainText().count("local.check:") == 2
         assert window.host._thread is None
     finally:
         window.shutdown()
+
+
+def test_standalone_provider_selection_is_restored_but_still_needs_consent(
+    qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = PlannerWindow(AppConfig(tmp_path))
+    qtbot.addWidget(first)
+    try:
+        first.provider_choice.setCurrentIndex(1)
+    finally:
+        first.shutdown()
+        first.close()
+
+    def refused_provider(*args: object) -> None:
+        pytest.fail("Restoring a selection must not construct a cloud provider without consent.")
+
+    monkeypatch.setattr("jarvis.ui.planner_window.DeepSeekProvider", refused_provider)
+    restored = PlannerWindow(AppConfig(tmp_path))
+    qtbot.addWidget(restored)
+    try:
+        assert restored.provider_choice.currentIndex() == 1
+        assert not restored.cloud_box.isHidden()
+        assert not restored.cloud_consent.isChecked()
+        qtbot.waitUntil(lambda: restored.memory.worker is None, timeout=PATIENCE)
+        restored.command.setPlainText("проверь систему")
+        restored.start()
+        assert restored.worker is None
+        assert "разрешить передачу" in restored.status.text()
+    finally:
+        restored.shutdown()
+        restored.close()
 
 
 @pytest.mark.parametrize("approve", [True, False])
@@ -60,13 +97,48 @@ def test_exact_ui_approval_only(qtbot: QtBot, tmp_path: Path, approve: bool) -> 
         assert dialog is not None and window.outbox.count == 0
         assert MESSAGE["body"] in dialog.preview.toPlainText()
         assert not window.command.isEnabled()
-        with qtbot.waitSignal(window.task_finished) as result:
+        with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
             if approve:
                 QTest.mouseClick(dialog.approve_button, Qt.MouseButton.LeftButton)
             else:
                 dialog.accept()  # A generic dialog acceptance has no approval authority.
         assert result.args == ["finished" if approve else "error"]
         assert window.outbox.count == int(approve)
+        # The window ends by saying what it did, not only how the engine finished.
+        report = window.output.toPlainText()
+        if approve:
+            assert any(line in report for line in HEADLINE["finished"])
+            assert "Добавил тестовое сообщение." in report
+        else:
+            assert "Не добавил тестовое сообщение — подтверждения не было." in report
+    finally:
+        window.shutdown()
+
+
+@pytest.mark.parametrize("autonomous", [True, False])
+def test_autonomous_mode_replaces_only_the_human_review(
+    qtbot: QtBot, tmp_path: Path, autonomous: bool
+) -> None:
+    window = PlannerWindow(
+        AppConfig(tmp_path), provider=Scripted([call("local.append_message", MESSAGE)])
+    )
+    qtbot.addWidget(window)
+    window.show()
+    try:
+        if autonomous:
+            with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
+                assert window.run_command("test", execute=True, autonomous=True)
+            assert result.args == ["finished"]
+            # No dialog was shown, yet the outbox holds exactly the approved snapshot.
+            assert window.approval_dialog is None and window.outbox.count == 1
+            assert "Автономное подтверждение" in window.output.toPlainText()
+        else:
+            assert window.run_command("test", execute=True, autonomous=False)
+            qtbot.waitUntil(lambda: window.approval_dialog is not None)
+            assert window.outbox.count == 0
+            with qtbot.waitSignal(window.task_finished, timeout=PATIENCE):
+                window.stop()
+            assert window.outbox.count == 0
     finally:
         window.shutdown()
 
@@ -81,7 +153,7 @@ def test_clarification_resumes(qtbot: QtBot, tmp_path: Path) -> None:
         qtbot.waitUntil(lambda: window.question_dialog is not None)
         assert window.answer_input is not None and window.answer_button is not None
         window.answer_input.setText("проверь систему дважды")
-        with qtbot.waitSignal(window.task_finished) as result:
+        with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
             QTest.mouseClick(window.answer_button, Qt.MouseButton.LeftButton)
         assert result.args == ["simulated"]
         assert window.output.toPlainText().count("local.check:") == 2
@@ -110,7 +182,7 @@ def test_stop_pending_work(qtbot: QtBot, tmp_path: Path, phase: str) -> None:
             qtbot.waitUntil(
                 lambda: window.approval_dialog is not None or window.question_dialog is not None
             )
-        with qtbot.waitSignal(window.task_finished) as result:
+        with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
             QTest.mouseClick(window.stop_button, Qt.MouseButton.LeftButton)
         assert result.args == ["cancelled"]
         assert window.worker is None and window.outbox.count == 0
@@ -141,21 +213,46 @@ def test_close_drains_worker_and_disposes_session(
 def test_cloud_requires_disclosure_and_model(qtbot: QtBot, tmp_path: Path) -> None:
     window = PlannerWindow(AppConfig(tmp_path))
     qtbot.addWidget(window)
-    window.show()
     try:
         window.command.setPlainText("test")
-        QTest.mouseClick(window.settings_button, Qt.MouseButton.LeftButton)
-        assert window.provider_choice.isVisible() and window.voice.model_path.isVisible()
         window.provider_choice.setCurrentIndex(1)
-        window.tabs.setCurrentIndex(0)
-        assert window.cloud_consent.isVisible() and window.cloud_disclosure.isVisible()
-        assert "даже при симуляции" in window.cloud_disclosure.text()
-        assert "модель не выбрана" in window.provider_summary.text()
-        QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
+        window.start()
         assert window.worker is None and "разрешить" in window.status.text()
         window.cloud_consent.setChecked(True)
-        QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
+        window.start()
         assert window.worker is None and "идентификатор" in window.status.text()
+    finally:
+        window.shutdown()
+
+
+def test_known_people_do_not_leave_the_machine_without_consent(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    from jarvis.knowledge.models import EntityDraft
+    from jarvis.knowledge.store import KnowledgeStore, reference
+
+    KnowledgeStore(tmp_path / "knowledge.sqlite3").upsert(
+        EntityDraft(
+            type="person",
+            name="John Smith",
+            external=(reference("asana", "user_456", "asana.search_tasks", "a" * 32),),
+        )
+    )
+    window = PlannerWindow(AppConfig(tmp_path))
+    qtbot.addWidget(window)
+    try:
+        window.command.setPlainText("создай задачу для John Smith")
+        window.model.setText("test-model")
+        window.provider_choice.setCurrentIndex(1)
+        window.cloud_consent.setChecked(True)
+        window.start()
+        # No label was selected, but the command names a known person: still consent.
+        assert "контекста" in window.status.text()
+        assert not window.output.toPlainText()
+        window.memory.cloud_consent.setChecked(True)
+        window.start()
+        # The run started and says exactly whom it took along.
+        assert "John Smith" in window.output.toPlainText()
     finally:
         window.shutdown()
 
@@ -169,11 +266,13 @@ def test_observed_notepad_then_literal_typing(qtbot: QtBot, tmp_path: Path, text
     try:
         window.simulation.setChecked(False)
         window.command.setPlainText("открой блокнот и напиши " + text)
-        with qtbot.waitSignal(window.task_finished) as result:
+        # Typing is ROUTINE: it runs without pausing, into the field just observed.
+        with qtbot.waitSignal(window.task_finished, timeout=15000) as result:
             window.start()
-        assert result.args == ["finished"] and probe.text == text.strip("«»")
         assert window.approval_dialog is None
+        assert result.args == ["finished"] and probe.text == text.strip("«»")
         assert "windows.type_text: SUCCESS" in window.output.toPlainText()
+        assert [item.operation for item in probe.calls].count("type") == 1
     finally:
         window.shutdown()
 
@@ -194,7 +293,7 @@ def test_invented_target_is_rejected_without_backend_hooks(
     try:
         window.simulation.setChecked(simulation)
         window.command.setPlainText("test")
-        with qtbot.waitSignal(window.task_finished) as result:
+        with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
             window.start()
         assert result.args == ["error"] and "unobserved_target" in window.status.text()
         assert not probe.calls and window.approval_dialog is None
@@ -223,8 +322,8 @@ def test_real_browser_observation_drives_next_registered_step(qtbot: QtBot, tmp_
         window.command.setPlainText("Read the controlled local page")
         with qtbot.waitSignal(window.task_finished, timeout=15000) as result:
             window.start()
-        assert window.approval_dialog is None
         assert result.args == ["finished"]
+        assert window.approval_dialog is None
         assert "browser.read: SUCCESS" in window.output.toPlainText()
         assert "Browser fixture" in window.output.toPlainText()
         assert [row[:2] for row in site.seen] == [("GET", "/")]
@@ -232,3 +331,161 @@ def test_real_browser_observation_drives_next_registered_step(qtbot: QtBot, tmp_
         window.shutdown()
         site.close()
     assert host._thread is not None and not host._thread.is_alive()
+
+
+def test_a_field_the_planner_never_observed_is_rejected(qtbot: QtBot, tmp_path: Path) -> None:
+    """Listing one window's fields does not authorise typing into a different field."""
+    probe = WindowsProbe()
+    observed = target()
+    invented = observed.editor
+    assert invented is not None
+    window = PlannerWindow(
+        AppConfig(tmp_path),
+        windows_backend=probe,
+        provider=Scripted(
+            [
+                call("windows.get_open_windows", {}),
+                call(
+                    "windows.type_text",
+                    {
+                        "target": observed.model_dump(),
+                        "editor": invented.model_copy(update={"handle": 4242}).model_dump(),
+                        "text": "x",
+                    },
+                ),
+            ]
+        ),
+    )
+    qtbot.addWidget(window)
+    try:
+        window.simulation.setChecked(False)
+        window.command.setPlainText("test")
+        with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
+            window.start()
+        assert result.args == ["error"] and "unobserved_target" in window.status.text()
+        assert [item.operation for item in probe.calls] == ["list"]
+        assert window.approval_dialog is None
+    finally:
+        window.shutdown()
+
+
+def test_a_listed_field_can_be_typed_into_after_approval(qtbot: QtBot, tmp_path: Path) -> None:
+    probe = WindowsProbe()
+    observed = target()
+    editor = observed.editor
+    assert editor is not None
+    window = PlannerWindow(
+        AppConfig(tmp_path),
+        windows_backend=probe,
+        provider=Scripted(
+            [
+                call("windows.get_open_windows", {}),
+                call("windows.get_text_fields", {"target": observed.model_dump()}),
+                call(
+                    "windows.type_text",
+                    {
+                        "target": observed.model_dump(),
+                        "editor": editor.model_dump(),
+                        "text": "привет",
+                    },
+                ),
+            ]
+        ),
+    )
+    qtbot.addWidget(window)
+    try:
+        window.simulation.setChecked(False)
+        window.command.setPlainText("test")
+        with qtbot.waitSignal(window.task_finished, timeout=15000) as result:
+            assert window.run_command("test", execute=True, autonomous=True)
+        assert result.args == ["finished"], window.status.text()
+        assert "windows.type_text: SUCCESS" in window.output.toPlainText()
+        assert [item.operation for item in probe.calls].count("type") == 1
+    finally:
+        window.shutdown()
+
+
+def test_learned_words_are_named_before_they_leave_and_are_written_only_when_asked(
+    qtbot: QtBot, tmp_path: Path
+) -> None:
+    from jarvis.memory.derived import DerivedStore
+
+    learnt = DerivedStore(tmp_path / "derived.sqlite3")
+    learnt.record("tool", "систему", "local.check")
+    window = PlannerWindow(AppConfig(tmp_path))
+    qtbot.addWidget(window)
+    try:
+        window.command.setPlainText("проверь систему")
+        window.model.setText("test-model")
+        window.provider_choice.setCurrentIndex(1)
+        window.cloud_consent.setChecked(True)
+        window.start()
+        # A learned word is context too, so it needs the same one-task consent.
+        assert "контекста" in window.status.text() and not window.output.toPlainText()
+        window.memory.cloud_consent.setChecked(True)
+        window.start()
+        assert "систему → local.check" in window.output.toPlainText()
+    finally:
+        window.shutdown()
+
+
+def test_a_finished_run_teaches_the_words_it_was_given(qtbot: QtBot, tmp_path: Path) -> None:
+    from jarvis.memory.derived import DerivedStore
+
+    learnt = DerivedStore(tmp_path / "derived.sqlite3")
+    learnt.set_learning(True)
+    window = PlannerWindow(AppConfig(tmp_path))
+    qtbot.addWidget(window)
+    try:
+        window.simulation.setChecked(False)
+        window.command.setPlainText("проверь систему")
+        with qtbot.waitSignal(window.task_finished, timeout=PATIENCE):
+            window.start()
+        assert window.last_result is not None and window.last_result.status == "finished"
+        assert {(record.phrase, record.target) for record in learnt.read()} == {
+            ("проверь", "local.check"),
+            ("систему", "local.check"),
+        }
+    finally:
+        window.shutdown()
+
+
+def test_a_run_started_while_the_profile_is_read_says_what_is_happening(
+    qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal that made two voice tests look like a slow machine for three sessions.
+
+    The memory panel reads its store on the next turn of the event loop, and `start` will
+    not assemble a context while that read is in flight. The window has to say that, and a
+    test that waits for "no worker is running" has to wait for the read instead: that
+    answer is True before the read has even begun.
+    """
+    from threading import Event as Flag
+
+    from jarvis.memory.store import MemoryStore
+
+    reading, original = Flag(), MemoryStore.read
+
+    def slow(self: MemoryStore, cancelled: Flag) -> object:
+        reading.wait(15)
+        return original(self, cancelled)
+
+    monkeypatch.setattr(MemoryStore, "read", slow)
+    window = PlannerWindow(AppConfig(tmp_path))
+    qtbot.addWidget(window)
+    window.show()
+    try:
+        qtbot.waitUntil(lambda: window.memory.worker is not None, timeout=15000)
+        assert not window.memory.profile_read
+        window.command.setPlainText("проверь систему дважды")
+        window.start()
+        # Refused, and the reason is the true one: nothing is wrong in the profile.
+        assert window.worker is None and window.last_result is None
+        assert "ещё читается" in window.status.text()
+        reading.set()
+        qtbot.waitUntil(lambda: window.memory.profile_read, timeout=15000)
+        with qtbot.waitSignal(window.task_finished, timeout=15000):
+            window.start()
+    finally:
+        reading.set()
+        window.shutdown()

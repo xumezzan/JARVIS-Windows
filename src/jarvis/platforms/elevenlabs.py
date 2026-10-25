@@ -11,6 +11,7 @@ from email.message import Message
 from typing import Any, NoReturn
 
 from jarvis.platforms.credentials import native_store
+from jarvis.platforms.protocol import emit
 from jarvis.security.credentials import valid_key
 from jarvis.voice.contracts import MAX_AUDIO_BYTES, SAMPLE_RATE, VoiceError
 
@@ -219,11 +220,11 @@ def main() -> int:
         request = json.loads(raw)
         if not isinstance(request, dict):
             raise VoiceError("voice_failed")
-        print(json.dumps(perform(request), ensure_ascii=True), flush=True)
+        emit(json.dumps(perform(request), ensure_ascii=True))
         return 0
     except Exception as error:
         code = error.code if isinstance(error, VoiceError) else "eleven_credentials"
-        print(json.dumps({"error": code}), flush=True)
+        emit(json.dumps({"error": code}))
         return 1
 
 

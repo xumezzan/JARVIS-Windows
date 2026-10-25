@@ -1,20 +1,40 @@
 # Архитектура
 
-Браузер поддерживает Strict Sandbox (default) и явно включаемый Live Browser,
-в том числе подключение к существующему Chrome по CDP. Выбор проходит через AppConfig
-во все BrowserHost (planner, tools, Electron runtime). [Подробности](BROWSER_MODES.md).
-
 ## Текущее состояние
 
-Один Python-пакет, запускаемый через `python -m jarvis` или `jarvis`. Этапы 0–8
-реализованы локально: shell, typed tools, PermissionEngine, approvals, audit, planner,
-голос, управляемые метки и Outlook. Переносимая подготовка этапа 9 реализована;
-native Windows и полный MVP остаются pending.
-Текстовая команда остаётся fake demo этапа 1. Кнопка «Открыть инструменты» открывает
+Один Python-пакет, запускаемый через `python -m jarvis` или `jarvis`. Этапы 0–9 и фазы
+плана 0.2–0.3 реализовали desktop shell, локальные typed tools, PermissionEngine с пятью
+уровнями, approvals, audit, durable-запуски, граф знаний, коннекторы, рутины и голос со
+словом активации.
+Текстовая команда главного окна запускает планировщик того же сеанса: MainWindow владеет одним PlannerWindow, берёт из него реестр, движок разрешений и audit, и показывает его уточнения и подтверждения в своём окне. Кнопка «Открыть инструменты» открывает
 ручное окно локальных, Windows и браузерных инструментов. Windows UIA изолирован в helper-процессе;
 Playwright имеет отдельный asyncio owner. Отдельное окно планировщика использует offline
 recipes или OpenAI Responses; локальный голос и управляемая память реализованы.
 Outlook подключается явно через MSAL/Graph; настоящая почта ещё не проверена.
+
+## Целевая архитектура
+
+Продукт — компьютерный агент: владелец ставит цель, ассистент выбирает средства.
+Десять компонентов постановки и модули, которые за них отвечают. План и порядок работ —
+[AGENT_PLAN.md](AGENT_PLAN.md).
+
+| Компонент | Модули | Состояние |
+| --- | --- | --- |
+| Voice Input / STT | `voice/`, `platforms/audio.py`, `ui/voice_panel.py` | Есть; оборудование не проверено |
+| AI Brain / LLM | `core/planner/routing.py`, `deepseek_provider.py`, `openai_provider.py` | Есть; Claude как инструмент разбора — нет |
+| Planner | `core/planner/runner.py`, `core/workflow/` | Есть на короткой задаче; длинная задача с возобновлением — фаза 1 |
+| Briefing | `core/meeting.py` | Сводка к встрече: пять `SAFE`-чтений через движок разрешений, каждая строка с источником |
+| Tool & MCP Layer | `tools/`, `connectors/` | Outlook, календарь, Fireflies, Asana, Notion, чаты Teams, OneDrive/Excel, MCP; каналы Teams — остаток фазы 2 |
+| Computer Control | `tools/windows.py`, `platforms/windows/` | Открыть, сфокусировать, перечислить, напечатать; клик, клавиши, буфер — фаза 4 |
+| Vision / Screen | — | Нет; дерево интерфейса и снимок окна — фаза 3 |
+| Memory | `memory/`, `knowledge/`, `core/context/` | Есть; способ работы как память — фаза 8 |
+| Permission System | `permissions/`, `voice/approval.py`, `ui/approval_dialog.py` | Есть; `CRITICAL` ждёт решения Р5 |
+| TTS | `voice/local.py`, `voice/elevenlabs.py`, `core/report.py` | Есть; потоковая речь и перебивание — фаза 7 |
+| UI | `ui/main_window.py`, `ui/dashboard.py`, `ui/planner_window.py` | Есть; один экран с чеклистом — фаза 6 |
+
+Три границы, которые новые фазы обязаны сохранить, потому что на них держится всё
+остальное: наблюдение принадлежит задаче (цель действия увидена в ней, а не вспомнена),
+токен подтверждения выдаёт только UI, и любой внешний текст — данные, а не полномочие.
 
 ## Поток инструментов
 
@@ -26,7 +46,7 @@ Manual UI / bounded Planner Runner
   -> deterministic risk policy
   -> ApprovalDialog + UI-only ApprovalAuthority for CONFIRM
   -> PermissionEngine.execute
-  -> real-only side-effect-free preconditions -> atomic token consume -> durable audit
+  -> pure preconditions -> atomic token consume -> durable audit
   -> adapter -> strict result schema -> verifier
   -> factual Outcome -> audit -> UI
 ```
@@ -48,13 +68,18 @@ OAuth connect/disconnect — отдельный UI-only setup через QThread
 | `permissions/approvals.py` | Immutable Action, opaque token, UI issuer, TTL, атомарный consume |
 | `permissions/engine.py` | Prepare/execute/cancel, bounded pending requests, тайм-аут и audit gateway |
 | `observability/audit.py` | SQLite audit, metadata без содержимого и bearer tokens |
-| `ui/approval_dialog.py` | Read-only полный preview; token только из обработчика кнопки |
+| `ui/approval_dialog.py` | Read-only полный preview; token из кнопки или из совпавшей контрольной детали |
 | `ui/permission_workbench.py` | Ручная проверка, режим, outcome, local outbox count, audit view |
 | `ui/tool_worker.py` | Один `asyncio.run(engine.execute(...))` внутри QThread |
 | `core/planner` | Provider protocol, offline recipes, OpenAI strict calls, bounded Runner |
 | `ui/planner_window.py`, `ui/planner_worker.py` | Текстовая команда, отдельный QThread, prompts и stop |
 | `security/credentials.py`, `platforms/credentials.py` | Killable credential pipe и явный OS backend |
+| `security/cloud_consent.py` | Разрешение на облако и ID модели между запусками; повреждённый файл = нет согласия |
+| `core/planner/identifiers.py` | Одно правило ID модели для настроек, окна согласия и провайдера |
 | `voice`, `memory` | Локальный push-to-talk и явно управляемые метки |
+| `core/routines` | Фоновые наблюдения, очередь предложений, выключатели и дневной бюджет |
+| `core/report.py` | Что именно сделано: текст для экрана и для голоса из снимка и исхода |
+| `ui/routine_panel.py` | Вкладка «Рутины»: выключатели, предложения, то же окно подтверждения |
 | `mail`, `tools/outlook.py`, `ui/mail_panel.py` | MSAL/helper, Graph, RAM drafts/attachments, typed mail tools и UI |
 
 ## Снимок и подтверждение
@@ -75,7 +100,7 @@ service/action_type/account/recipient/subject/body/attachments. Изменённ
 
 ## Выполнение и симуляция
 
-SAFE проходит policy без интерактивного согласия. CONFIRM требует capability даже в
+SAFE и ROUTINE проходят policy без интерактивного согласия. CONFIRM требует capability даже в
 simulation. CRITICAL отключён; BLOCKED всегда запрещён. Неизвестный risk не разрешается.
 
 В EXECUTE engine проверяет наличие approval перед preconditions, затем после них повторно
@@ -89,7 +114,7 @@ preconditions, execute и verify — пропускаются. Итог толь
 
 ## Отмена, потоки и тайм-аут
 
-Обычный shell demo остаётся отдельным bounded Event/QThread из этапа 1. Для инструментов
+Оболочка больше не содержит отдельного demo-потока; её состояние повторяет события планировщика. Для инструментов
 Qt worker владеет короткоживущим asyncio loop. Engine ограничивает время preconditions,
 execute и verify общим timeout инструмента. Watcher проверяет thread-safe Event с шагом
 10 ms и отменяет async task. Закрытие/Stop/Escape аннулируют pending approvals и дожидаются
@@ -115,13 +140,11 @@ text, typed result data, токены и signature не сохраняются �
 логируются как `unknown`, исключая утечку через имя.
 
 Local outbox — память одного окна проверки. Verifier читает receipt и сравнивает сохранённый
-payload с исходным снимком. При закрытии окна сообщения исчезают. Вложения именно
-тестового local outbox — только metadata name/SHA-256.
-Outlook этапа 8 отдельно хранит выбранные пользователем bytes в RAM, связывает size/hash/ID
-со snapshot и отправляет точные утверждённые bytes; это не произвольный file reader.
+payload с исходным снимком. При закрытии окна сообщения исчезают. Вложения в текущем
+контракте — только metadata name/SHA-256; настоящие файлы не читаются и не отправляются.
+Будущему внешнему adapter понадобится замороженное содержимое файлов и повторная проверка.
 
-SQLite profile memory и MSAL OAuth реализованы в этапах 7–8; live OAuth пока не проверен.
-Ключ OpenAI хранится в OS credential store,
+SQLite memory и OAuth ещё не реализованы. Ключ OpenAI хранится в OS credential store,
 не в памяти модели. Retrieved content никогда не меняет policy или tool registry.
 
 ## Решения
@@ -134,7 +157,7 @@ Python >=3.12, `src` layout, Hatchling; PySide6-Essentials и Pydantic. Верс
 ## Windows Automation, этап 3
 
 `tools/windows.py` содержит portable strict schemas и четыре ToolSpec. `get_open_windows`,
-`open_app`, `focus_app`, `type_text` — SAFE. Регистрация не импортирует pywinauto.
+`open_app`, `focus_app` — SAFE; `type_text` — ROUTINE. Регистрация не импортирует pywinauto.
 `platforms/windows/transport.py` запускает фиксированный модуль helper через Python `-I`,
 без shell. `worker.py` лениво импортирует `native.py` только на Windows. Pywinauto/psutil
 ограничены dependency marker `sys_platform == 'win32'`.
@@ -171,11 +194,17 @@ UI показывает только наблюдённые targets и блок�
 остаётся короткая гонка с действиями пользователя; OS API не предоставляет атомарного
 compare-and-write. Во время подтверждённого ввода не редактируйте целевую вкладку параллельно.
 
+## Files
+
+`jarvis.files.policy` — чистая политика путей: разрешённые папки, разрешение пути до
+сравнения, запрет исполняемых расширений. `jarvis.tools.files` — типизированные
+инструменты поверх неё; эффекты, принадлежащие оболочке ОС (корзина и открытие документа
+в его приложении), вынесены в адаптер `jarvis.platforms.files`.
+
 ## Browser Automation, этап 4
 
-`tools/browser.py` регистрирует восемь strict tools. Навигация, поиск, чтение и ввод — SAFE;
-`click`/`close` классифицируются по snapshot через `ToolSpec.classify_risk`.
-Таблица рисков: [PERMISSION_POLICY.md](PERMISSION_POLICY.md). Названия `read` и `close`
+`tools/browser.py` регистрирует восемь strict tools. `read`/`get_tabs` — SAFE;
+`open`/`navigate`/`search`/`click`/`type`/`close` — ROUTINE. Названия `read` и `close`
 соответствуют текущему roadmap; в исходном плане это `read_page` и `close_tab`.
 `ToolSpec.policy` — чистая синхронная проверка во время normalize, до snapshot;
 она работает и в simulation. Она не вызывает browser/DNS/adapters. Prepared snapshots
@@ -221,11 +250,33 @@ browser binary и не rollback уже отправленного запроса
 callbacks реестра, engine, authority и токены ему не передаются.
 
 Runner ограничен 8 действиями, 3 уточнениями, 30 секундами на провайдера и 180 на задачу.
+Длинная задача (`Limits.long()`) поднимает потолки до 64 действий, 60 секунд на провайдера
+и часа на задачу, но только вместе с журналом запуска: `durable` без `journal` даёт ошибку
+`journal_required` до первого предложения, поэтому длина никогда не держится на доверии.
+Бюджет (`Budget`) считает обращения к модели и останавливает задачу статусом `budget`;
+счёт идёт в шагах, а не в деньгах, потому что цену вызова нечем проверить.
+Фазы durable-запуска — `running`, `waiting_approval`, `waiting_input`, `done`, `failed`,
+`cancelled`: по ним после перезапуска видно, чего задача ждала. Запись фазы никогда не
+меняет исход задачи; недоступный журнал оставляет запуск незавершённым, и это безопасная
+видимость — такой запуск предлагается к возобновлению, а не считается сделанным.
+Возобновление (`planner/resume.py`) восстанавливает из журнала только личность и исход
+шагов: аргументов и результатов там нет и не будет. Поэтому цель, наблюдённая до
+перезапуска, после него целью не является — задача обязана посмотреть заново (И5).
 Общий deadline включает approval/clarification; собственные тайм-ауты инструментов сохраняются.
 Нет автоматических retries: ошибка/denial/verification failure останавливают задачу.
 Windows/browser target обязан присутствовать в SUCCESS observation этой задачи; элемент —
 в той же странице. Adapter повторно проверяет актуальность identity/DOM перед действием.
 В симуляции нет таких наблюдений, и зависимые цели не синтезируются.
+
+`Checklist` (`ui/checklist.py`) строит строку на шаг из тех же событий `notify()`: шаг
+закрывается пришедшим статусом, ожидание называет себя подтверждением или ответом, а шаг,
+который только планировался, со списка снимается. Окно планировщика показывает
+незавершённые запуски (`WorkflowStore.unfinished()`) и продолжает выбранный: запрос и
+режим берутся из записи, шаги до перезапуска помечены отдельно.
+
+`ApprovalDialog` ведёт обратный отсчёт по остатку заявки (`ApprovalAuthority.remaining` —
+чтение, не власть) и по его истечении отвечает отказом сам: снимок мёртв, и держать им
+задачу не за что. Это следствие длинной задачи — час работы против 60 секунд на снимок.
 
 `PlannerWorker` владеет asyncio loop внутри QThread. Prompts содержат случайный request ID;
 UI отвечает через thread-safe callback, совпадение ID защищает от запоздалого ответа.
@@ -257,9 +308,48 @@ pipe за срок до 8 секунд; cancellation завершает и со�
 исключают одновременные capture/STT/TTS. Аудио не сохраняется и не отправляется по сети.
 
 Transcript → редактируемая команда PlannerWindow → ручной запуск → существующий Runner
-→ PermissionEngine. Voice не получает ApprovalAuthority. Голосовые кнопки в approval и
-clarification умеют только отменить задачу. После завершения Runner опционально озвучивает
-короткую сводку из engine outcomes. Dashboard microphone только открывает планировщик.
+→ PermissionEngine. Voice не получает ApprovalAuthority: `voice/approval.py` выбирает из
+снимка одну произносимую контрольную деталь и возвращает вердикт по расшифровке, а token
+по-прежнему выдаёт `ApprovalDialog` через UI-owned authority и записывает канал
+(`Channel.UI` / `Channel.VOICE`) в audit. Инструмент без детали голосового канала не имеет.
+После завершения Runner опционально озвучивает короткую сводку из engine outcomes.
+Dashboard microphone только открывает планировщик.
+
+## Отчёт о сделанном
+
+`core/report.py` — единственное место, где собирается фраза «что я сделал». Источников
+ровно два: снимок действия (`Step.payload`, та же нормализованная строка, которую владелец
+видел в подтверждении) и исход движка. Ответы инструментов и сервисов туда не попадают,
+как и напечатанный текст, тело письма и любые секреты; каждое поле ограничено по длине.
+
+`written()` идёт в главное окно и в вывод планировщика и может называть адрес, путь и хост.
+`spoken()` уходит в голос и опускает то, что русский локальный синтез не произнесёт, а также
+ограничивает число перечисленных действий. Инструмент, которого нет в таблице `DEEDS`, не
+превращается в предложение: про него отчёт молчит. Эффект, который мог быть выдан, но не
+подтверждён, называется неподтверждённым.
+
+## Рутины фазы B
+
+`core/routines/contracts.py` задаёт рутину как доверенный код: `observe` возвращает
+очередное фиксированное наблюдение, `notice` — предложения с ограниченным текстом и
+точными аргументами. Модель в фоне не участвует вовсе, поэтому ответ сервиса не может стать
+именем инструмента, аргументом или расписанием.
+
+`core/routines/runner.py` выполняет цикл как обычный run: `WorkflowStore.start`, журнал,
+`step_key`, движок разрешений и audit. Наблюдение допускается только `SAFE`; обратимое
+действие выполняется, лишь когда владелец разрешил это конкретной рутине; `CONFIRM` не
+выполняется никогда и попадает в очередь. `ApprovalAuthority` рутине не передаётся.
+`already_issued` смотрит последние запуски журнала, поэтому уже выданный эффект не
+повторяется и после перезапуска процесса.
+
+`core/routines/state.py` хранит три выключателя, время последнего запуска и дневной счётчик
+в `routines.json`; нечитаемый файл означает «всё выключено». `core/routines/proposals.py` —
+очередь в памяти: TTL 30 минут, не более 20 поводов, повторный повод не дублируется, а
+пропавший из последнего наблюдения удаляется.
+
+`ui/routine_panel.py` владеет таймером (30 секунд), выполняет цикл в `QThread` и открывает
+предложение через `engine.prepare` в тот же `ApprovalDialog`. Уведомлений нет: панель просто
+перерисовывается.
 
 ## Память этапа 7
 
@@ -289,117 +379,3 @@ MSAL/OS storage работают в killable helper; Graph HTTP — bounded asyn
 и свежего visible-window receipt. Перезапуск восстанавливает компоненты, не касается
 профиля/SQLite/OS credentials. Stable launcher не зависит от пути репозитория.
 См. [MILESTONE_9.md](MILESTONE_9.md).
-
-
-## Предлагаемая архитектура полного продукта — этапы 10–32
-
-**Ниже проект, не текущая реализация.** Номера и gates: [ROADMAP.md](ROADMAP.md).
-Текущие границы Windows/browser/permissions выше сохраняются до отдельных принятых
-расширений. Английский default не реализован: текущие UI/рецепты/summary русские,
-native TTS требует русский голос; locale/time zone settings отсутствуют.
-
-### Localization и единый интерфейс
-
-Этап 10: стабильные message IDs, EN/RU resource catalogs и plural/formatting service;
-отдельные settings UI locale, conversation/voice language и time zone. Данные документов,
-account labels и approved payload не переводятся ресурсным слоем. Форматированное время
-отделено от canonical instant/zone/offset действия. Provider language preferences —
-ограниченные данные, не замена policy. Speech assets выбираются локально, автоматически
-при старте не загружаются; согласованная подготовка ресурсов использует setup boundary.
-
-Этап 12: первый запуск и постоянный Modules & Connections используют те же contracts,
-settings и connection state, без отдельного неконтролируемого execution path. Wizard state
-содержит только завершённые настройки и opaque secure references, не tokens/approvals.
-Не превращать demo dashboard в доказательство execution; первая реальная задача должна
-проходить существующий Runner/engine и показывать фактические outcomes.
-[ONBOARDING.md](ONBOARDING.md) задаёт все семь экранов и независимое восстановление ошибок.
-
-### Адаптеры и исполнение
-
-[INTEGRATION_CONTRACT.md](INTEGRATION_CONTRACT.md) расширяет ToolSpec versioned metadata,
-auth/account lifecycle, scope/risk, rate/cost limits, verification и duplicate handling.
-Доверенные manifests регистрируются до seal; добавление пакета не требует переписывать
-core. Model не может загружать code/plugins, выбирать credential backend или менять schemas.
-Установка пакета и регистрация — разные действия; install не даёт service permissions.
-
-Схема будущего взаимодействия:
-
-```text
-Text / reviewed voice / explicit wizard UI / enabled routine
-  -> one orchestrator + shared budget + selected source context
-  -> optional specialized analysis roles (data only)
-  -> registered tool or UI-only setup operation
-  -> PermissionEngine + current identity + exact UI approval when required
-  -> trusted service/platform adapter -> independent verifier
-  -> outcome + minimal audit + access-controlled source-linked report
-```
-
-OAuth/MFA остаются пользовательским UI. Существующий Outlook UI-only setup вне engine
-является нынешней реализацией; этап 11 вводит engine-registered setup path с отдельной
-UI authority, не выставляя connect/disconnect модели. Bootstrap этапа 9 также остаётся
-внешним доверенным installer; модель не получает универсальный install tool.
-
-Official APIs предпочтительны structured browser, затем UIA, затем visual route. Для
-authenticated browser (22) отдельные sessions/adapters и per-site policy; текущий offline,
-script-disabled anonymous transport не меняется автоматически. Windows inputs/controlled
-transfer (23) отдельно связывают observed source/destination и payload. Visual route (24)
-выбирает разрешённый monitor/window/region, учитывает DPI, получает local OCR либо отдельный
-cloud disclosure, и только затем предлагает observable target. Координата производна от
-свежего наблюдения; stale/ambiguous/occluded target останавливает действие.
-
-### Память, источники и секреты
-
-Этап 25 отделяет personal preferences/workflows от company KB. Source records имеют
-owner, user/org/account ACL, source ID/link, observed/updated timestamps, retention и
-freshness/conflict status. Retrieval проверяет актуальные права, а не только права при
-ingestion. Явный выбор источников/разрешённых полей; view/correct/delete/disable очищают
-применимые индексы и кэши. Backup/retention/encryption/cloud processing — отдельные решения,
-не уже реализованные свойства. Старые short labels этапа 7 не превращаются в бесконечные notes.
-
-Source-linked workflow report — отдельные защищённые task data, не поля raw audit.
-Основной audit остаётся metadata-only; локальная persistence полного task payload требует
-согласованного storage scope. После restart approval не восстанавливается из отчёта.
-1Password (21) предоставляет trusted helper конкретный разрешённый secret; модели виден
-лишь конечный статус операции. OS credential store хранит требуемые локальные credentials,
-не заменяется vault-доступом. Секрет не проходит через tool result, memory или report.
-
-### Orchestrator, роли и фоновое выполнение
-
-Этап 26 вводит workflow state machine, bounded plan и source lineage между email/task/event.
-Планирование/анализ можно разделить на роли; issued effects сериализуются/блокируются общим
-gateway и intent ledger. Общие budgets steps/time/tokens/cost не умножаются числом ролей.
-Возможная параллельность read-only анализа не даёт параллельно потребить одно approval.
-Нет distributed exactly-once promise: неопределённый write блокирует автоматический повтор,
-дальше только bounded authorized reconciliation и честный partial report.
-
-| Роль | Когда отдельный анализ полезен | Данные и граница |
-| --- | --- | --- |
-| Email | Оценка важности/рутинности в выбранном наборе писем | Только selected mailbox/messages; draft не send authority |
-| Calendar | Согласование времени/конфликтов | Selected calendars, attendees и time zone; invite требует action approval |
-| Tasks | Разбиение поручений на задачи | Selected projects/assignees и source items; no cross-workspace inference |
-| Social | Контекст conversation и стиль ответа | Selected pages/media/comments; publishing отдельно |
-| Finance | Сводка задолженности/исключений | Разрешённые invoice/payment-status reads; без денег и record writes |
-| Company knowledge | Поиск и сопоставление источников | ACL-filtered KB, provenance/conflict; не вся компания |
-| Browser | Сложное чтение страниц/поиск подходящих controls | Только разрешённая current session/observations; no arbitrary JS |
-| Windows | Разбор неоднозначных observable UI targets | Только выбранные apps/windows/region; не вся площадь экрана |
-
-Простой API read, deterministic format или один exact write выполняется обычным tool,
-без отдельного агента. Главный orchestrator формирует единый audit/report. Ни один агент
-не имеет ApprovalAuthority и не подтверждает действия другого; microservices не нужны
-без измеренной изоляционной/операционной потребности.
-
-Этап 27: локальный scheduler/event receiver создаёт bounded task только по сохранённому
-explicit enablement. Selected sources, time zone/quiet hours, limits, disable и missed-run
-state видны пользователю. По умолчанию только read/proposals; external effects ожидают
-индивидуального UI approval. Computer off/sleep означает отсутствие гарантий выполнения.
-Cloud runner/standing authority требуют отдельной архитектуры и решения, не добавлены здесь.
-
-### Демонстрации
-
-Этап 28: recording controller с indicator и scope → минимальные observations → draft
-workflow (parameters/conditions/tool IDs/verifiers) → user edit/review → simulation →
-approved live trial → versioned reuse. Secrets и лишние персональные данные исключаются
-до передачи/хранения, login/payment scenes пропускаются или останавливают capture.
-Изменение UI/schema/target требует нового наблюдения или исправления workflow. Записанный
-UI approval не становится исполняемым разрешением; каждый будущий action проходит engine.
-Версии и observations удаляемы; неподтверждённое обобщение одного примера не исполняется.

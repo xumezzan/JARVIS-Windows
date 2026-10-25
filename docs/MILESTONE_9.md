@@ -1,15 +1,17 @@
 # Этап 9 — установка из репозитория и подготовка Windows E2E
 
 Дата: 2026-09-15. Хост разработки: macOS 27.0 arm64, CPython 3.12.7.
-**Переносимая подготовка реализована. Native Windows, чистая установка и полный MVP E2E
-не выполнены; этап 9 ещё не закрыт.** Живые Outlook OAuth/доставка, OpenAI API и
-микрофон/STT/TTS также остаются непроверенными.
+Обновлено 2026-09-16 после первого запуска на целевой Windows 11 x64.
+**Часть native-ворот пройдена (см. «Фактическая проверка на Windows»), но чистая
+установка и полный MVP E2E не выполнены; этап 9 ещё не закрыт.** Живые Outlook
+OAuth/доставка, OpenAI API и настоящий микрофон остаются непроверенными.
 
 ## Реализация
 
 - `scripts/windows/Install-Jarvis.cmd` — один вход для агента после получения репозитория.
   `Install-Jarvis.ps1` проверяет Windows 11 x64/desktop, готовит официальный Python для
-  текущего пользователя, запускает дальнейшую установку, создаёт стабильный ярлык в «Пуск».
+  текущего пользователя, запускает дальнейшую установку, создаёт стабильные ярлыки на
+  рабочем столе и в «Пуск».
   Не нужны ручные команды Python/pip, PATH, React или инструменты дизайна.
 - `%LOCALAPPDATA%\JarvisInstall`: exclusive lock, кэш проверенных архивов, runtime и два
   каталога `slots/a`, `slots/b`. В каждом — отдельный venv, wheel приложения с `[voice]`,
@@ -116,121 +118,131 @@ PowerShell 7.6.6 для macOS распакован из официального
 SHA-256 с release metadata. Parser успешно разобрал оба `.ps1`; никакие Windows-команды
 не запускались. Это синтаксическая проверка, не запуск PowerShell 5.1/Win32/COM.
 
+## Фактическая проверка на Windows
+
+Дата: 2026-09-16. Windows 11 Pro 10.0.26200 x64, CPython 3.13.15 из подготовленного runtime.
+Установщик отработал ранее в тот же день: `dependencies=passed`, `offline_chromium=153.0.8010.12`,
+`local_vosk_load=passed`, `warnings=[]`, `gui_smoke=passed`, `native_window=observed`.
+
+Полный набор тестов на Windows сначала дал 5 падений и 9 ошибок, невоспроизводимых на Mac.
+Семь дефектов переносимых тестов исправлены отдельным коммитом: лимит переменной окружения
+32767 для node id, дочерний процесс venv-редиректора в startup receipt, незакрытое
+sqlite-соединение фикстуры (ResourceWarning всплывал в постороннем тесте), нормализация
+`os.sep` в `zipfile` при записи и чтении, кодировка/перевод строки дочернего процесса,
+привилегия на symlink, лимит командной строки 32767. После правок: **462 passed, 6 skipped**,
+стабильно в трёх прогонах. Ruff lint/format, `mypy --strict` (114 файлов), `pip check`,
+`python -m build`, `jarvis.exe --version`, `--smoke-test` (success и timeout) — пройдены.
+Native Qt: `QT_QPA_PLATFORM=windows`, `tests/integration` — 105 passed.
+
+Пройдено на реальном рабочем столе:
+
+- `windows.open_app` + `windows.focus_app` для Chrome и VS Code. На холодном старте VS Code
+  первая попытка вернула ERROR: окно не появляется за отведённое адаптеру ожидание.
+- `windows.type_text` в пустую вкладку Notepad: точный текст `Jarvis test successful`
+  записан, UIA read-back совпал, текст независимо прочитан сторонним UIA-обходом.
+- Windows 11 восстанавливает сессию Notepad, поэтому `test_notepad_open_focus_literal_text_and_readback`
+  на такой машине недостижим: приложение корректно отказывается писать в восстановленную
+  вкладку. Для этого ворота нужен Notepad, настроенный на пустой старт.
+- Локальный русский Vosk: синтезированная SAPI фраза «проверь систему дважды» (16 kHz mono)
+  распознана дословно через штатный helper. Это проверка модели и протокола, не микрофона.
+- Локальный TTS: русский системный голос присутствует, `LocalSpeaker.speak` отработал.
+- Публичная выдача: `html.duckduckgo.com` отвечает 403 неназванному клиенту и 202
+  (страница-challenge) названному. Транспорт теперь называет клиента и принимает только 200,
+  а поиск использует `lite.duckduckgo.com`; наблюдены настоящие результаты по запросу OpenAI.
+  Ссылки выдачи ведут на другие origin и потому не становятся кликабельными элементами.
+
+Не проверено: живой OpenAI, живой Outlook OAuth и доставка, настоящий микрофон, а также
+матрица чистой/повторной установки, кириллических путей и прерываний.
+
 ## Открытые ворота
 
-### Дополнение 2026-10-14 — автоматическая диагностика и отчёты
+### Дополнение 2026-10-14: переустановка опубликованного main и самодиагностика
 
-В рамках этапа 9 установщик расширен по запросу пользователя: он проверяет безопасные
-локальные функции и сохраняет текущие результаты, в том числе при сбое и обычной отмене.
-Это переносимое дополнение, **не новая Windows-приёмка** и не реализация этапов 10–32.
+Запрос «установи заново» на ранее установленном ноутбуке теперь ведёт через
+`Update-Jarvis.cmd`: получить точный commit `main`, сохранить локальные правки/ветку,
+установить выбранный источник и сверить текущие отчёты. Clean main идёт fast-forward;
+dirty/non-main/diverged/detached — через отдельный worktree. Сеть недоступна — обновление
+не выдаётся за успешное. Офлайн-ремонт остаётся отдельным `Install-Jarvis.cmd`.
+Подробности и первый запрос для старой копии: [WINDOWS_UPDATE.md](WINDOWS_UPDATE.md).
 
-- `installation-report.json` теперь schema 2; рядом создаётся читаемый русский
-  `installation-report.md`. Каждая проверка имеет статус, фиксированную категорию,
-  длительность, границу доказательства и следующий шаг. Отчёт обновляется до и после
-  проверки; прежний успешный файл не заменяет текущий результат.
-- Bootstrap создаёт свои `installation-bootstrap.json`/`.md` с общим UUID `run_id`:
-  host, managed root/lock, runtime, application setup, launcher/shortcut. До безопасного
-  корня и exclusive lock отчёт находится в новом временном каталоге, путь виден в консоли.
-  PS source имеет UTF-8 BOM для русских строк Windows PowerShell 5.1.
-- Вместо остановки на первом импорте независимые ограниченные процессы проверяют все
-  компоненты, локальный Chromium/Vosk, устройства и SAPI. Обязательные ошибки или
-  отсутствующие результаты запрещают запуск и активацию кандидата.
-- Добавлены реальные локальные probes PermissionEngine/simulation/cancel/audit,
-  OfflineProvider/Runner и synthetic memory roundtrip. Используются только временные
-  данные. Native credential probe лишь строит backend, не читает/записывает secrets.
-- Исправлен cleanup: timeout/ошибка Windows taskkill не пропускает kill/wait прямого
-  дочернего процесса. Очистка полного Windows process tree по-прежнему требует native проверки.
-- Live модель, почта, запись/звук, UIA, public search, запуск из «Пуск» и полная приёмка
-  остаются `not_checked`/`pending`. `automatic_checks_passed` означает только описанную
-  автоматическую диагностику. GUI smoke по-прежнему проверяет demo shell.
+Сюда перенесена самодиагностика из локальной копии с сохранением native исправлений
+main (marker retries, venv redirector receipt, desktop/Start shortcuts и icon).
+Установщик пишет JSON schema 2 и русский Markdown до/после каждого шага, включая сбой
+и обычную отмену. Проверки идут отдельными ограниченными процессами, содержат реальные
+локальные permissions/planner/audit/memory упражнения и никогда не трогают аккаунты
+или звук. Ошибка обязательной проверки блокирует кандидата. Bootstrap имеет отдельный
+отчёт с общим run_id. Обновление связывает source_commit с receipt/active/отчётами;
+старый или неполный отчёт не может подтвердить новое обновление.
+[Охват и ограничения диагностики](INSTALLATION_DIAGNOSTICS.md).
 
-Охват, значения статусов, команды и невозможность гарантировать файл до старта скрипта
-или после hard kill описаны в [INSTALLATION_DIAGNOSTICS.md](INSTALLATION_DIAGNOSTICS.md).
-
-Проверка на Mac, Python 3.12.7, отдельный venv и `pip install -e ".[dev,voice]`:
-
-| Проверка | Результат дополнения |
-| --- | --- |
-| Focused installer/report/offline probes | 103 passed |
-| Full `QT_QPA_PLATFORM=offscreen python -m pytest` | 527 passed, 5 skipped |
-| Ruff check / format --check | Passed, 152 файла |
-| Mypy | Passed, 118 source files |
-| `python -m pip check` | No broken requirements |
-| Cocoa `python -m jarvis --smoke-test` | Success, exit 0 |
-| Интерактивный Cocoa `python -m jarvis` с временными данными | Planner/offline/execute: два `local.check: SUCCESS`, окна закрыты |
-| `python -m build` | Wheel и sdist собраны |
-| PowerShell 7.6.7 parser на Mac | Оба `.ps1` синтаксически разобраны; PS5.1/COM/Windows не запускались |
-
-Команды isolated probes `python -m jarvis.installation.probe --check permissions`,
-`--check planner`, `--check memory`, `--check offline_chromium` выполнены на Mac;
-это локальные исходы, не evidence Windows. Live credentials, model/mail API и аудио
-не использовались. Версии зависимостей не закреплялись; native gates остаются ниже.
-
-### Дополнение 2026-10-15 — один документ для отправки
-
-По запросу пользователя установка теперь сохраняет **`Jarvis-Report.html`** и текстовую
-копию **`Jarvis-Report.md`**. HTML самодостаточен: UTF-8, без JavaScript, внешних ресурсов,
-аккаунтных данных и зависимости от соседних файлов. Путь печатается после завершения.
-Основной каталог — `%LOCALAPPDATA%\JarvisInstall`; при раннем отказе используется
-напечатанный временный каталог. Сохраняются прежние исходные JSON/Markdown-отчёты.
-
-- PowerShell пишет консервативный документ даже без готового Python. В `finally`, если
-  runtime проверен, ограниченный stdlib-only exporter объединяет текущий bootstrap и
-  диагностику приложения. При сбое exporter остаётся консервативный документ.
-- Объединяются только одинаковые UUID `run_id`. Отсутствующий, устаревший, повреждённый,
-  чрезмерный или ссылающийся на symlink отчёт не используется как доказательство.
-  Произвольные label/evidence/exception/stdout/пути из JSON не копируются: используются
-  фиксированный каталог и разрешённые metadata версий/хэша исходников/Windows build.
-- Матрица перечисляет текущие функции и отдельно показывает фактические локальные
-  проверки, обнаружение компонентов и непроверенные реальные сценарии. Импорт Vosk,
-  обнаружение аудиоустройства или `202` не превращаются в доказательство речи/доставки.
-  Установщик не может отметить ручную приёмку успешной.
-- Добавлены ограниченные `browser_policy` и `outlook_local`: реальный PermissionEngine
-  проверяет browser schema/policy/simulation без backend, синтетический RAM-черновик,
-  очистку и запрет удалённого draft/send без approval. OAuth/Graph/credentials/сеть/аудио
-  не вызываются. Проверки не создают approval authority.
-- Исправлен обнаруженный при проверке перезаписи отчёта вызов .NET `File.Replace`:
-  вместо преобразуемого в пустую строку `$null` передаётся `[NullString]::Value`.
-  Это сохраняет возможность обновлять текущий отчёт после первой записи.
-
-Фактическая проверка на Mac, CPython 3.12.7, отдельный
-`/private/tmp/jarvis-share-report-venv`, установка `python -m pip install -e ".[dev,voice]"`:
+Проверка на Mac (Python 3.12.7, отдельный venv, `pip install -e ".[dev,voice]`):
 
 | Проверка | Результат |
 | --- | --- |
-| Exporter: matching/stale/malformed/secret exclusion, manual false-pass, CLI `-I -S` | 33 passed |
-| Offline diagnostic probes, включая новые browser/Outlook проверки | 23 passed |
-| Полный `QT_QPA_PLATFORM=offscreen python -m pytest -q` | **571 passed, 5 skipped**, 39.37 s |
-| `python -m ruff check .` / `python -m ruff format --check .` | Passed, 156 файлов |
-| `python -m mypy` / `python -m mypy --platform win32` | Passed, 120 source files; win32 — только статический анализ |
-| `python -m pip check` | No broken requirements |
-| `python -I -m jarvis.installation.probe --check browser_policy` / `--check outlook_local` | Оба `passed`; локальные синтетические данные |
-| Cocoa `python -m jarvis --smoke-test` | Success, exit 0 |
-| Интерактивный Cocoa `python -m jarvis`, временные данные | Через native UI: offline/execute, два `local.check: SUCCESS`; окно закрыто, exit 0 |
-| PowerShell 7.6.7 parser и ранний Mac-отказ bootstrap | Синтаксис принят; итоговые HTML/MD обновлены и путь показан при отказе host; Windows setup не запускался |
-| `python -m build` и проверка состава архивов | Wheel/sdist собраны; новые report/probe/exporter включены |
-| `git diff --check` | Passed |
+| Installer/report/offline focused tests до добавления commit-cases | 105 passed |
+| Git/PowerShell fixture update scenarios + report/active matching | 17 passed; только локальные bare repos, -SkipInstall |
+| Mac suite с `--ignore=tests/unit/test_windows_native.py` | 1071 passed, 6 skipped, включая source/active-pointer, Qt lifetime, GUI cycle collection и isolated smoke regressions |
+| Full pytest без ignore | Collection blocked: существующий Windows-only test_windows_native.py напрямую импортирует winreg |
+| Ruff check / format --check | Passed, 291 files |
+| Mypy `--platform win32` | Passed, 252 source files; статическая проверка, не Windows execution |
+| Обычный Mac mypy | 11 ошибок в существующих Windows-specific branches files.py/native.py/credentials.py; они не изменялись |
+| Pip check / build | Passed; wheel и sdist собраны |
+| Cocoa smoke | `success (simulated)` |
+| Интерактивный Cocoa main window, временные данные | Два local.check сделано; окно закрыто |
+| PowerShell 7.6.7 parser на Mac | Install/Update/Test синтаксически корректны; PS5.1/COM не проверены |
+| Windows hosted CI, commit 37b3963 | [Run 38550860924](https://github.com/xumezzan/JARVIS-Windows/actions/runs/38550860924): 1094 passed, 6 skipped; lint/format/mypy/pip check/smoke/build passed |
 
-Первый полный прогон имел один timeout entrypoint при чтении старого сгенерированного
-`__pycache__`; удалены только эти производные каталоги в `src`/`tests`, данные/исходники
-не менялись. Повторный focused entrypoint: 4 passed; финальный полный прогон выше прошёл.
-Визуальный просмотр HTML через встроенный браузер не выполнен: его политика запрещает
-`file:` URL. Структура и самостоятельность документа проверены тестами, без обхода политики.
-Зависимости не закреплялись, живые credentials/API и запись/озвучивание не использовались.
-Доставка изменений через опубликованный `main` этой локальной задачей не выполнялась.
+Полные обязательные Windows gates выполняются GitHub Actions на PR и должны быть зелёными
+до слияния. Они также не заменяют desktop/clean-machine/live acceptance. Для целевого
+ноутбука выполнить Update без SkipInstall, проверить source_commit, совпадение run_id,
+настоящее окно и оба ярлыка; пройти оставшуюся матрицу ниже.
 
-**Windows-установка, PS5.1/Win32/COM, полный MVP и живые сценарии остаются непроверенными.**
-Этот документ можно будет отправить в чат после установки на целевом ноутбуке;
-описание и точные Windows-команды — [INSTALLATION_DIAGNOSTICS.md](INSTALLATION_DIAGNOSTICS.md).
+Windows CI обнаружил существующий crash Qt при сборке мусора в worker thread;
+он воспроизвёлся и на исходном main (run 38537828112). Завершённый QThread теперь
+удерживается до C++ deletion через deleteLater в его GUI thread. Закрытие окна также
+останавливает дальнейшие credential lookups connection probe после текущего ограниченного
+вызова. Smoke явно отключает connection probe: автоматическая диагностика не читает
+личные credentials. Обычные UI tests используют синтетическое состояние подключений.
+Регрессии проверяют поток удаления, удержание до deferred deletion, остановку probe
+и отсутствие probe в diagnostic window; focused Qt suite: 34 passed, exit 0 на Mac.
 
-### Оставшаяся native-приёмка
+Повторный Windows run 38549532529 показал, что одного удержания QThread недостаточно:
+Python cycle collection снова сработала в planner worker. Поэтому приложение перед
+запуском любых workers отключает автоматический cycle collector и выполняет gc.collect
+таймером в GUI thread раз в секунду; обычный reference counting сохраняется. После
+drain восстанавливается прежнее состояние GC. Это решение следует ограничению Qt на
+[удаление QObjects в их owning thread](https://doc.qt.io/qt-6/threads-qobject.html) и
+использует стандартный [Python gc API](https://docs.python.org/3.13/library/gc.html).
+Регрессия создаёт cyclic QWidget и 10000 циклов в фоне: QWidget удаляется только GUI
+таймером, explicit collection из worker отклоняется, исходное GC setting сохраняется.
+Focused collection/planner/worker suite: 34 passed, exit 0 на Mac. Это ещё не native
+desktop acceptance; полные Windows gates остаются обязательны до публикации main.
+
+Smoke дополнительно выключает озвучивание результата, включённое обычным main window:
+автодиагностика не должна запускать TTS. Child-process regression выполняет настоящий
+entry point и фиксирует любую попытку начать VoiceWorker или credential probe, подменяя
+их до выполнения, чтобы даже регрессия не достигла устройств/credentials. Обычные UI
+tests также используют fixture recorder/speaker по умолчанию; explicit voice fixtures
+сохраняются. Focused worker/shell/voice suite после этого изменения: 63 passed на Mac.
+
+### Оставшаяся приёмка
+
+Обновлено после прогона 17.09.2026; что именно проверено — в
+[WINDOWS_ACCEPTANCE.md](WINDOWS_ACCEPTANCE.md), раздел «Результаты прогона 17.09.2026».
 
 1. Чистая Windows 11 x64: runtime 3.13.15, все wheels/native DLL, Authenticode, SAPI,
    permissions, кириллица/пробелы, первый/повторный запуск, ярлык, offline repeat и repair.
-2. Реальный Windows MVP: Notepad UIA/read-back, Chrome/VS Code, действительная поисковая
-   выдача, контекст, approvals, emergency stop, audit и все failure cases.
+   **Открыто:** требует отдельного профиля или VM.
+2. Реальный Windows MVP. **Закрыто 17.09:** Chrome и VS Code открываются и получают фокус,
+   полный набор тестов зелёный на Windows, живой DeepSeek отвечает по схеме.
+   **Открыто:** ввод в Блокнот с read-back (Windows восстанавливает вкладку — нужен Блокнот,
+   настроенный на новую сессию) и **действительная поисковая выдача**: источник отвечает
+   страницей-проверкой честно представившемуся клиенту после первых обращений, приложение
+   правильно отказывается выдавать её за результат. Это продуктовое ограничение единственного
+   источника, закрывается фазой 5 [плана агента](AGENT_PLAN.md).
 3. Настоящая речь и русский голос с явным удержанием пользователя; личные Outlook OAuth
-   и тестовая доставка после нормального approval; opt-in OpenAI.
+   и тестовая доставка после нормального approval. **Частично:** слово активации прошло
+   opt-in проверку без микрофона; живой микрофон и Outlook остаются за владельцем.
 4. После native-совместимости — constraints/хэши зависимостей и повтор clean install.
 
 Следующая задача: выполнить [WINDOWS_ACCEPTANCE.md](WINDOWS_ACCEPTANCE.md) на целевом

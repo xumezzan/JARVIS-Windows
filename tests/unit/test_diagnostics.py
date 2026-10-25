@@ -484,3 +484,59 @@ def test_report_write_failure_preserves_original_safe_setup_error(
     assert "SECRET" not in str(error.value) + captured.out + captured.err
     for path in root.glob("installation-report.*"):
         assert "SECRET" not in path.read_text(encoding="utf-8")
+
+
+def test_selected_commit_is_recorded_with_successful_activation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository, root = fixture_installation(tmp_path, monkeypatch)
+    commit = "a" * 40
+
+    def prepare(*args: Any) -> Path:
+        slot = root / "slots/b"
+        slot.mkdir()
+        return slot
+
+    def check(
+        slot: Path, model: str, install_root: Path, report: InstallationReport | None = None
+    ) -> dict[str, Any]:
+        assert report is not None
+        record_components(report)
+        return {}
+
+    monkeypatch.setattr(setup, "prepare_slot", prepare)
+    monkeypatch.setattr(setup, "check_slot", check)
+    monkeypatch.setattr(setup, "launch", lambda *args: None)
+    setup.install(repository, root, source_commit=commit)
+    assert read_report(root)["source_commit"] == commit
+    assert json.loads((root / "active.json").read_text())["source_commit"] == commit
+    assert json.loads((root / "slots/b/receipt.json").read_text())["source_commit"] == commit
+    assert commit in (root / "installation-report.md").read_text(encoding="utf-8")
+
+
+def test_failed_update_does_not_put_selected_commit_in_active_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository, root = fixture_installation(tmp_path, monkeypatch)
+
+    def fail(*args: Any) -> Path:
+        raise SetupError("Preparation failed.")
+
+    monkeypatch.setattr(setup, "prepare_slot", fail)
+    with pytest.raises(SetupError):
+        setup.install(repository, root, source_commit="b" * 40)
+    assert read_report(root)["source_commit"] == "b" * 40
+    assert read_report(root)["status"] == "failed"
+    assert "source_commit" not in json.loads((root / "active.json").read_text())
+    assert setup.active_slot(root) == "a"
+
+
+def test_invalid_commit_is_refused_without_recording_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository, root = fixture_installation(tmp_path, monkeypatch)
+    with pytest.raises(SetupError):
+        setup.install(repository, root, source_commit="SECRET untrusted source")
+    assert read_report(root)["status"] == "failed"
+    assert "SECRET" not in (root / "installation-report.json").read_text(encoding="utf-8")
+    assert setup.active_slot(root) == "a"

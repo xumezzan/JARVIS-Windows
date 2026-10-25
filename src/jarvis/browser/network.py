@@ -3,6 +3,7 @@
 import socket
 import ssl
 from dataclasses import dataclass
+from importlib.metadata import version
 
 import aiohttp
 import certifi
@@ -12,6 +13,10 @@ from yarl import URL
 from jarvis.security.browser_policy import NetworkPolicy
 from jarvis.tools.base import ToolError
 from jarvis.tools.browser import RequestIntent
+
+# Name the client honestly: an unidentified request is refused by common origins.
+# This never imitates a browser and never answers an anti-bot challenge.
+USER_AGENT = f"Jarvis/{version('jarvis-windows')} (+local assistant)"
 
 
 class PolicyResolver(AbstractResolver):
@@ -90,13 +95,17 @@ async def fetch(intent: RequestIntent, policy: NetworkPolicy) -> DocumentRespons
                 "Accept": "text/html",
                 "Accept-Encoding": "identity",
                 "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": USER_AGENT,
             },
             allow_redirects=False,
         ) as response,
     ):
         if 300 <= response.status < 400:
             raise ToolError("network_denied")
-        if not 200 <= response.status < 300:
+        # Only a complete 200 document is an observation. A search origin answers an
+        # anti-bot challenge with 202, and 204/206 carry no full document; none of them
+        # may be presented as the page the user asked for.
+        if response.status != 200:
             raise ToolError("browser_failure")
         content_type = response.headers.get("Content-Type", "")
         if not content_type.lower().startswith("text/html") or response.headers.get(

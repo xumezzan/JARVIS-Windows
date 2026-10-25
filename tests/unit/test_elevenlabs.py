@@ -100,7 +100,9 @@ def test_unavailable_voices_never_generate(voice_id: str) -> None:
     assert all(payload is None for _, payload in client.calls)
 
 
-@pytest.mark.parametrize("audio", [b"", b"a", b"a" * (MAX_AUDIO_BYTES + 2)])
+@pytest.mark.parametrize(
+    "audio", [b"", b"a", b"a" * (MAX_AUDIO_BYTES + 2)], ids=["empty", "short", "oversized"]
+)
 def test_bad_audio_never_reaches_playback(audio: bytes) -> None:
     client = FixtureClient()
     client.audio = audio

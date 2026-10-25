@@ -20,6 +20,7 @@ class ToolError(Exception):
         code: Literal[
             "unsupported_platform",
             "application_missing",
+            "application_ambiguous",
             "target_changed",
             "control_unsupported",
             "native_timeout",
@@ -40,6 +41,9 @@ class ToolError(Exception):
             "computation_rejected",
             "computation_limit",
             "worker_timeout",
+            "path_denied",
+            "file_conflict",
+            "file_too_large",
         ],
     ) -> None:
         self.code = code

@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -195,7 +196,16 @@ def prepare_slot(
     if slot.exists():
         if not (slot / ".jarvis-slot").is_file():
             raise SetupError("Refusing to replace a directory not owned by this installer.")
-        shutil.rmtree(slot)  # Only the inactive, marked slot; app data is elsewhere.
+        try:
+            shutil.rmtree(slot)  # Only the inactive, marked slot; app data is elsewhere.
+        except OSError as error:
+            # Setup starts Jarvis to see its window and deliberately leaves it running, so
+            # the copy from an earlier run still holds this slot open. Say so: a file-in-use
+            # error arriving as an unexplained failure sends the owner looking at the network.
+            raise SetupError(
+                "Cannot replace the previous components: their files are still in use. "
+                "Close every open Jarvis window and rerun setup."
+            ) from error
     slot.mkdir(parents=True)
     (slot / ".jarvis-slot").write_text("1", encoding="ascii")
     env = slot_environment(slot, asset["directory"])
@@ -343,6 +353,17 @@ def check_slot(
     return checks
 
 
+def shown_window(receipt: object, launched: int) -> bool:
+    """Bind the receipt to the launched process; a venv redirector reports its own child."""
+    if not isinstance(receipt, dict):
+        return False
+    return (
+        receipt.get("platform") == "windows"
+        and receipt.get("visible") is True
+        and launched in (receipt.get("pid"), receipt.get("ppid"))
+    )
+
+
 def launch(slot: Path, model: str, root: Path) -> None:
     """Observe a real shown Qt window via a fresh PID-bound receipt; leave it running."""
     report = root / "startup.json"
@@ -367,7 +388,7 @@ def launch(slot: Path, model: str, root: Path) -> None:
         while time.monotonic() < deadline and process.poll() is None:
             try:
                 value = json.loads(report.read_text(encoding="utf-8"))
-                if value == {"pid": process.pid, "platform": "windows", "visible": True}:
+                if shown_window(value, process.pid):
                     observed = True
                     return
             except (OSError, ValueError):
@@ -380,11 +401,16 @@ def launch(slot: Path, model: str, root: Path) -> None:
     raise SetupError("The real Windows window was not observed. Check desktop/session and rerun.")
 
 
-def install(repository: Path, root: Path, *, run_id: str | None = None) -> None:
+def install(
+    repository: Path, root: Path, *, run_id: str | None = None, source_commit: str | None = None
+) -> None:
     reject_links(root)
     report = InstallationReport(root, run_id)
     try:
         report.record("preflight", "running")
+        if source_commit is not None and not re.fullmatch(r"[a-f0-9]{40}", source_commit):
+            raise SetupError("Invalid source commit; installation was not started.")
+        report.value["source_commit"] = source_commit
         data_path = os.environ.get("JARVIS_DATA_DIR")
         if data_path and (
             not Path(data_path).is_absolute()
@@ -429,7 +455,10 @@ def install(repository: Path, root: Path, *, run_id: str | None = None) -> None:
         if source_digest(repository) != fingerprint:
             raise SetupError("Repository changed during setup. Close Jarvis and rerun setup.")
         if not reusable:
-            atomic_json(slot / "receipt.json", {"source": fingerprint, "files": inventory(slot)})
+            atomic_json(
+                slot / "receipt.json",
+                {"source": fingerprint, "source_commit": source_commit, "files": inventory(slot)},
+            )
         report.record("source_integrity", "passed")
         # Verify the candidate before changing the pointer used by the stable launcher.
         report.record("native_window", "running")
@@ -439,7 +468,10 @@ def install(repository: Path, root: Path, *, run_id: str | None = None) -> None:
         report.value["native_window"] = "observed"
         report.record("native_window", "passed")
         report.record("activation", "running")
-        atomic_json(root / "active.json", {"slot": slot.name, "model": asset["directory"]})
+        atomic_json(
+            root / "active.json",
+            {"slot": slot.name, "model": asset["directory"], "source_commit": source_commit},
+        )
         report.record("activation", "passed")
         report.finish("automatic_checks_passed")
         print(
@@ -472,13 +504,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Jarvis Windows setup (run Install-Jarvis.ps1).")
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--run-id", help="Bootstrap UUID identifying this installation attempt.")
+    parser.add_argument(
+        "--source-commit", help="Published commit selected by the explicit updater."
+    )
     args = parser.parse_args()
     if not supported_host():
         print("Setup requires an interactive Windows 11 x64 session.", file=sys.stderr)
         return 2
     repository = Path(__file__).resolve().parents[3]
     try:
-        install(repository, args.root.absolute(), run_id=args.run_id)
+        install(
+            repository, args.root.absolute(), run_id=args.run_id, source_commit=args.source_commit
+        )
         return 0
     except KeyboardInterrupt:
         print(
@@ -487,13 +524,18 @@ def main() -> int:
         )
         return 130
     except (SetupError, OSError, subprocess.SubprocessError, ValueError) as error:
-        message = (
-            str(error)
-            if isinstance(error, SetupError)
-            else (
-                "Setup failed at the displayed step. "
-                "Check network, permissions, disk and runtime; rerun."
+        if isinstance(error, SetupError):
+            message = str(error)
+        else:
+            # Name what went wrong. The previous text promised a step that a failure before
+            # the first printed step never displayed, and it dropped the cause entirely.
+            # The operating system's own wording is localised and arrives mangled through a
+            # redirected console, so only the class and the numeric code are reported.
+            code = getattr(error, "winerror", None) or getattr(error, "errno", None)
+            named = type(error).__name__ + (f" {code}" if code else "")
+            message = (
+                f"Setup failed ({named}). Close open Jarvis windows, then check network, "
+                "permissions, disk and runtime; rerun."
             )
-        )
         print(message, file=sys.stderr)
         return 1

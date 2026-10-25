@@ -27,9 +27,11 @@ def test_window_selection_preview_and_readback(qtbot: QtBot, tmp_path: Path) -> 
         assert window.target_choice.count() == 1
         choose(window, "windows.type_text")
         window.body.setPlainText("Jarvis integration test")
+        assert probe.text == ""
+        # Typing is ROUTINE: it runs straight away, into the window just observed.
         with qtbot.waitSignal(window.task_finished):
             QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
-            assert window.approval_dialog is None
+        assert window.approval_dialog is None
         assert "прочитан обратно" in window.status_label.text()
         assert probe.text == "Jarvis integration test"
         assert window.target_choice.count() == 0

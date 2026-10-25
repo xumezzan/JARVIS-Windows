@@ -10,7 +10,14 @@ from uuid import uuid4
 
 import pytest
 
-from jarvis.core.planner.contracts import Limits, PlannerInput, Proposal, Step
+from jarvis.core.planner.contracts import (
+    Answer,
+    Limits,
+    PlannerInput,
+    Proposal,
+    ProviderError,
+    Step,
+)
 from jarvis.core.planner.offline import OfflineProvider, call
 from jarvis.core.planner.runner import Runner
 from jarvis.observability.audit import AuditLog
@@ -26,9 +33,10 @@ from jarvis.tools.windows import NativeRequest, WindowsResult, register_windows
 
 def test_default_limits_and_hard_caps() -> None:
     assert Limits().max_steps == 30 and Limits().total_seconds == 300
-    for kwargs in ({"max_steps": 31}, {"total_seconds": 301}):
-        with pytest.raises(ValueError):
-            Limits(**kwargs)
+    with pytest.raises(ValueError):
+        Limits(max_steps=31)
+    with pytest.raises(ValueError):
+        Limits(total_seconds=301)
 
 
 @pytest.mark.asyncio
@@ -225,6 +233,28 @@ MESSAGE = {"recipient": "test", "body": "PRIVATE_COMMAND_SENTINEL"}
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", [Mode.SIMULATION, Mode.EXECUTE])
+@pytest.mark.parametrize(
+    "command,tool,arguments",
+    [
+        ("найди файл отчёт.txt", "files.find", {"query": "отчёт.txt"}),
+        ("НАЙДИ ФАЙЛ   план   встречи.md", "files.find", {"query": "план встречи.md"}),
+        ("найди OpenAI", "browser.search", {"query": "OpenAI"}),
+        ("найди форматы файлов", "browser.search", {"query": "форматы файлов"}),
+    ],
+)
+async def test_offline_file_search_stays_local_and_web_search_keeps_its_route(
+    mode: Mode, command: str, tool: str, arguments: dict[str, str]
+) -> None:
+    provider = OfflineProvider()
+    proposal = await provider.propose(PlannerInput(command, (), (), mode, "[]"))
+    assert proposal.kind == "call" and proposal.tool == tool
+    assert json.loads(proposal.arguments) == arguments
+    step = Step(tool, Outcome(uuid4(), Status.SUCCESS))
+    assert (await provider.propose(PlannerInput(command, (), (step,), mode, "[]"))).kind == "finish"
+
+
+@pytest.mark.asyncio
 async def test_multistep_actual_facts_and_redacted_audit(harness: Harness) -> None:
     runner = harness.runner(
         Scripted([call("local.check", {}), call("local.append_message", MESSAGE)])
@@ -321,7 +351,7 @@ async def test_step_limit_stops_before_extra_effect(harness: Harness) -> None:
 
 @pytest.mark.asyncio
 async def test_clarification_resumes_same_task(harness: Harness) -> None:
-    result = await harness.runner(OfflineProvider()).run("открой приложение", Mode.EXECUTE)
+    result = await harness.runner(OfflineProvider()).run("сделай что-нибудь", Mode.EXECUTE)
     assert result.status == "finished" and result.steps[0].tool == "local.check"
 
 
@@ -412,5 +442,53 @@ async def test_offline_clarification_reobserves_nonempty_notepad() -> None:
     assert (
         await provider.propose(PlannerInput(command, (), (step,), Mode.EXECUTE, "[]"))
     ).kind == "clarify"
-    answer = PlannerInput(command, (command,), (step,), Mode.EXECUTE, "[]")
+    answer = PlannerInput(
+        command, (Answer("какое приложение?", command),), (step,), Mode.EXECUTE, "[]"
+    )
     assert (await provider.propose(answer)).tool == "windows.open_app"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("vendor", ["deepseek", "openai"])
+async def test_every_provider_offers_the_levels_that_do_ordinary_work(
+    tmp_path: Path, vendor: str
+) -> None:
+    """A catalogue that hides ROUTINE hides typing, writing and the whole browser.
+
+    Both catalogues were written when the levels were SAFE and CONFIRM, and neither was
+    revisited when ROUTINE arrived between them, so the model was asked to work with the
+    reading tools alone and answered by naming tools that do not exist.
+    """
+    from jarvis.core.planner.deepseek_provider import DeepSeekProvider
+    from jarvis.core.planner.openai_provider import OpenAIProvider
+    from jarvis.files.policy import FilePolicy
+    from jarvis.platforms.files import LocalFiles
+    from jarvis.tools.files import register_files
+
+    registry, _ = local_registry()
+    register_files(registry, FilePolicy((str(tmp_path),)), LocalFiles())
+    catalog = registry.discover()
+    assert any(tool["risk"] == "ROUTINE" for tool in catalog), "fixture must carry a ROUTINE tool"
+    seen: list[dict[str, object]] = []
+
+    async def transport(payload: dict[str, object]) -> bytes:
+        seen.append(payload)
+        raise ProviderError("provider_failed")  # The catalogue is the whole subject here.
+
+    provider = (
+        DeepSeekProvider("deepseek-flash", transport=transport)
+        if vendor == "deepseek"
+        else OpenAIProvider("test-model", transport=transport)
+    )
+    data = PlannerInput("напиши текст в файл", (), (), Mode.EXECUTE, json.dumps(catalog))
+    with pytest.raises(ProviderError):
+        await provider.propose(data)
+    tools = seen[0]["tools"]
+    assert isinstance(tools, list)
+    offered = {
+        str(tool["name"] if vendor == "openai" else tool["function"]["name"]) for tool in tools
+    }
+    assert "files__write_text" in offered, "the model cannot ask for what it is never shown"
+    assert "windows__type_text" not in offered  # not registered in this fixture
+    # What must never be proposed stays out, whatever else changes.
+    assert "local__critical_test" not in offered and "local__blocked_test" not in offered

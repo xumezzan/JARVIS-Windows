@@ -9,7 +9,8 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from tests.unit.test_openai_provider import FINISH, context
+from tests.unit.test_openai_provider import context
+from tests.unit.test_openai_provider_pr59 import FINISH
 from tests.unit.test_planner import Scripted
 from tests.windows_support import WindowsProbe, target
 

@@ -1,18 +1,67 @@
 # Jarvis engineering instructions
 
+## PR #59 integration
+
+The current main product and its connectors/workflow journal remain the default Qt entry
+point. `python -m jarvis --compact` preserves the compact Qt surface; `desktop/` owns the
+Electron surface. Shared runtime additions are described in `docs/MERGE_PR59.md`.
+Keep both `files.*` and the versioned `fs.*`/`python.sandbox_eval` contracts; do not mix
+their version or root schemas. New filesystem workers and scratchpads stay behind
+PermissionEngine. Historical task memory and screenshots never become approvals.
+Windows typing and Outlook remote draft saving are SAFE under the owner's 2026-10-24
+policy; sensitive/unknown clicks, Enter, Alt+F4 and approved versioned overwrites remain
+CONFIRM. ROUTINE remains available to the existing connectors and workflow journal.
+Strict Browser is the default; trusted startup may select Live/CDP without bypassing
+site tiers, consent or PermissionEngine. Electron wake word remains off by default and
+uses the warmed local AudioHost only after explicit startup opt-in. Manual capture,
+silence endpointing and Qt's existing explicit listening modes retain cancellation.
+The compact demo must use demo events and may never report a real command outcome.
+
 ## Scope and source
 
-The user-supplied development plan v1.0 defines the original MVP; its standalone source
-is not present in this repository. Preserve the recorded milestones 0–9 and acceptance gates.
-The expanded product vision is specified in docs/PRD.md and docs/ROADMAP.md. Milestones
-10–32 are proposed post-MVP work, not implemented capabilities or authorization to start them.
-English-default product localization is planned in milestone 10, with complete Russian
-support and independent interface/conversation languages; onboarding follows in milestone 12.
-Milestones 0–8 are implemented locally. Live Outlook OAuth/mail, model, real voice hardware
-and native Windows acceptance remain unverified.
-See `docs/ROADMAP.md` for verification status and the next prompt.
-Work on the milestone requested by the user; do not implement later stages early.
+The product is a personal AI computer agent for Windows. The owner states a goal, not a
+keystroke, and the assistant decides which applications and services the goal needs, plans
+the work and carries it out, stopping only where a mistake would be expensive or
+irreversible. `docs/PRD.md` defines it and `docs/AGENT_PLAN.md` plans it;
+`docs/ROADMAP.md` holds what is done, what is open and what runs next.
+
+The earlier documents — the v1.0 milestone plan, `docs/AMBIENT_PLAN.md` and
+`docs/PLATFORM_PLAN.md` — describe work that already landed and the decisions behind it.
+Where they look forward, `docs/AGENT_PLAN.md` supersedes them; in particular it reverses
+their "no screen reading, no clicks, no clipboard" position by explicit owner decision.
+
+Milestones 0–9 and the 0.2–0.3 phases are implemented locally. The live/Windows status is
+tracked in `docs/ROADMAP.md` and `docs/WINDOWS_ACCEPTANCE.md`; those are the source of truth,
+not this summary. At the current roadmap state, live DeepSeek and one real-microphone task
+have passed, while wake-word/voice-approval acceptance, live Outlook, the clean-VM/offline
+installation cases and full Windows E2E remain open. Phase 1 is implemented and live-tested
+except for the owner decision R7; phase 2's connectors are implemented but have not been
+validated against live services. The next planned action is the live phase 2 check on the
+owner's Windows machine. Do not start phase 5 until that gate is complete, and do not claim
+fixture or hosted-CI results as live-service or full-product acceptance.
+Work on the phase requested by the user; do not implement later phases early.
 Inspect existing instructions and changes before edits and preserve unrelated work.
+
+## Branches, commits and pull requests
+
+The owner works on this repository from several sessions at once, so the repository - not a
+chat - is where the work lives. Everything done is committed and pushed before the session
+ends; nothing waits in a working copy for a chat that may never come back.
+
+One branch per change, always cut from the current `main`, and its pull request opens against
+`main`. Never base a branch on another open branch. A stacked pull request merges into its
+base rather than into `main`, so the work stops reaching the product while every review looks
+finished - that already happened here to six changes at once. When a change genuinely needs
+another one first, land the first in `main` and branch again.
+
+Before starting, fetch and check out `main`, and look at what another session may have pushed
+in the meantime. Never commit onto a branch this session did not create: if the working copy
+is sitting on one, move the commit to its own branch and restore the other branch to its
+published state.
+
+Name a branch `feat/`, `fix/` or `chore/` plus a short kebab description of the change. Say
+in the commit message what changed for the owner and why. Delete a branch once its pull
+request is merged; `main` is the only long-lived branch.
 
 ## Target installation workflow (milestone 9 requirement)
 
@@ -29,22 +78,21 @@ Do not require manual Python/pip setup. Read docs/MILESTONE_9.md and
 docs/WINDOWS_ACCEPTANCE.md. The CMD uses process-only execution policy, never persistent
 policy changes; honor Group Policy, SmartScreen, UAC and user-owned credential entry.
 Do not treat fixture checks or a shown shell as completion of the full MVP scenario.
-After installation success, failure or ordinary cancellation, inspect and show the current
-`%LOCALAPPDATA%\JarvisInstall\Jarvis-Report.html` (or the printed temporary fallback path).
-`Jarvis-Report.md` is the text alternative. The user can send either standalone file back
-without logs or account data. Merge only matching bootstrap/application `run_id`; never use
-stale results or mark unobserved manual acceptance passed. Keep component detection distinct
-from actual functional checks. OAuth, microphone gestures and exact UI approvals remain
-user actions; the report does not authorize them. See docs/INSTALLATION_DIAGNOSTICS.md.
 
-On a previously installed laptop, "install again", "reinstall", "update Jarvis" or
-"установи заново" means fetch the latest published `main`, preserve existing local work,
-then run the current `scripts/windows/Update-Jarvis.cmd` and inspect its update report,
-matching installation reports and real window. If this old checkout has no updater,
-prepare a clean checkout of the exact published main commit first. Do not reset/clean
-user changes or require manual Python/pip setup. Local/offline repair explicitly uses
-Install-Jarvis.cmd and is not a new-version update. Unpublished changes on another
-computer cannot be downloaded. Follow docs/WINDOWS_UPDATE.md when present in current main.
+An owner request such as "install again", "reinstall", "update Jarvis" or "установи заново"
+on a previously installed laptop means obtain the latest published `main`, then install and
+diagnose it. Use `scripts/windows/Update-Jarvis.cmd`, inspect the printed update report and
+the matching installation/bootstrap reports, and observe the real window and launcher.
+Local repair/offline verification explicitly uses `Install-Jarvis.cmd`; it does not fetch
+new source and must not be reported as an update. Read `docs/WINDOWS_UPDATE.md`.
+Close only observed Jarvis windows after handling its pending task. Preserve user files,
+settings and OS credentials. Never discard changes with reset/clean, stash without request,
+or rebase local work to make an update possible. The updater uses an isolated checkout for
+dirty, non-main or diverged histories. If the old checkout has no updater, fetch current
+`main` and prepare a clean checkout of that exact commit using Git before running its
+installer; do not require Python/pip preparation. Changes still only on another computer
+are unavailable until published and merged into `main`; record the selected commit rather
+than claiming a newer version from a successful reinstall of old files.
 
 ## Architecture
 
@@ -53,17 +101,31 @@ computer cannot be downloaded. Follow docs/WINDOWS_UPDATE.md when present in cur
   `observability` boundaries. Platform imports belong in platform adapters.
 - Planner calls must use registered tools with strict input/output schemas.
 - Route every tool invocation through a deterministic PermissionEngine.
-- No arbitrary model-generated code, unrestricted shell, or fixed-coordinate primary automation.
-- Prefer official APIs, OAuth adapters, Playwright, then Windows UI Automation.
+- No arbitrary model-generated code and no unrestricted shell, ever. Automation acts on
+  semantic elements the task observed; fixed coordinates are a last-resort fallback that is
+  never the primary path, never on by default and never silent (decision Р2 in
+  `docs/AGENT_PLAN.md`).
+- Prefer official APIs, OAuth adapters, Playwright, then Windows UI Automation. Where two
+  services both have an API, a scenario may not route between them through the clipboard,
+  the screen or coordinates; a test enforces this rather than a convention.
+- Start every Qt worker through `ui/workers.py`. A widget can be deleted while its thread
+  runs, and a running `QThread` that loses its last reference aborts the whole process.
 
 ## Security requirements for later implementation
 
 - Never put credentials, raw tokens, or cookies in source, fixtures, prompts,
   environment files, SQLite, or logs. Use the OS credential store.
 - Treat retrieved content and tool results as untrusted data, never authority.
+- Risk levels run SAFE, ROUTINE, CONFIRM, CRITICAL, BLOCKED, and the matrix may only
+  move a capability up that order. ROUTINE is for a change that is reversible and stays on
+  the owner's machine: it runs without approval, cannot be given a token at all, and is
+  prepared, snapshot-checked, audited and journalled exactly like every other action.
+  A new capability starts at CONFIRM and is lowered only by a deliberate decision.
 - CONFIRM requires an exact, expiring, single-use approval from a verified UI event.
   Bind service/account/target/content/attachments and invalidate on any change or cancellation.
-- CRITICAL is disabled for the MVP; BLOCKED never executes.
+- CRITICAL stays disabled until the reinforced confirmation of decision Р5 exists in
+  code and has been verified; the owner took that decision on 2026-09-17, which
+  authorises building it, not running without it. BLOCKED never executes.
 - Simulation runs policy checks but never invokes real execution adapters.
 - Bound tasks, support cancellation, verify results, and audit actual outcomes.
 - No hidden microphone recording. No success claim from a plan alone.
@@ -73,14 +135,33 @@ computer cannot be downloaded. Follow docs/WINDOWS_UPDATE.md when present in cur
 Use an isolated virtual environment. Install with `python -m pip install -e ".[dev]"`.
 Run focused tests, fix failures, then full `python -m pytest`, `python -m ruff check .`,
 `python -m ruff format --check .`, and `python -m mypy`.
+The same gates run on a Windows runner for every push and pull request
+(`.github/workflows/checks.yml`). Running them locally is how you find failures early,
+not how you finish: a change is done when they pass there, because "the tests pass" has
+to mean more than "they passed on the machine that wrote them". Never merge over a red
+run, and never weaken a check to make it green.
 Run `python -m jarvis --smoke-test` and build with `python -m build`.
-Use `python -m jarvis` for interactive GUI verification. The command shell remains a demo;
-the permissions and planner windows run local, Windows, and browser tools through PermissionEngine.
+Use `python -m jarvis` for interactive GUI verification. The command bar, the permissions
+window and the planner window all run local, Windows, and browser tools through PermissionEngine;
+the main window drives one planner session and hosts its prompts. Autonomous mode is an explicit,
+visible user setting: it replaces the per-step human review only, and the approval token is still
+issued by the UI-owned authority, audited before issue, expiring, single-use and bound to the exact
+action snapshot. BLOCKED and CRITICAL stay disabled.
 Windows calls belong in the killable helper, never directly in the UI/event loop.
-Ordinary navigation, editor typing, clipboard operations and observed non-sensitive clicks
-are SAFE per docs/PERMISSION_POLICY.md (user request 2026-10-24). Preserve exact process,
-window, editor, content and selected-tab identity. Sensitive/unknown clicks, Enter and
-Alt+F4 remain CONFIRM; do not add unrestricted keys or clipboard fallbacks.
+windows.open_app starts any installed application the user can start: resolve the spoken
+name through the Windows apps folder, Start menu, App Paths and system tools, refuse an
+ambiguous name, and never launch a script host or interpreter by name. A launched window is
+identified by its own executable, never by the requested word. No user text ever becomes a
+path, argument or command line.
+Typing is ROUTINE and reaches only a field the caller observed in this task, in a window
+identified exactly by process, start time, handle and runtime id. A field is matched by its
+role, class, automation id, name and selected tab, because an application may rebuild the
+control and change its handle without changing the field; an ambiguous or missing match is
+refused. Password and read-only fields are never targets, and no observation ever returns
+the content of a field. Existing content stays unless the caller asks to replace it, and
+replacing selects the field with a directed message first. Write through the control's own
+window message when it has one, otherwise the application's value pattern. Do not add global
+keys, clipboard, coordinates or a submit key.
 Preserve exact immutable action snapshots, UI-only approval authority, atomic token consumption,
 and fail-closed durable audit before adapter calls. Simulation must never call adapter hooks.
 Update documentation with commands, actual results, decisions, and limitations.
@@ -91,15 +172,30 @@ before its real Windows acceptance scenario passes.
 Before pinning dependencies, check official documentation and the real Windows target.
 Dependency versions are intentionally unpinned until that verification.
 
+## File boundary
+
+Files are reachable only inside an explicit folder allowlist, which defaults to the user's
+own document folders and never includes the installation, the repository or system
+directories. Every path is resolved before it is judged, so a link or a parent segment
+cannot lead outside; the decision is a pure policy hook, so simulation refuses exactly what
+execution refuses. Executable and script extensions are never written, renamed into or
+opened. Only plain text is read or written as text, with a size bound. Reading, listing and
+finding are SAFE; writing, renaming and opening are ROUTINE, and recycling stays CONFIRM.
+Existing content is never replaced unless the caller asks, and a write is staged and renamed
+into place.
+Deletion goes to the recycle bin and nowhere else: there is no permanent delete, and folders
+are not removed. An observation returns names, sizes and paths, never a directory tree of
+somewhere else. Do not add shell globbing, path patterns from model output, or an
+"open anything" tool.
+
 ## Browser boundary (milestone 4)
 
-User-authorized expansion on 2026-10-24: the original boundary below is **Strict Sandbox**,
-the default. Explicit `JARVIS_BROWSER_MODE=live` enables JS/cookies/subresources and HTTPS
-redirects; optional loopback `JARVIS_BROWSER_CDP_ENDPOINT` attaches the user's debugging
-Chrome context. See docs/BROWSER_MODES.md for exact behavior and weaker network guarantees.
-Keep mode/endpoint in trusted startup configuration, never model/tool/page inputs.
-Preserve simulation purity and PermissionEngine; live JS buttons/POST forms are CONFIRM.
-Never close an attached Chrome context/browser on shutdown or export its cookies.
+Risk depends on the site as well as on the operation. A password manager's domains are
+refused before the allowlist and before any test capability is considered, so nothing can
+reopen them; money, infrastructure and admin consoles are readable and unwritable until the
+reinforced confirmation of decision Р5 exists. Tier lists name bare domains and cover their
+subdomains, while the allowlist keeps requiring exact origins: a loose permission grants
+more than the owner allowed, a loose refusal only denies more than they named.
 
 Keep browser policy pure and synchronous at registry normalization, including simulation.
 DNS/network/page observations belong only to real execution. Use the owned anonymous
@@ -117,8 +213,10 @@ not Windows acceptance or proof that a public search engine returned actual sear
 ## Planner boundary (milestone 5)
 
 Keep one proposed tool per step, bounded steps/questions/provider and total time, no retries
-of issued effects, and factual results generated from engine outcomes. Reject unobserved
-Windows/browser targets. Clarification is user input, never approval. Only the existing
+of issued effects, and factual results generated from engine outcomes. The bound may be
+raised for a long task only together with the durable run that carries it: a journal, an
+idempotency key per effect and resumption after a restart, never on trust alone. Reject
+unobserved Windows/browser targets. Clarification is user input, never approval. Only the existing
 verified approval button owns authority; providers receive no approval capability.
 Default to offline recipes and simulation. Cloud use requires explicit UI disclosure;
 it sends commands and observations even when tools are simulated. Model output and page
@@ -130,20 +228,21 @@ Real model checks require --run-model and JARVIS_PLANNER_MODEL; do not claim ver
 
 ## Voice boundary (milestone 6)
 
-User-authorized expansion 2026-10-25: Electron may opt into local background wake-word
-listening with trusted startup JARVIS_VOICE_WAKE_WORD=1 (default 0). Reuse the warmed
-AudioHost/Vosk model and fixed Russian grammar; no model download or cloud audio.
-Show a persistent microphone indicator; Stop suspends listening until explicit resume.
-Pause/drain wake listening before tasks, approvals, manual capture, auxiliary work and TTS.
-Wake detection may start bounded EnergyEndpoint command capture without a hold gesture;
-it never supplies action approval, cloud/history consent, or enables voice autostart.
-Manual push-to-talk keeps its hold/focus-loss cancellation. Wake capture is explicitly
-background-authorized; Qt continues to use manual capture. RMS threshold/calibration
-are trusted startup settings. See docs/WAKE_WORD_HUD.md for wiring and verification.
-
-Keep default push-to-talk visible and bound to a held UI gesture; background capture
-is allowed only in the explicitly opted-in Electron wake mode above. Release
-stops recording; focus loss, Stop, Escape and close cancel and dispose helpers. Local
+Push-to-talk stays visible and bound to a held UI gesture. Hands-free standing capture is
+the owner's explicit choice and is not background capture: it is off by default, switched on
+only from a visible control, shows a recording indicator the whole time, ends each phrase on
+silence, and stops on switch-off, device failure, window close and shutdown. It is gated by
+a local wake listener: while it is armed nothing is recorded or recognised, because the
+listener runs on a two-outcome grammar - the name, or not the name - and answers with one
+boolean. Only after the name is heard does the ordinary recorder start, and only then is a
+phrase recognised at all; the phrase itself need not repeat the name. The decision is taken
+on finalised segments and on the recognised word's own confidence, never on a partial
+hypothesis, because a grammar that small offers its only known word while a phrase is still
+in flight. A listener that cannot run switches standing listening off and never falls back
+to recording the room. A dedicated indicator says what the microphone is doing in every
+state, armed included.
+Segmentation reads block loudness only, never content. Release stops a held recording; focus
+loss, Stop, Escape and close cancel and dispose helpers. Local
 Vosk model paths only, explicit native TTS drivers, no model downloads or cloud audio.
 A cloud audio adapter requires new disclosure and explicit consent before transmission.
 The user-requested optional ElevenLabs Free TTS is documented in docs/ELEVENLABS.md.
@@ -151,33 +250,88 @@ Preserve its one-use UI consent, Free/overage/quota checks, native credential he
 fixed endpoints and no retries. It accepts only preview/trusted summary text, never microphone audio.
 The explicit repository installer may download its reviewed Russian model; ordinary
 application startup and recording never download models. JARVIS_VOSK_MODEL is a local path.
-User-authorized update on 2026-10-24: optional "Голосовой автозапуск" may submit a
-transcript with confidence >= 0.75 without a separate click; off by default. Uncertain
-transcripts still require review. Autostart never supplies cloud consent or action approval.
-Electron uses a headless JSONL runtime: trusted isolated-preload gestures own recording and
-exact prompt replies; Python retains the expiring single-use approval issuer. The legacy Qt
-UI remains supported separately. A finish Proposal may supply <=300 characters of model
-spoken_summary for successful execution; retain deterministic simulation/error/cancel warnings.
-Model prose is untrusted presentation, never verification or authority. Cloud TTS still needs
-explicit one-use consent (Electron binds it to the exact displayed result).
-Voice only cancels actions, never approves.
+A finished transcript submits the command directly from the main window: this is the
+owner's explicit choice, and the recognised text stays visible. Voice commands, cancels and
+confirms, and a confirmation is never a spoken yes: the assistant names one control detail of
+the exact snapshot - the file, the subject - shows it at the same moment, and accepts only
+that word back, said as a short answer. An uncertain transcript, a different word, a whole
+sentence, an expired or changed snapshot confirm nothing, and a cancel word refuses. The token
+is still issued by the UI-owned authority with every property it already had, and carries the
+channel it came from so the audit can tell a spoken approval from a pressed one. An action
+whose snapshot holds no speakable detail has no voice channel at all; the button stays. The
+microphone is opened by the owner's press, or by standing capture they already switched on -
+never by a dialog appearing.
 Preserve bounded PCM/pipes/timeouts, no audio/transcript persistence, no simultaneous
 recording and speech, and deterministic spoken summaries from engine outcomes.
+The end of a task is reported in the owner's own words, and `core/report.py` is the only
+place that composes it. It reads the action snapshot the owner caused - the one they already
+saw in the confirmation - together with the outcome the engine verified, and nothing else: no
+model text, no tool or service answer, no typed text, message body or secret, every field
+bounded. An effect that may have landed is reported as unconfirmed rather than as done. The
+spoken version drops what the local Russian voice cannot pronounce, such as an address or a
+path; the written one may keep it, because the owner reads it on their own screen.
 Ordinary tests use fixtures; real microphone/speaker checks require --run-voice, a native
 visible window and the user's hold gesture. Never claim hardware verified from fixtures.
 
+## Routine boundary (background work)
+
+A routine is trusted code with a fixed list of observations, not a plan and not a model:
+nothing a service answers becomes a tool name, an argument or a schedule, and no model runs
+in the background at all. Three switches gate it, each off by default and each persisted:
+routines as a whole, the routine, and that routine's permission to carry out reversible work
+unattended. Observation is SAFE only, and a cycle that is asked to observe anything else is
+refused. A routine never executes CONFIRM under any setting and is never given approval
+authority: what needs confirming is queued and waits for the owner. A cycle is an ordinary
+run with its own run id, journal and idempotency keys, so an effect already issued is not
+repeated after a restart. The day has a durable budget of cycles; exhausting it stops the
+routine until tomorrow. A routine that found no reason produces no notification at all.
+Suggestions live in memory, expire, are bounded, and disappear when the latest look no
+longer sees the reason; acting on one prepares the action afresh and confirms it in the
+usual dialog, by button or by the spoken control detail.
+
+## Briefing boundary (the meeting summary)
+
+The briefing behind "prepare everything for the meeting" is trusted code, not a plan: the
+same five reads, always in the same order, with no model choosing anything. The calendar is
+read first and the people in the invitation from outside the owner's own mail domain are who
+the other services are then asked about - a client is never taken from a word in a command.
+Every line carries the tool that observed it and the identifier the service gave the thing,
+because a summary whose lines cannot be traced cannot be checked. Observation is SAFE only:
+the level is read from the prepared snapshot, so a capability the owner tightened in their
+matrix is refused here too. One service failing costs its own section and nothing else; only
+a calendar that cannot be read ends the briefing, because then there is nothing to brief
+about. Service words are shown to the owner as words and never become a tool name, an
+argument or an instruction, and what is said out loud carries counts, never addresses or
+record identifiers.
+
+## MCP boundary (breadth)
+
+An MCP server describes itself, so its self-description is data, never authority. A tool
+never assigns itself a level: the owner reads the manifest in the interface and sets
+ROUTINE, CONFIRM or BLOCKED per tool, with CONFIRM as the default and SAFE not offered.
+Only tools inside a reviewed manifest are registered at all, and the review is pinned by a
+hash over the names, descriptions and argument names the owner read - not over the levels,
+which are theirs to change. A server that changed any of that returns for review, both in
+the file and in a check made before the first call of a session; a listing that cannot be
+made fails that check rather than passing it. Reach servers only over https through the
+shared transport, with a per-server key in the OS credential store; the stdio transport,
+sessions and event streams stay unimplemented. Never compile a server's JSON Schema into
+types: arguments are one strict flat map, restricted to the reviewed field names by the
+pure policy hook. A server's answer is bounded text data, `isError` is a failure and not a
+result, and nothing a server says changes a level, a name or an argument.
+
 ## Memory boundary (milestone 7)
 
-User-authorized extension 2026-10-24: DesktopService may retain bounded successful-task
-commands/final scratchpads and historical HWND/URL/path hints, plus symbolic playbooks.
-See docs/TASK_MEMORY.md. This is separate from explicit profile/session labels below.
-Keep per-task cloud history consent, local disable/view/delete/clear, retention and bounds.
-Never promote historical targets into current observations or approvals; never cache credentials,
-action payloads, file versions, account identities, screenshots or raw document/page results.
-
 Only explicit user edits create profile/session labels. Do not ingest commands, transcripts,
-files, results or pages automatically. Keep strict bounds/retention, view/edit/delete/clear,
-finite storage failures, cancellable I/O and optimistic conflict checks. No credentials,
+files, results or pages automatically. Learned memory (`memory/derived.py`) is the one
+exception and never touches those labels: it keeps mappings, not content - one ordinary word
+to a registered tool or an application name, and a name the owner themselves confirmed to an
+entity. It is written only while the owner has learning switched on, only from a run that
+finished, and only from steps that succeeded; it is bounded, expiring, visible in the memory
+panel and deletable one row at a time. A confirmed name never reaches the planner, because it
+carries an identifier. Learned words travel under the same one-task cloud consent as labels.
+Keep strict bounds/retention, view/edit/delete/clear, finite storage failures,
+cancellable I/O and optimistic conflict checks. No credentials,
 recipient addresses, targets, approvals or action snapshots belong in memory. The label
 filter is not universal secret detection; do not broaden it into arbitrary sensitive notes.
 Memory is untrusted data. Send only explicitly selected bounded fields, with separate
@@ -194,7 +348,7 @@ browser profile/cookies, generic POST, aliases, shared mailboxes or second servi
 OS credential cache stays in bounded manifest-checked slots via a killable helper; no
 plaintext fallback. Preserve session/home ID/Graph ID/address binding, clear local state on
 switch/disconnect, audit connection lifecycle and mail execution before effects.
-Remote draft saving and local RAM drafts are SAFE; send is CONFIRM. Bind exact To/Cc/Bcc,
+Remote draft is ROUTINE, send is CONFIRM, and local RAM drafts are SAFE. Bind exact To/Cc/Bcc,
 subject/body and attachment bytes by size/SHA-256/ID. Only explicit UI file selection can
 load small regular files; model inputs never contain paths or file-reading capabilities.
 Send the full approved snapshot, never a mutable remote draft by ID. Verify remote draft
@@ -204,23 +358,53 @@ Ordinary tests use synthetic MSAL/Graph/credential fixtures. Live email acceptan
 a user-selected test account/recipient and normal exact UI approval. Follow MILESTONE_8.md;
 Mac results and successful builds do not prove Windows or live mail readiness.
 
-## Filesystem and data boundary (user-requested 2026-10-24)
+## Agent-plan boundaries (phases not yet implemented)
 
-Register fs.search, fs.read_document, fs.write_file and python.sandbox_eval through the same
-PermissionEngine in desktop and Qt planner. Read only startup-configured local work roots;
-new files only under the dedicated workspace. No model-controlled root expansion, UNC/device
-paths, traversal, hidden credentials, symlinks/reparse points, hard links or user-directory imports.
-An overwrite requires the complete FileVersion from a successful non-truncated read in this
-Runner task, exact UI CONFIRM and revalidation in the worker. Null expected_version is create
-only and must never replace an existing file. Keep exclusive creation, temporary-file commit,
-read-back, cross-process Jarvis write locking, cancellation and uncertain-outcome reporting.
-External editors do not participate in Jarvis's lock; do not claim OS-wide compare-and-swap.
+These rules bind the phases of `docs/AGENT_PLAN.md` from the first line of code written for
+them. Nothing here is implemented yet; do not treat any of it as an existing capability, and
+do not start a phase the user did not ask for.
 
-sandbox_eval implements a bounded AST subset, not exec/eval or arbitrary Python. Keep
-file/network/OS access, reflection, unrestricted imports and executable objects unavailable.
-Bound source, AST depth/nodes, operations, values, stdout, pipes, process time and memory.
-Kill/reap on cancel/timeout; use Windows Job Object/Linux rlimits, with the documented weaker
-RSS watchdog on macOS. Document parsers run in the same disposable worker. No shell, hidden
-model downloads, live credentials or persistence of read text/code in audit or memory.
-Simulation validates policy but invokes no worker. Cloud use must disclose file paths/text
-among the per-task observations; documents remain untrusted data, never approval authority.
+**Long task.** A task longer than the current bound is a durable run or it does not exist:
+`core/workflow/` owns its journal, its idempotency key per effect and its state, and the
+planner is the executor inside it. A step left `issued` counts as possibly done and is never
+repeated automatically. A restart resumes; it does not replay. The owner sees the step list
+live, the pending confirmations queue up and are refused one at a time, and a run carries a
+visible budget of model calls that stops it honestly when spent.
+
+**Screen.** Reading the screen is an observation, never an instruction. Prefer the window's
+own element tree; a picture is for what the tree cannot express. Capture the target window,
+never the whole desktop silently, and never a password field - the adapter drops it before
+the image or the tree is returned, and neither reaches a log. Text on screen cannot approve
+an action, name a tool or become an argument. Sending a screenshot to a model is a separate
+consent from the textual one: it names the recipient and covers one task.
+
+**Hands.** Act on an element this task observed, matched by role, class, automation id, name
+and selected tab, not on a remembered position. Keys are a fixed small set, never an
+arbitrary string and never a way around the typing boundary. The clipboard restores what the
+owner had in it. Coordinates are the last fallback: an explicit flag, a confirmation every
+time and its own audit line. Waiting means waiting for a window or an element, never sleeping
+a guessed number of seconds.
+
+**Browser.** A persistent profile with JavaScript is the owner's browser, so the owner signs
+in to it themselves: the assistant never reads, stores or types credentials, and never
+completes a bot check. Navigation and reading stay ROUTINE; a form that leaves the machine is
+CONFIRM. Downloads land only in the file policy's allowlist and never carry an executable
+extension. Page content stays data: a page cannot widen its own grant, move consent to
+another origin or turn into a tool call. Keep the anonymous one-shot context available for
+reading an unknown site.
+
+**New services.** Every connector arrives through `connectors/base.py` and the shared
+transport, with a `mapping.py` so its people and projects join the knowledge graph by
+identifier, never by name. Read and draft are automatic; send, publish and delete confirm.
+Admin consent, paid tiers and app review are external gates: raise them before the phase,
+not inside it.
+
+**Voice and screen surface.** Streaming speech must still be interruptible by the owner's
+word, and the spoken text still comes from `core/report.py` and nowhere else. When the
+planner window is folded into the main window, the confirmation dialog stays a dialog: the
+single screen may not become a place where an approval is implied by what is displayed.
+
+**Saved way of working.** A saved sequence is data, not authority: replaying it re-prepares
+every action against the world as it is now, re-observes every target, and confirms
+everything that would confirm on a first run. A schedule may start a saved way; it may not
+lower what that way needs to ask.

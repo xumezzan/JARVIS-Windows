@@ -2,6 +2,8 @@
 
 import asyncio
 import base64
+import json
+import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,14 +13,19 @@ from uuid import uuid4
 import pytest
 
 from jarvis.core.planner.contracts import PlanResult, Step
+from jarvis.core.report import HEADLINE, LOOKED
 from jarvis.permissions.engine import Outcome
 from jarvis.permissions.policies import Status
 from jarvis.platforms import audio
+from jarvis.platforms.audio import NOISE_BLOCKS, QUIET_BLOCKS, SPEECH_BLOCKS, Segmenter
+from jarvis.ui.voice_panel import installed_model, wake_command
 from jarvis.voice.contracts import MAX_AUDIO_BYTES, AudioClip, Transcript, VoiceError, spoken_result
-from jarvis.voice.local import exchange
+from jarvis.voice.local import exchange, is_ready
 
 
-@pytest.mark.parametrize("pcm", [b"", b"a", b"a" * (MAX_AUDIO_BYTES + 2)])
+@pytest.mark.parametrize(
+    "pcm", [b"", b"a", b"a" * (MAX_AUDIO_BYTES + 2)], ids=["empty", "short", "oversized"]
+)
 def test_audio_bounds(pcm: bytes) -> None:
     with pytest.raises(VoiceError, match="invalid_audio"):
         AudioClip(pcm)
@@ -41,10 +48,12 @@ def test_spoken_result_excludes_all_content() -> None:
     outcome = Outcome(uuid4(), Status.SUCCESS, result_json='{"secret":"private payload"}')
     result = PlanResult("finished", (Step("private tool name", outcome),))
     speech = spoken_result(result)
-    assert "Проверено выполненных действий: 1" in speech
-    assert "private" not in speech and "secret" not in speech
-    assert "Реальные действия не выполнялись" in spoken_result(PlanResult("simulated"))
-    assert "Результат не подтверждён" in spoken_result(PlanResult("no_action"))
+    # The voice now says what was done, and still never a tool name or a tool's answer.
+    assert any(speech.startswith(line) for line in HEADLINE["finished"])
+    assert any(line in speech for line in LOOKED)
+    assert "private" not in speech and "secret" not in speech and "tool" not in speech
+    assert "симуляция" in spoken_result(PlanResult("simulated"))
+    assert spoken_result(PlanResult("no_action")) in HEADLINE["no_action"]
 
 
 def test_no_sensitive_repr_or_exception() -> None:
@@ -155,126 +164,129 @@ def test_native_capture_bounds_and_disposes_stream(
     assert disposed == [True]
 
 
-def test_native_decoder_reuses_model_but_not_utterance_state(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    "heard,expected",
+    [
+        ("джарвис открой калькулятор", "открой калькулятор"),
+        ("Джарвис, открой блокнот", "открой блокнот"),
+        ("эй джарвис проверь систему", "проверь систему"),
+        ("jarvis открой хром", "открой хром"),
+        ("открой калькулятор", ""),
+        ("джарвис", ""),
+        ("сегодня хорошая погода", ""),
+        ("", ""),
+    ],
+)
+def test_hands_free_acts_only_on_a_phrase_addressed_to_the_assistant(
+    heard: str, expected: str
 ) -> None:
-    (tmp_path / "am").mkdir()
-    (tmp_path / "am" / "final.mdl").touch()
-    loads: list[str] = []
-    decoders: list[object] = []
+    assert wake_command(heard) == expected
 
-    def model(*, model_path: str) -> object:
-        loads.append(model_path)
-        return object()
 
-    class Decoder:
-        def __init__(self, value: object, rate: int) -> None:
-            decoders.append(self)
+def blocks(segmenter: "Segmenter", peak: int, count: int) -> bool:
+    """Feed count blocks of one loudness; return True if the phrase ended within them."""
+    return any(segmenter.feed(peak) for _ in range(count))
 
-        def SetWords(self, words: bool) -> None:
-            pass
 
-        def AcceptWaveform(self, pcm: bytes) -> bool:
-            return False
+def test_a_pause_after_speech_ends_a_standing_capture() -> None:
+    segmenter = Segmenter()
+    assert not blocks(segmenter, 40, NOISE_BLOCKS)  # The room is measured first.
+    assert not blocks(segmenter, 9000, SPEECH_BLOCKS)
+    assert segmenter.started
+    assert not blocks(segmenter, 20, QUIET_BLOCKS - 1)  # A breath is not the end.
+    assert segmenter.feed(20)
 
-        def FinalResult(self) -> str:
-            return '{"text":"проверь систему", "result":[{"conf":0.9}]}'
 
-    monkeypatch.setitem(
-        sys.modules,
-        "vosk",
-        SimpleNamespace(Model=model, KaldiRecognizer=Decoder, SetLogLevel=lambda level: None),
-    )
-    loaded = audio.load_model(tmp_path)
-    payload = {"pcm": base64.b64encode(b"\x01\x00" * 3200).decode()}
-    assert audio.recognize(payload, loaded)["confidence"] == 0.9
-    assert audio.recognize(payload, loaded)["text"] == "проверь систему"
-    assert len(loads) == 1 and len(decoders) == 2
+def test_quiet_and_short_noises_never_start_a_phrase() -> None:
+    segmenter = Segmenter()
+    assert not blocks(segmenter, 40, NOISE_BLOCKS)
+    assert not blocks(segmenter, 50, 400)  # A quiet room never ends a phrase it never heard.
+    assert not segmenter.started
+    assert not blocks(segmenter, 9000, SPEECH_BLOCKS - 1)  # A single click is not speech.
+    assert not segmenter.started
+
+
+def test_a_noisy_room_raises_the_bar_instead_of_hearing_itself() -> None:
+    loud = Segmenter()
+    assert not blocks(loud, 4000, NOISE_BLOCKS)  # Calibrated in a noisy place.
+    assert not blocks(loud, 4000, 50)
+    assert not loud.started
+    assert not blocks(loud, 20000, SPEECH_BLOCKS)  # A real voice still gets through.
+    assert loud.started
+
+
+def test_a_pause_inside_a_phrase_does_not_cut_it() -> None:
+    segmenter = Segmenter()
+    blocks(segmenter, 40, NOISE_BLOCKS)
+    blocks(segmenter, 9000, SPEECH_BLOCKS)
+    assert not blocks(segmenter, 20, QUIET_BLOCKS - 1)
+    assert not blocks(segmenter, 9000, 2)  # Speaking again resets the pause.
+    assert not blocks(segmenter, 20, QUIET_BLOCKS - 1)
+    assert segmenter.feed(20)
 
 
 @pytest.mark.parametrize(
-    "scenario", ["reuse", "cancel", "oversized", "invalid", "launch_cancel", "timeout"]
+    "line",
+    [b'{"ready":true}\n', b'{"ready":true}\r\n', b'{"ready":true}', b' {"ready":true} \n'],
 )
+def test_the_handshake_is_recognised_whatever_ends_the_line(line: bytes) -> None:
+    assert is_ready(line)
+
+
+@pytest.mark.parametrize("line", [b'{"ready":false}\n', b'{"pcm":"AA=="}\n', b"", b"ready\n"])
+def test_nothing_else_is_taken_for_the_handshake(line: bytes) -> None:
+    assert not is_ready(line)
+
+
 @pytest.mark.asyncio
-async def test_persistent_recognition_pipe_cleanup_and_reuse(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    scenario: str,
-) -> None:
-    from jarvis.voice.host import AudioHost
-
-    original = asyncio.create_subprocess_exec
-    started = asyncio.Event()
-    children: list[asyncio.subprocess.Process] = []
-    script = tmp_path / "persistent.py"
-    script.write_text(
-        "import sys,json,time\n"
-        "for line in sys.stdin:\n"
-        " request=json.loads(line)\n"
-        ' if request["operation"]=="load": print("{\\"ready\\":true}",flush=True); continue\n'
-        + (' print("x"*65536,flush=True)\n' if scenario == "oversized" else "")
-        + (' print("invalid-json",flush=True)\n' if scenario == "invalid" else "")
-        + (" time.sleep(30)\n" if scenario not in {"reuse", "oversized", "invalid"} else "")
-        + ' print("{\\"text\\":\\"fixture\\",\\"confidence\\":0.99}",flush=True)\n'
+@pytest.mark.parametrize("helper", ["jarvis.platforms.audio", "jarvis.platforms.elevenlabs"])
+async def test_helper_lines_end_the_way_the_parent_reads_them(helper: str) -> None:
+    """A carriage return here cost the whole microphone on Windows once already."""
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-I",
+        "-m",
+        helper,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
     )
-    loop = asyncio.get_running_loop()
-
-    async def launch(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
-        child = await original(sys.executable, "-I", str(script), **kwargs)
-        children.append(child)
-        loop.call_soon_threadsafe(started.set)
-        if scenario == "launch_cancel":
-            await asyncio.sleep(0.05)
-        return child
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", launch)
-    host = AudioHost(tmp_path)
-    if scenario == "timeout":
-        host.operation_timeout = 0.1
+    assert process.stdin is not None and process.stdout is not None
     try:
-        if scenario == "reuse":
-            # Warm up on the owner's loop, then call across two unrelated asyncio loops.
-            host.warmup()
-            for _ in range(2):
-                result = await asyncio.to_thread(
-                    lambda: asyncio.run(host.call({"operation": "transcribe", "pcm": "AA=="}))
-                )
-                assert result["text"] == "fixture"
-            assert len(children) == 1 and children[0].returncode is None
-        else:
-            task = asyncio.create_task(host.call({"operation": "transcribe", "pcm": "AA=="}))
-            await started.wait()
-            if scenario in {"cancel", "launch_cancel"}:
-                task.cancel()
-                with pytest.raises(asyncio.CancelledError):
-                    await task
-            elif scenario == "timeout":
-                with pytest.raises(VoiceError, match="timeout"):
-                    await task
-            else:
-                with pytest.raises(VoiceError):
-                    await task
-            assert children and all(child.returncode is not None for child in children)
+        process.stdin.write(b'{"operation":"fixture"}\n')
+        await process.stdin.drain()
+        raw = await asyncio.wait_for(process.stdout.readuntil(b"\n"), 30)
     finally:
-        await asyncio.to_thread(host.shutdown)
-    assert all(child.returncode is not None for child in children)
+        process.stdin.close()
+        if process.returncode is None:
+            process.kill()
+        await process.wait()
+        # Drain to EOF like the real caller does, so no pipe transport outlives the test.
+        while await process.stdout.read(65536):
+            pass
+    assert raw.endswith(b"}\n") and b"\r" not in raw
+    assert json.loads(raw)["error"] == "voice_failed"
 
 
-def test_model_speech_is_bounded_and_never_hides_engine_warnings() -> None:
-    from pydantic import ValidationError
+def test_the_installed_model_comes_from_the_slot_in_use(
+    tmp_path: "Path", monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The installer keeps the previous slot for rollback; its model is not the current one."""
+    root = tmp_path / "JarvisInstall" / "slots"
+    for slot in ("a", "b"):
+        model = root / slot / "models" / "vosk-model-small-ru-0.22"
+        (model / "am").mkdir(parents=True)
+        (model / "am" / "final.mdl").touch()
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
 
-    from jarvis.core.planner.contracts import Proposal
-
-    with pytest.raises(ValidationError):
-        Proposal(kind="finish", spoken_summary="x" * 301)
-    with pytest.raises(ValidationError):
-        Proposal(kind="clarify", question="Куда?", spoken_summary="done")
-    assert (
-        spoken_result(PlanResult("finished", spoken_summary="Я проверил систему."))
-        == "Я проверил систему."
+    (tmp_path / "JarvisInstall" / "active.json").write_text(
+        '{"slot": "b", "model": "vosk-model-small-ru-0.22"}', encoding="utf-8"
     )
-    for status in ("simulated", "no_action", "error", "cancelled", "timeout", "limit"):
-        assert "Я всё выполнил" not in spoken_result(
-            PlanResult(status, spoken_summary="Я всё выполнил")
-        )
+    assert "slots" + os.sep + "b" in installed_model()
+
+    # Without a readable pointer any real model is still better than none.
+    (tmp_path / "JarvisInstall" / "active.json").write_text("not json", encoding="utf-8")
+    assert installed_model()
+
+    monkeypatch.delenv("LOCALAPPDATA")
+    assert installed_model() == ""

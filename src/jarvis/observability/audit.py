@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Lock
 from uuid import UUID, uuid4
 
-from jarvis.permissions.approvals import Action
+from jarvis.permissions.approvals import Action, Channel
 from jarvis.permissions.policies import Decision, Mode, Risk, Status
 
 
@@ -34,6 +34,7 @@ class ErrorCode(StrEnum):
     AUDIT = "audit_unavailable"
     UNSUPPORTED_PLATFORM = "unsupported_platform"
     APPLICATION_MISSING = "application_missing"
+    APPLICATION_AMBIGUOUS = "application_ambiguous"
     TARGET_CHANGED = "target_changed"
     CONTROL_UNSUPPORTED = "control_unsupported"
     NATIVE_TIMEOUT = "native_timeout"
@@ -54,6 +55,9 @@ class ErrorCode(StrEnum):
     COMPUTATION_REJECTED = "computation_rejected"
     COMPUTATION_LIMIT = "computation_limit"
     WORKER_TIMEOUT = "worker_timeout"
+    PATH_DENIED = "path_denied"
+    FILE_CONFLICT = "file_conflict"
+    FILE_TOO_LARGE = "file_too_large"
 
 
 @dataclass(frozen=True)
@@ -106,7 +110,9 @@ class AuditLog:
         with self._lock, self._connection:
             self._connection.execute("INSERT INTO events(record) VALUES (?)", (json.dumps(record),))
 
-    def approved(self, action: Action) -> None:
+    def approved(self, action: Action, channel: Channel) -> None:
+        # The channel is recorded because voice is the weakest of them: an approval that
+        # arrived by microphone has to be distinguishable afterwards from a button press.
         self.write(
             AuditEvent(
                 AuditKind.APPROVED,
@@ -115,7 +121,7 @@ class AuditLog:
                 action.risk,
                 action.mode,
                 Decision.REQUIRE_APPROVAL,
-                actor="user_ui",
+                actor="user_" + channel.value,
             )
         )
 

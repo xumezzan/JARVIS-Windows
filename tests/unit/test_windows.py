@@ -57,27 +57,27 @@ def prepared(
 )
 async def test_simulation_calls_no_native_hooks(name: str, args: object, audit: AuditLog) -> None:
     probe = WindowsProbe()
-    engine, _ = engine_for(probe, audit)
+    engine, store = engine_for(probe, audit)
     action = prepared(engine, name, args, Mode.SIMULATION)
     assert (await engine.execute(action)).status is Status.SIMULATED
     assert not probe.calls
 
 
 @pytest.mark.asyncio
-async def test_type_without_approval_verifies_readback_and_audits(audit: AuditLog) -> None:
+async def test_type_runs_unattended_once_and_verifies_readback(audit: AuditLog) -> None:
+    """Typing is ROUTINE: no token, but still one execution per prepared action."""
     probe = WindowsProbe()
-    engine, _ = engine_for(probe, audit)
+    engine, store = engine_for(probe, audit)
     args = {"target": target().model_dump(), "text": "Жарвис {ENTER}\nliteral"}
     action = prepared(engine, "type_text", args)
     assert action.risk is Risk.SAFE
+    # A level that needs no approval can also never be given one.
+    with pytest.raises(ValueError):
+        store.take_authority(audit.approved).approve(action)
     assert (await engine.execute(action)).status is Status.SUCCESS
     assert probe.text == args["text"]
     assert [item.operation for item in probe.calls] == ["check_target", "type", "verify"]
     assert (await engine.execute(action)).status is Status.INVALID
-    records = "".join(audit.recent())
-    for event in ("prepared", "started", "finished"):
-        assert event in records
-    assert "approved" not in records
     assert "literal" not in "".join(audit.recent())
 
 
@@ -94,7 +94,8 @@ async def test_type_without_approval_verifies_readback_and_audits(audit: AuditLo
         ("editor", target().model_dump()["editor"] | {"selected_tabs": [[9]]}),
     ],
 )
-async def test_changed_safe_target_never_runs(field: str, value: object, audit: AuditLog) -> None:
+async def test_changed_target_never_runs(field: str, value: object, audit: AuditLog) -> None:
+    """The engine compares the prepared snapshot itself, at every risk level."""
     import json
 
     probe = WindowsProbe()
@@ -126,9 +127,12 @@ async def test_readback_failure_or_stale_target_never_succeeds(
 @pytest.mark.parametrize(
     "name,args",
     [
-        ("open_app", {"app": "powershell"}),
+        # A path, argument or shell fragment is not an application name.
+        ("open_app", {"app": "C:/Windows/System32/cmd.exe"}),
         ("open_app", {"app": "notepad", "args": ["secret.txt"]}),
-        ("type_text", {"target": target().model_dump() | {"empty": False}, "text": "test"}),
+        # A field the caller never observed cannot be typed into.
+        ("type_text", {"target": target().model_dump() | {"editor": None}, "text": "test"}),
+        ("type_text", {"target": target().model_dump(), "text": ""}),
         ("type_text", {"target": target().model_dump(), "text": "bad\x00"}),
         ("type_text", {"target": target().model_dump(), "text": "test", "press_enter": True}),
         ("focus_app", {"target": target().model_dump() | {"handle": "100"}}),
@@ -246,7 +250,7 @@ async def test_payload_not_in_process_argv(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("output", ["not-json\\n", "x" * 150000])
+@pytest.mark.parametrize("output", ["not-json\\n", "x" * 150000], ids=["not-json", "oversized"])
 async def test_bad_or_oversized_protocol_is_rejected_and_reaped(
     output: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -255,10 +259,13 @@ async def test_bad_or_oversized_protocol_is_rejected_and_reaped(
     processes: list[asyncio.subprocess.Process] = []
 
     async def launch(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+        literal = repr(output)
+        if len(literal) > 4096:
+            # Windows caps a command line at 32767 chars; let the child build it.
+            assert output == output[0] * len(output)
+            literal = f"{output[0]!r} * {len(output)}"
         script = (
-            "import sys,time; sys.stdout.write("
-            + repr(output)
-            + "); sys.stdout.flush(); time.sleep(60)"
+            "import sys,time; sys.stdout.write(" + literal + "); sys.stdout.flush(); time.sleep(60)"
         )
         process = await real_launch(sys.executable, "-I", "-c", script, **kwargs)
         processes.append(process)

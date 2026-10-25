@@ -25,11 +25,14 @@ async def test_real_provider_emits_one_valid_registered_check() -> None:
     host = BrowserHost()
     register_browser(registry, host, host.policy)
     register_windows(registry, ProcessBackend())
+    # Execute mode only shapes the prompt: this test calls propose() and nothing else, so
+    # no adapter runs. In simulation the instructions tell the model to finish instead of
+    # proposing a step, which never exercised the function-call protocol.
     data = PlannerInput(
         "Вызови local.check один раз с delay_ms=0 и fail=false: это проверка протокола.",
         (),
         (),
-        Mode.SIMULATION,
+        Mode.EXECUTE,
         json.dumps(registry.discover()),
     )
     try:

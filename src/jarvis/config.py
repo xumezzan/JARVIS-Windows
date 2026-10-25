@@ -2,36 +2,40 @@
 
 import json
 import os
-import re
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from jarvis.core.planner.identifiers import valid_model
+from jarvis.files.policy import FilePolicy, default_roots
 from jarvis.security.browser_policy import (
     DEFAULT_ORIGINS,
     BrowserMode,
     NetworkPolicy,
     validate_cdp_endpoint,
 )
-from jarvis.security.filesystem_policy import FilePolicy
+from jarvis.security.filesystem_policy import FilePolicy as DocumentFilePolicy
 from jarvis.tools.base import ToolError
 
 
 @dataclass(frozen=True)
 class AppConfig:
     data_dir: Path
-    demo_duration_ms: int = 2400
     task_timeout_ms: int = 10000
     activity_limit: int = 200
     browser_origins: tuple[str, ...] = DEFAULT_ORIGINS
+    file_roots: tuple[str, ...] = ()
     planner_model: str = ""
+    # Ordinary-task model; keep main's positional constructor before optional surfaces.
+    fast_model: str = "deepseek-flash"
+    demo_duration_ms: int = 2400
     browser_mode: BrowserMode = BrowserMode.STRICT
     browser_cdp_endpoint: str = ""
     filesystem_roots: tuple[Path, ...] = ()
 
     @property
-    def filesystem_policy(self) -> "FilePolicy":
+    def filesystem_policy(self) -> DocumentFilePolicy:
         from jarvis.security.filesystem_policy import filesystem_policy
 
         return filesystem_policy(self.data_dir, self.filesystem_roots)
@@ -49,10 +53,9 @@ class AppConfig:
             for path in self.filesystem_roots
         ):
             raise ValueError("Invalid filesystem project roots.")
-        if self.planner_model and not re.fullmatch(
-            r"[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}", self.planner_model
-        ):
-            raise ValueError("Invalid planner model identifier.")
+        for name, model in (("planner", self.planner_model), ("fast", self.fast_model)):
+            if model and not valid_model(model):
+                raise ValueError(f"Invalid {name} model identifier.")
         try:
             _ = self.browser_policy
         except ToolError:
@@ -61,6 +64,10 @@ class AppConfig:
             validate_cdp_endpoint(self.browser_cdp_endpoint)
             if self.browser_mode is not BrowserMode.LIVE:
                 raise ValueError("CDP requires Live Browser mode.")
+        try:
+            FilePolicy(self.file_roots)
+        except ToolError:
+            raise ValueError("Invalid file folder policy.") from None
         for name, value, minimum, maximum in (
             ("demo_duration_ms", self.demo_duration_ms, 100, 30000),
             ("task_timeout_ms", self.task_timeout_ms, 100, 60000),
@@ -110,9 +117,16 @@ def load_config(environ: Mapping[str, str] | None = None) -> AppConfig:
         filesystem_roots=filesystem_roots,
         browser_mode=browser_mode,
         browser_cdp_endpoint=env.get("JARVIS_BROWSER_CDP_ENDPOINT", ""),
+        fast_model=env.get("JARVIS_FAST_MODEL", "deepseek-flash"),
         browser_origins=tuple(
             part.strip()
             for part in env.get("JARVIS_BROWSER_ORIGINS", ",".join(DEFAULT_ORIGINS)).split(",")
+            if part.strip()
+        ),
+        # Folders the assistant may touch. Unset means the user's own document folders.
+        file_roots=tuple(
+            part.strip()
+            for part in env.get("JARVIS_FILE_ROOTS", ",".join(default_roots())).split(",")
             if part.strip()
         ),
     )

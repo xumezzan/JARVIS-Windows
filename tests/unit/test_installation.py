@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+import shutil
 import stat
 import subprocess
 import sys
@@ -22,7 +23,10 @@ from jarvis.installation.report import InstallationReport
 def archive(path: Path, names: list[str]) -> Path:
     with zipfile.ZipFile(path, "w") as bundle:
         for name in names:
-            bundle.writestr(name, "fixture")
+            # ZipInfo(name) would rewrite os.sep; assign to keep the literal entry name.
+            entry = zipfile.ZipInfo("placeholder")
+            entry.filename = name
+            bundle.writestr(entry, "fixture")
     return path
 
 
@@ -32,7 +36,6 @@ def archive(path: Path, names: list[str]) -> Path:
         "../outside",
         "/outside",
         "model/../outside",
-        "model\\outside",
         "model/C:stream",
         "model/NUL",
         "model/name.",
@@ -49,6 +52,16 @@ def test_zip_escape_and_windows_aliases_rejected_before_writes(tmp_path: Path, n
     with pytest.raises(SetupError):
         extract_model(bundle, tmp_path / "output", "model")
     assert not (tmp_path / "output").exists()
+    assert not (tmp_path / "outside").exists()
+
+
+def test_backslash_entry_never_escapes_the_destination(tmp_path: Path) -> None:
+    """POSIX rejects the literal alias; Windows zipfile rewrites os.sep on write/read."""
+    bundle = archive(tmp_path / "asset.zip", ["model/am/final.mdl", "model\\outside"])
+    try:
+        extract_model(bundle, tmp_path / "output", "model")
+    except SetupError:
+        assert not (tmp_path / "output").exists()
     assert not (tmp_path / "outside").exists()
 
 
@@ -207,7 +220,7 @@ def test_two_slot_failure_keeps_active_app_and_data(
         setup.install(repository, root)
         assert setup.active_slot(root) == ("a" if phase == "repeat" else "b")
         assert ("prepare" in called) == (phase == "success")
-        report = json.loads((root / "installation-report.json").read_text())
+        report = json.loads((root / "installation-report.json").read_text(encoding="utf-8"))
         assert report["windows_mvp_acceptance"] == "pending"
     else:
         with pytest.raises(SetupError):
@@ -225,10 +238,11 @@ def test_invalid_pointer_does_not_select_or_delete_directory(tmp_path: Path) -> 
 
 def test_subprocess_arguments_are_literal_and_error_is_sanitized(tmp_path: Path) -> None:
     value = 'Асаль space & $evil; "quotes"'
-    assert (
-        setup.run([sys.executable, "-c", "import sys; print(sys.argv[1])", value], {})
-        == value + "\n"
+    # Production always supplies the UTF-8 child env; Windows text stdout adds a return.
+    literal = setup.run(
+        [sys.executable, "-c", "import sys; print(sys.argv[1])", value], {"PYTHONUTF8": "1"}
     )
+    assert literal.replace("\r\n", "\n") == value + "\n"
     with pytest.raises(SetupError) as error:
         setup.run([sys.executable, "-c", "print('SECRET'); raise SystemExit(1)"], {})
     assert "SECRET" not in str(error.value)
@@ -295,6 +309,44 @@ def test_atomic_pointer_failure_keeps_previous_version(
     with pytest.raises(PermissionError):
         setup.atomic_json(path, {"slot": "b"})
     assert setup.active_slot(tmp_path) == "a"
+
+
+def test_a_slot_held_open_names_the_running_application(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Setup leaves Jarvis running on purpose, so the next one meets its own leftover."""
+    slot = tmp_path / "slots" / "b"
+    slot.mkdir(parents=True)
+    (slot / ".jarvis-slot").write_text("1", encoding="ascii")
+
+    def held(*args: Any, **kwargs: Any) -> None:
+        raise PermissionError(13, "in use")
+
+    monkeypatch.setattr(shutil, "rmtree", held)
+    with pytest.raises(SetupError, match="Close every open Jarvis window"):
+        setup.prepare_slot(tmp_path, tmp_path, "b", {"directory": "model"})
+    # The slot the installer could not replace is left exactly as it was.
+    assert (slot / ".jarvis-slot").is_file()
+
+
+def test_an_unexpected_failure_reports_its_kind_not_a_step_never_shown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise PermissionError(13, "in use")
+
+    monkeypatch.setattr(setup, "install", fail)
+    monkeypatch.setattr(setup, "supported_host", lambda: True)
+    monkeypatch.setattr(sys, "argv", ["setup", "--root", str(tmp_path)])
+    assert setup.main() == 1
+    reported = capsys.readouterr().err
+    assert "PermissionError 13" in reported
+    assert "Close open Jarvis windows" in reported
+    # The old text promised a step that a failure before the first one never printed.
+    assert "displayed step" not in reported
 
 
 def test_download_redirects_are_not_followed() -> None:

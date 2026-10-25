@@ -11,22 +11,29 @@ from jarvis.ui.planner_window import PlannerWindow
 
 
 @pytest.mark.e2e
-def test_chrome_search_recipe_simulates_without_approval(
+@pytest.mark.parametrize("cancel", [False, True])
+def test_chrome_search_recipe_reaches_no_adapter_in_simulation(
     qtbot: QtBot,
     tmp_path: Path,
+    cancel: bool,
 ) -> None:
+    """The configured browser owns search; simulation never launches another Chrome."""
     probe = WindowsProbe()
     window = PlannerWindow(AppConfig(tmp_path), windows_backend=probe)
     qtbot.addWidget(window)
     window.show()
     try:
         window.command.setPlainText("Открой Chrome и найди OpenAI")
-        with qtbot.waitSignal(window.task_finished) as result:
+        with qtbot.waitSignal(window.task_finished, timeout=15000) as result:
             window.start()
+            if cancel:
+                window.stop()
+        assert result.args == ["cancelled" if cancel else "simulated"]
         assert window.approval_dialog is None
-        assert result.args == ["simulated"]
         assert not probe.calls and window.host._thread is None
-        assert "windows.open_app" not in window.output.toPlainText()
-        assert "browser.search: SIMULATED" in window.output.toPlainText()
+        if not cancel:
+            assert "browser.search: SIMULATED" in window.output.toPlainText()
+            assert window.last_result is not None
+            assert [step.tool for step in window.last_result.steps] == ["browser.search"]
     finally:
         window.shutdown()

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from jarvis.ui import workers
 from jarvis.voice.contracts import ERROR_TEXT, VoiceError
 from jarvis.voice.elevenlabs import PREVIEW
 from jarvis.voice.local import exchange
@@ -185,7 +186,7 @@ class ElevenLabsDialog(QDialog):
             widget.setEnabled(False)
         self.status.setText("Микрофон выключен. Выполняется запрос…")
         self.worker.finished.connect(self._finished)
-        self.worker.start()
+        workers.start(self.worker)
 
     def _finished(self) -> None:
         worker = self.worker

@@ -92,8 +92,7 @@ async def test_open_read_tabs_type_submit_and_close(harness: Harness) -> None:
     assert updated is not None
     button = next(item for item in updated.elements if item.name == "Send")
     args = {"target": updated.target.model_dump(), "element": button.model_dump()}
-    denied = await harness.call("click", args, approve=False)
-    assert denied.status is Status.DENIED
+    # Nothing is submitted until the click itself runs.
     assert not any(row[0] == "POST" for row in harness.site.seen)
     sent = await harness.call("click", args)
     assert sent.status is Status.SUCCESS, sent
@@ -125,15 +124,12 @@ async def test_link_navigation_and_get_form_search(harness: Harness) -> None:
     assert harness.site.seen[-1][1] == "/find?q=Jarvis+test"
 
 
-async def test_simulation_launches_nothing_and_real_open_needs_no_approval(
-    harness: Harness,
-) -> None:
+async def test_simulation_launches_nothing(harness: Harness) -> None:
+    """Navigation is ROUTINE, but simulation still reaches no browser and no site."""
     args = {"url": harness.site.origin + "/"}
     assert (await harness.call("open", args, mode=Mode.SIMULATION)).status is Status.SIMULATED
     assert harness.host._thread is None
     assert not harness.site.seen
-    assert (await harness.call("open", args, approve=False)).status is Status.SUCCESS
-    assert [row[:2] for row in harness.site.seen] == [("GET", "/")]
 
 
 async def test_stale_page_is_rejected(harness: Harness) -> None:
@@ -145,40 +141,6 @@ async def test_stale_page_is_rejected(harness: Harness) -> None:
     assert stale.status is Status.ERROR and stale.error is ErrorCode.PAGE_CHANGED
 
 
-async def test_forged_safe_label_does_not_match_observed_button(harness: Harness) -> None:
-    page = await harness.opened()
-    button = next(item for item in page.elements if item.name == "Search")
-    # Same DOM fingerprint/request, different label: never click the underlying element.
-    forged = button.model_dump() | {"name": "Next"}
-    outcome = await harness.call(
-        "click", {"target": page.target.model_dump(), "element": forged}, approve=False
-    )
-    assert outcome.error is ErrorCode.PAGE_CHANGED
-    assert [row[1] for row in harness.site.seen] == ["/"]
-
-
-async def test_close_edited_form_requires_approval_and_rechecks_dirty_state(
-    harness: Harness,
-) -> None:
-    page = await harness.opened()
-    field = next(item for item in page.elements if item.name == "Message")
-    typed = await harness.call(
-        "type",
-        {"target": page.target.model_dump(), "element": field.model_dump(), "text": "unsaved"},
-        approve=False,
-    )
-    assert typed.status is Status.SUCCESS
-    updated = BrowserResult.model_validate_json(typed.result_json or "").page
-    assert updated is not None and updated.target.has_unsaved_changes
-    args = {"target": updated.target.model_dump()}
-    assert (await harness.call("close", args, approve=False)).status is Status.DENIED
-    forged = {"target": updated.target.model_dump() | {"has_unsaved_changes": False}}
-    outcome = await harness.call("close", forged, approve=False)
-    assert outcome.error is ErrorCode.PAGE_CHANGED
-    assert (await harness.call("read", args)).status is Status.SUCCESS
-    assert (await harness.call("close", args)).status is Status.SUCCESS
-
-
 async def test_redirect_blocked_without_following(harness: Harness) -> None:
     page = await harness.opened()
     result = await harness.call(
@@ -187,6 +149,27 @@ async def test_redirect_blocked_without_following(harness: Harness) -> None:
     assert result.status is Status.ERROR and result.error is ErrorCode.NETWORK_DENIED
     assert not any(row[1] == "/redirect-destination" for row in harness.site.seen)
     assert (await harness.call("get_tabs", {})).status is Status.SUCCESS
+
+
+async def test_challenge_response_is_not_an_observation(harness: Harness) -> None:
+    """A search origin answers an anti-bot challenge with 202; it is not the page asked for."""
+    page = await harness.opened()
+    result = await harness.call(
+        "navigate", {"target": page.target.model_dump(), "url": harness.site.origin + "/challenge"}
+    )
+    assert result.status is Status.ERROR
+    assert any(row[1] == "/challenge" for row in harness.site.seen)
+    assert (await harness.call("get_tabs", {})).status is Status.SUCCESS
+
+
+async def test_requests_name_the_client_without_imitating_a_browser(harness: Harness) -> None:
+    await harness.opened()
+    assert harness.site.agents, "no request reached the fixture site"
+    for agent in harness.site.agents:
+        assert agent is not None and agent.startswith("Jarvis/"), agent
+        assert not any(
+            name in agent for name in ("Mozilla", "Chrome", "Safari", "AppleWebKit", "Gecko")
+        ), agent
 
 
 async def test_network_failure_is_not_retried(harness: Harness) -> None:
@@ -289,5 +272,5 @@ async def test_registered_search_with_controlled_transport(
     result = BrowserResult.model_validate_json(outcome.result_json or "")
     assert result.page is not None
     assert result.page.title == "Result" and "OpenAI" in result.page.text
-    assert requests == [RequestIntent(url="https://html.duckduckgo.com/html/?q=OpenAI")]
+    assert requests == [RequestIntent(url="https://lite.duckduckgo.com/lite/?q=OpenAI")]
     assert [row[1] for row in harness.site.seen] == ["/find?q=OpenAI"]

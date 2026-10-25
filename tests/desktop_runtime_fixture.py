@@ -52,7 +52,9 @@ class FixtureProvider:
 class FixtureVoice:
     local_only = True
 
-    async def record(self, released: Event, ready: Callable[[], None]) -> AudioClip:
+    async def record(
+        self, released: Event, ready: Callable[[], None], listen: bool = False
+    ) -> AudioClip:
         ready()
         while not released.is_set():
             await asyncio.sleep(0.005)

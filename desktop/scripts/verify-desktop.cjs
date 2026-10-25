@@ -45,10 +45,12 @@ const { _electron } = require("playwright");
     for (const name of ["fs.search", "fs.read_document", "fs.write_file", "python.sandbox_eval"])
       assert.ok(initial.tools.some((tool) => tool.name === name));
     assert.ok(initial.tools.every((t) => !t.name.startsWith("local.")));
+    await page.getByRole("button", { name: "Действия", exact: true }).click();
     assert.equal(
       await page.getByText("История пока пуста", { exact: true }).count(),
       1,
     );
+    await page.getByRole("button", { name: "Ассистент", exact: true }).click();
     assert.equal(
       await page.getByText("Нет активной задачи", { exact: true }).count(),
       1,

@@ -14,6 +14,17 @@ from jarvis.voice.contracts import MAX_AUDIO_BYTES, AudioClip, Transcript, Voice
 from jarvis.voice.host import AudioHost
 
 PIPE_LIMIT = MAX_AUDIO_BYTES * 2 + 16384
+READY = b'{"ready":true}'
+
+
+def is_ready(line: bytes) -> bool:
+    """The recorder's handshake, whatever line ending the platform gave it.
+
+    Comparing raw bytes cost the whole microphone on Windows: text mode there ends a line
+    with a carriage return, the handshake never matched, and the recorder read it as the
+    answer instead of lighting up the indicator.
+    """
+    return line.strip() == READY
 
 
 async def exchange(
@@ -60,7 +71,7 @@ async def exchange(
             if released is not None:
                 release_task = asyncio.create_task(release())
             raw = await process.stdout.readuntil(b"\n")
-            if raw == b'{"ready":true}\n':
+            if is_ready(raw):
                 if ready is not None:
                     ready()
                 raw = await process.stdout.readuntil(b"\n")
@@ -103,7 +114,9 @@ class LocalRecorder:
         self.host = host
         self.auto_stop_on_silence = auto_stop_on_silence
 
-    async def record(self, released: Event, ready: Callable[[], None]) -> AudioClip:
+    async def record(
+        self, released: Event, ready: Callable[[], None], listen: bool = False
+    ) -> AudioClip:
         if released.is_set():
             raise asyncio.CancelledError
         if self.auto_stop_on_silence:
@@ -129,7 +142,10 @@ class LocalRecorder:
                 active = False
         else:
             data = await exchange(
-                {"operation": "record"}, seconds=35, released=released, ready=ready
+                {"operation": "record", "listen": listen},
+                seconds=70 if listen else 35,
+                released=released,
+                ready=ready,
             )
         try:
             return AudioClip(base64.b64decode(data["pcm"], validate=True))

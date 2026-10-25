@@ -7,7 +7,7 @@ from threading import Event
 from typing import Protocol
 
 from jarvis.core.planner.contracts import PlanResult
-from jarvis.permissions.policies import Status
+from jarvis.core.report import spoken
 
 SAMPLE_RATE = 16000
 MAX_SECONDS = 30
@@ -87,7 +87,10 @@ class Transcript:
 
 
 class Recorder(Protocol):
-    async def record(self, released: Event, ready: Callable[[], None]) -> AudioClip: ...
+    # listen=True lets the adapter end the phrase on silence instead of on a held control.
+    async def record(
+        self, released: Event, ready: Callable[[], None], listen: bool = False
+    ) -> AudioClip: ...
 
 
 class Recognizer(Protocol):
@@ -105,24 +108,12 @@ class Speaker(Protocol):
 
 
 def spoken_result(result: PlanResult) -> str:
-    """Model prose is presentation only; preserve engine warnings and deterministic fallback."""
-    titles = {
-        "finished": "Планировщик завершил работу.",
-        "simulated": "Симуляция завершена. Реальные действия не выполнялись.",
-        "no_action": "Действия не выполнены. Результат не подтверждён.",
-        "error": "Выполнение остановлено с ошибкой.",
-        "cancelled": "Задача отменена.",
-        "timeout": "Истекло время задачи.",
-        "limit": "Достигнут предел шагов или уточнений.",
-    }
-    if result.spoken_summary.strip() and result.status == "finished":
+    """Speak what was done, assembled by trusted code in `core/report.py`.
+
+    The rule it keeps is the one this module always kept: nothing a model wrote and nothing
+    a service answered is ever spoken. What is new is that the sentence is about the owner's
+    task rather than about the planner's own statuses.
+    """
+    if result.status == "finished" and result.spoken_summary.strip():
         return result.spoken_summary.strip()
-    text = titles[result.status]
-    verified = sum(step.outcome.status is Status.SUCCESS for step in result.steps)
-    if verified:
-        text += f" Проверено выполненных действий: {verified}."
-    if result.status in {"error", "cancelled", "timeout", "limit"} and any(
-        step.outcome.may_have_effects for step in result.steps
-    ):
-        text += " Уже выданные действия не отозваны. Проверьте результат на экране."
-    return text
+    return spoken(result)
