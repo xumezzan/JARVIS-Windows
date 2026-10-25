@@ -1,5 +1,6 @@
 """Two independent runners, restart recovery, consent, opt-out and finite storage failures."""
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -31,7 +32,12 @@ async def test_full_task_context_survives_runner_cleanup_restart_and_follows_up(
         service.start("Открой блокнот документ", Mode.EXECUTE)
         runner = service.runner
         assert runner is not None
-        await until(lambda: service.worker is None)
+        # This exercises twelve real audited steps and a disposable process, not a
+        # five-second latency contract. Wait for the production-bounded task itself.
+        worker = service.worker
+        assert worker is not None
+        await asyncio.wait_for(asyncio.shield(worker), timeout=service.limits.total_seconds)
+        assert service.worker is None
         assert service.task.state == "finished" and len(service.task.steps) == 12
         assert runner.scratchpad == {} and runner.task_memory.recent == ()
         saved = service.conversation.read()

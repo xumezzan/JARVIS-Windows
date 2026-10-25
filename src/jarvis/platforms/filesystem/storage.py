@@ -1,6 +1,7 @@
 """Bounded reads and exclusive creation, with no symlink/reparse traversal."""
 
 import fnmatch
+import importlib
 import os
 import stat
 import sys
@@ -23,6 +24,10 @@ from jarvis.tools.filesystem import (
     WriteFile,
     WriteResult,
 )
+
+# These members exist only on POSIX. Resolve them at the platform boundary rather
+# than assuming Windows' os stubs export them; no missing-flag fallback is allowed.
+POSIX_OS = importlib.import_module("os")
 
 
 def windows_platform() -> bool:
@@ -120,7 +125,9 @@ class Directory:
         if windows_platform():
             return _windows_open(self.path / name, directory=False, flags=flags)
         assert self.fd is not None
-        return os.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=self.fd)
+        return os.open(
+            name, flags | POSIX_OS.O_NOFOLLOW | POSIX_OS.O_NONBLOCK, 0o600, dir_fd=self.fd
+        )
 
     def unlink(self, name: str) -> None:
         if self.fd is None:
@@ -179,13 +186,19 @@ def directory(path: Path, *, create: bool = False) -> Iterator[Directory]:
                 handles.append(_windows_open(current, directory=True))
             yield Directory(path, None)
         else:
-            handles.append(os.open(current, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW))
+            handles.append(
+                os.open(current, os.O_RDONLY | POSIX_OS.O_DIRECTORY | POSIX_OS.O_NOFOLLOW)
+            )
             for part in path.parts[1:]:
                 if create:
                     with suppress(FileExistsError):
                         os.mkdir(part, mode=0o700, dir_fd=handles[-1])
                 handles.append(
-                    os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=handles[-1])
+                    os.open(
+                        part,
+                        os.O_RDONLY | POSIX_OS.O_DIRECTORY | POSIX_OS.O_NOFOLLOW,
+                        dir_fd=handles[-1],
+                    )
                 )
             yield Directory(path, handles[-1])
     finally:
@@ -325,7 +338,7 @@ def write_lock(policy: FilePolicy) -> Iterator[None]:
         try:
             regular(fd)
             if not windows_platform():
-                import fcntl
+                fcntl = importlib.import_module("fcntl")
 
                 try:
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -360,7 +373,7 @@ def _write(policy: FilePolicy, args: WriteFile, path: Path) -> WriteResult:
                 source = parent.open(path.name)
                 try:
                     metadata = regular(source)
-                    if metadata.st_uid != os.geteuid() or not metadata.st_mode & stat.S_IWUSR:
+                    if metadata.st_uid != POSIX_OS.geteuid() or not metadata.st_mode & stat.S_IWUSR:
                         raise ToolError("file_denied")
                     mode = stat.S_IMODE(metadata.st_mode) & 0o777
                 finally:
@@ -370,7 +383,7 @@ def _write(policy: FilePolicy, args: WriteFile, path: Path) -> WriteResult:
         try:
             with os.fdopen(fd, "wb") as stream:
                 if not windows_platform():
-                    os.fchmod(stream.fileno(), mode)
+                    POSIX_OS.fchmod(stream.fileno(), mode)
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())

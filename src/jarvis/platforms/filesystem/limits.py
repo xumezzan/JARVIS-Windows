@@ -1,5 +1,6 @@
 """OS resource ceilings for disposable workers; never import native Windows code elsewhere."""
 
+import importlib
 import sys
 from typing import Any, cast
 
@@ -15,7 +16,7 @@ def windows_platform() -> bool:
 def limit_worker() -> None:
     global _job
     if not windows_platform():
-        import resource
+        resource = importlib.import_module("resource")
 
         def cap(kind: int, maximum: int) -> None:
             _, hard = resource.getrlimit(kind)

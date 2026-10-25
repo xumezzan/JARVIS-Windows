@@ -114,9 +114,20 @@ def test_search_checks_real_link_count_when_directory_cache_reports_zero(
             self.name = entry.name
 
         def stat(self, *, follow_symlinks: bool = False) -> os.stat_result:
-            values = list(self.entry.stat(follow_symlinks=follow_symlinks))
-            values[3] = 0  # Windows DirEntry.stat() omits st_nlink.
-            return os.stat_result(values)
+            from types import SimpleNamespace
+            from typing import cast
+
+            info = self.entry.stat(follow_symlinks=follow_symlinks)
+            # Preserve reparse attributes too: constructing os.stat_result from its
+            # portable tuple alone leaves Windows-only fields set to None.
+            return cast(
+                os.stat_result,
+                SimpleNamespace(
+                    st_mode=info.st_mode,
+                    st_nlink=0,
+                    st_file_attributes=getattr(info, "st_file_attributes", 0),
+                ),
+            )
 
     @contextmanager
     def cached_scandir(path: int | Path) -> Iterator[Iterator[CachedEntry]]:

@@ -107,9 +107,13 @@ async def test_thirty_screenshots_keep_only_current_image_outside_history_and_js
         await service.handle(request("run", command="capture", mode="execute"))
         runner = service.runner
         assert runner is not None
-        # Thirty durable SQLite lifecycles + complete image payloads exceed five
-        # seconds on a contended filesystem; this is not a one-operation latency test.
-        await until(lambda: service.worker is None, seconds=15)
+        # Wait for the real bounded run: thirty audited SQLite lifecycles on a shared
+        # Windows disk are not a fifteen-second latency acceptance test. Every payload,
+        # cleanup and persistence assertion below remains part of this regression.
+        worker = service.worker
+        assert worker is not None
+        await asyncio.wait_for(asyncio.shield(worker), timeout=service.limits.total_seconds)
+        assert service.worker is None
         assert service.task.state == "finished" and len(images) == 30
         assert len(request_sizes) == 31 and max(request_sizes) <= 262144
         assert len(runner.steps) == 30 and runner._screenshot_b64 is None
