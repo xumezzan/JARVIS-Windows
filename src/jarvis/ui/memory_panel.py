@@ -129,6 +129,8 @@ class MemoryPanel(QWidget):
         self.value = QLineEdit()
         self.value.setMaxLength(80)
         self.app = QComboBox()
+        self.app.setEditable(True)
+        self.app.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         for key, title in APPS.items():
             self.app.addItem(title, key)
         self.app.hide()
@@ -241,7 +243,11 @@ class MemoryPanel(QWidget):
         return Hint(
             kind=self.kind.currentData(),
             label=self.label.text(),
-            value=self.app.currentData()
+            value=(
+                self.app.currentData()
+                if self.app.currentText() == self.app.itemText(self.app.currentIndex())
+                else self.app.currentText()
+            )
             if self.kind.currentData() == "application"
             else self.value.text(),
         )
@@ -260,7 +266,10 @@ class MemoryPanel(QWidget):
             self.label.setText(entry.label)
             self.value.setText(entry.value)
             if entry.kind == "application":
-                self.app.setCurrentIndex(self.app.findData(entry.value))
+                index = self.app.findData(entry.value)
+                self.app.setCurrentIndex(index)
+                if index < 0:
+                    self.app.setEditText(entry.value)
 
     def _save(self) -> None:
         try:

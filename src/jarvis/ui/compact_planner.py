@@ -72,6 +72,7 @@ class PlannerWindow(QDialog):
         self.setWindowModality(Qt.WindowModality.WindowModal)
         self.resize(960, 820)
         self.override_provider = provider
+        self.workspace_profile = config.workspace_profile
         self.limits = limits or Limits()
         self.host = browser_host or BrowserHost(
             config.browser_policy, cdp_endpoint=config.browser_cdp_endpoint
@@ -225,7 +226,8 @@ class PlannerWindow(QDialog):
         layout.addWidget(self.cloud_box)
         self.cloud_consent = QCheckBox(
             "Разрешаю отправить команду, уточнения, результаты инструментов, "
-            "пути и текст прочитанных файлов, скриншоты и scratchpad в OpenAI"
+            "пути и текст прочитанных файлов, скриншоты, scratchpad и профиль "
+            "рабочего пространства в OpenAI"
         )
         cloud.addWidget(self.cloud_consent)
         self.cloud_disclosure = note(
@@ -379,6 +381,7 @@ class PlannerWindow(QDialog):
             Mode.SIMULATION if self.simulation.isChecked() else Mode.EXECUTE,
             self.limits,
             memory,
+            workspace=self.workspace_profile,
         )
         self.worker.progress_event.connect(self._event)
         self.worker.prompt.connect(self._prompt)

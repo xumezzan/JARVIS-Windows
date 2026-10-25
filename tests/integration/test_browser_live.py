@@ -145,9 +145,22 @@ async def test_cdp_attaches_existing_tabs_uses_cookies_and_leaves_browser_runnin
             )
             port_file = profile / "DevToolsActivePort"
             async with asyncio.timeout(10):
-                while not port_file.exists():
+                while True:
+                    try:
+                        lines = port_file.read_text().splitlines()
+                    except (FileNotFoundError, PermissionError):
+                        # Windows can observe the file while Chromium still holds its
+                        # write handle. Existence alone does not make it ready to read.
+                        lines = []
+                    if (
+                        len(lines) == 2
+                        and lines[0].isdigit()
+                        and 0 < int(lines[0]) <= 65535
+                        and lines[1].startswith("/devtools/browser/")
+                    ):
+                        port = lines[0]
+                        break
                     await asyncio.sleep(0.05)
-            port = port_file.read_text().splitlines()[0]
             endpoint = "http://127.0.0.1:" + port
             observer = await driver.chromium.connect_over_cdp(endpoint)
             context = observer.contexts[0]

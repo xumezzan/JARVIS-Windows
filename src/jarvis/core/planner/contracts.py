@@ -15,6 +15,7 @@ from jarvis.permissions.engine import Outcome
 from jarvis.permissions.policies import Mode
 from jarvis.tools.base import ToolModel
 from jarvis.tools.scratchpad import ScratchpadWrite
+from jarvis.workspace.models import WorkspaceContext
 
 
 class Proposal(ToolModel):
@@ -79,6 +80,7 @@ class PlannerInput:
         object.__setattr__(self, "scratchpad", MappingProxyType(dict(self.scratchpad)))
 
     derived: DerivedContext = field(default_factory=DerivedContext, repr=False)
+    workspace: WorkspaceContext = field(default_factory=WorkspaceContext, repr=False)
 
 
 class ProviderError(Exception):

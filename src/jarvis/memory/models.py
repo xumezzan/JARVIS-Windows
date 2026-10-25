@@ -53,8 +53,6 @@ class Entry(ToolModel):
     def constraints(self) -> "Entry":
         if not 0 < self.expires - self.updated <= PROFILE_TTL:
             raise ValueError("Invalid retention.")
-        if self.kind == "application" and self.value not in APPS:
-            raise ValueError("Choose a supported application.")
         return self
 
 
@@ -64,12 +62,6 @@ class Hint(ToolModel):
     value: str = Field(repr=False)
 
     _labels = field_validator("label", "value")(validate_label)
-
-    @model_validator(mode="after")
-    def app(self) -> "Hint":
-        if self.kind == "application" and self.value not in APPS:
-            raise ValueError("Choose a supported application.")
-        return self
 
 
 class MemoryContext(ToolModel):

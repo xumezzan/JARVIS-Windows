@@ -42,6 +42,17 @@ def test_version_matches_installed_distribution(capsys: pytest.CaptureFixture[st
     assert capsys.readouterr().out.strip() == f"jarvis {version('jarvis-windows')}"
 
 
+def test_invalid_workspace_stops_startup_without_echoing_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "workspace_profile.json").write_text('{"private-fixture":true}')
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path))
+    assert main([]) == 2
+    output = capsys.readouterr().err
+    assert "configuration error: workspace_invalid" in output
+    assert "private-fixture" not in output and str(tmp_path) not in output
+
+
 def test_commands_are_not_silently_accepted(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as error:
         main(["open", "notepad"])

@@ -35,6 +35,7 @@ from jarvis.permissions.policies import Mode, Risk, Status
 from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.scratchpad import MAX_SCRATCHPAD_BYTES, MAX_SCRATCHPAD_KEYS, ScratchpadWrite
 from jarvis.tools.windows import ClickElement, WindowsResult, WindowTarget
+from jarvis.workspace.models import WorkspaceProfile
 
 MICROSOFT = ("outlook.", "calendar.")
 
@@ -56,6 +57,7 @@ class Runner:
         task_memory: TaskMemoryContext | None = None,
         knowledge: KnowledgeContext | None = None,
         derived: DerivedContext | None = None,
+        workspace: WorkspaceProfile | None = None,
         journal: Journal | None = None,
         resumed: tuple[Step, ...] = (),
         harvester: Harvester | None = None,
@@ -68,6 +70,9 @@ class Runner:
         self._screenshot_b64: str | None = None
         self.knowledge = KnowledgeContext.model_validate(knowledge or KnowledgeContext())
         self.derived = DerivedContext.model_validate(derived or DerivedContext())
+        self.workspace = WorkspaceProfile.model_validate(
+            workspace or WorkspaceProfile()
+        ).planner_context()
         self.registry = registry
         self.engine = engine
         self.provider = provider
@@ -245,6 +250,7 @@ class Runner:
                         screenshot_b64=self._latest_screenshot(),
                         scratchpad=self.scratchpad,
                         task_memory=self.task_memory,
+                        workspace=self.workspace,
                     )
                 )
             proposal = Proposal.model_validate(raw, strict=True)

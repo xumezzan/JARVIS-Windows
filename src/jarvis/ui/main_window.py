@@ -32,7 +32,6 @@ from jarvis.core.planner.identifiers import valid_model
 from jarvis.core.report import written
 from jarvis.observability.events import EVENT_TEXT, ShellEvent
 from jarvis.observability.logging import ShellLog
-from jarvis.security.browser_policy import NetworkPolicy
 from jarvis.security.credentials import setup_command
 from jarvis.ui.activity_log import ActivityLog
 from jarvis.ui.checklist import Checklist
@@ -1156,7 +1155,9 @@ class MainWindow(QMainWindow):
                 self.permission_workbench = PermissionWorkbench(
                     self.config.data_dir,
                     self,
-                    browser_host=BrowserHost(NetworkPolicy(self.config.browser_origins)),
+                    browser_host=BrowserHost(
+                        self.config.browser_policy, cdp_endpoint=self.config.browser_cdp_endpoint
+                    ),
                 )
             except Exception:
                 self.action_label.setText(
