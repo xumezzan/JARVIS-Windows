@@ -7,12 +7,19 @@
 ## Один запрос на установку
 
 Пользователь открывает полную копию репозитория в Codex на целевом ноутбуке и просит
-установить Jarvis. Агент читает AGENTS.md и выполняет из корня:
+установить Jarvis:
+
+> Установи Jarvis, выполни доступные проверки и покажи итоговый Jarvis-Report.html для отправки.
+
+Агент читает AGENTS.md и выполняет из корня:
 
 ```powershell
 & '.\scripts\windows\Install-Jarvis.cmd'
-if ($LASTEXITCODE -ne 0) { throw 'Installation did not pass' }
-Get-Content -LiteralPath "$env:LOCALAPPDATA\JarvisInstall\installation-report.json"
+$jarvisInstallExit = $LASTEXITCODE
+Get-Content -Encoding UTF8 -LiteralPath "$env:LOCALAPPDATA\JarvisInstall\Jarvis-Report.md"
+Get-Content -Encoding UTF8 -LiteralPath "$env:LOCALAPPDATA\JarvisInstall\installation-bootstrap.md"
+Get-Content -Encoding UTF8 -LiteralPath "$env:LOCALAPPDATA\JarvisInstall\installation-report.md"
+if ($jarvisInstallExit -ne 0) { throw 'Installation did not pass; inspect current report' }
 ```
 
 Проверить настоящее окно и запуск **Jarvis** из «Пуск» после закрытия тестового окна.
@@ -25,6 +32,17 @@ Runtime готовится автоматически. Скрипт не пов�
 Корень компонентов: `%LOCALAPPDATA%\JarvisInstall`. Пользовательские данные:
 `%LOCALAPPDATA%\Jarvis` либо явный абсолютный `JARVIS_DATA_DIR`. Не задавать каталог данных внутри
 каталога установки. Перед повторной установкой закрыть окна Jarvis.
+
+Автоматическая диагностика создаёт итоговые `Jarvis-Report.html` и `Jarvis-Report.md`
+на успехе, сбое и обычной отмене. Агент открывает HTML и показывает точный путь пользователю.
+HTML — самостоятельный документ UTF-8 без внешних ресурсов: для отправки в чат достаточно
+одного HTML или Markdown, без журналов и аккаунтных данных. Исходные JSON schema 2
+и Markdown-отчёты сохраняются. Итог объединяет только одинаковые `run_id` bootstrap
+и приложения; stale файл не подтверждает новую попытку. Ранний bootstrap-отказ показывает
+путь к отчёту в новом `%TEMP%\JarvisInstallReport-...`; в этом случае читать этот путь,
+а не старый файл основного каталога. [Охват и ограничения](INSTALLATION_DIAGNOSTICS.md).
+Обязательная ошибка блокирует активацию кандидата; аппаратные и live сценарии ниже
+всегда остаются отдельной приёмкой.
 
 Если нет русского SAPI5-голоса: **Параметры → Время и язык → Речь → Управление голосами →
 Добавить голоса → Русский**. Пользователь принимает необходимые системные диалоги.
@@ -115,6 +133,14 @@ store; не вставлять его в команду. Для Outlook выбр
    токенов и credentials. Отключение Outlook очищает локальный credential cache.
 
 ## Отчёт приёмки
+
+Автоматический `Jarvis-Report.html` содержит матрицу текущих возможностей и границы
+каждой проверки. Он оставляет реальные Windows/UIA, публичный поиск, голос, Outlook,
+модель и ElevenLabs **НЕ ПРОВЕРЕНО**, пока нет фактической отдельной приёмки.
+Не заменять эти статусы на успех после одного обнаружения компонентов и не приписывать
+документу результаты ручного сценария, который не выполнялся. Вход в аккаунт, удержание
+кнопки записи и точные подтверждения выполняет пользователь. После установки пользователь
+может отправить в чат один `Jarvis-Report.html` либо `Jarvis-Report.md` для разбора.
 
 Зафиксировать дату, Windows build, CPU, Python, версии Notepad/Chrome/VS Code, установленные
 пакеты из `installation-report.json` и `.venv-acceptance\Scripts\python.exe -m pip list`,

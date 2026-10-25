@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
 Per-user repository bootstrap. No elevation, policy changes, credentials or live providers.
 Run from a trusted checkout: & '.\scripts\windows\Install-Jarvis.ps1'
@@ -9,7 +9,34 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $jarvisLock = $null
-$jarvisRoot = Join-Path $env:LOCALAPPDATA 'JarvisInstall'
+$jarvisRoot = $null
+$jarvisRunId = [Guid]::NewGuid().ToString('D')
+$jarvisReportRoot = $null
+$jarvisFallbackReportRoot = $null
+$jarvisSavedReportRoot = $null
+$python = $null
+$jarvisRuntimeReady = $false
+$jarvisCurrentPhase = 'host'
+$jarvisCancelled = $false
+$jarvisBootstrap = [ordered]@{
+    schema = 2
+    run_id = $jarvisRunId
+    started_at_utc = [DateTime]::UtcNow.ToString('o')
+    updated_at_utc = [DateTime]::UtcNow.ToString('o')
+    finished_at_utc = $null
+    status = 'running'
+    scope = 'windows_installation_bootstrap'
+    windows_mvp_acceptance = 'pending'
+    application_report = 'installation-report.json'
+    windows_build = $null
+    phases = @(
+        [ordered]@{ id = 'host'; name = 'Windows 11 x64 и интерактивный сеанс'; status = 'not_checked'; error_category = 'host_requirements'; remedy = 'Запустите установщик в 64-битном PowerShell в интерактивном сеансе Windows 11 x64.' },
+        [ordered]@{ id = 'managed_root_lock'; name = 'Каталог установки и исключительная блокировка'; status = 'not_checked'; error_category = 'installation_path_or_lock'; remedy = 'Закройте другой установщик. Проверьте доступ к каталогу; не удаляйте чужой каталог и не обходите ссылки или системную политику.' },
+        [ordered]@{ id = 'runtime'; name = 'Официальный Python: целостность и запуск'; status = 'not_checked'; error_category = 'runtime_preparation'; remedy = 'Проверьте сеть, свободное место, доверие Windows и существующий Python. Если требуется перезагрузка, выполните её; затем повторите установку.' },
+        [ordered]@{ id = 'application_setup'; name = 'Установка приложения и локальная диагностика'; status = 'not_checked'; error_category = 'application_setup'; remedy = 'Прочитайте installation-report.md того же запуска, исправьте указанный этап и повторите установщик. Проверки живых сервисов остаются отдельными.' },
+        [ordered]@{ id = 'launcher_shortcut'; name = 'Файл запуска и ярлык в меню «Пуск»'; status = 'not_checked'; error_category = 'launcher_or_shortcut'; remedy = 'Проверьте права на каталог установки и меню «Пуск», затем повторите установку. После успеха отдельно откройте Jarvis через ярлык.' }
+    )
+}
 
 function Assert-PlainDirectory([string]$Path) {
     $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
@@ -21,6 +48,234 @@ function Assert-PlainDirectory([string]$Path) {
     }
 }
 
+function Assert-PlainEntry([string]$Path) {
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if ($null -ne $item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Setup/report files must not be links or junctions.'
+    }
+}
+
+function Write-AtomicReport([string]$Path, [string]$Content) {
+    Assert-PlainDirectory (Split-Path -Parent $Path)
+    Assert-PlainEntry $Path
+    $temporary = $Path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    $stream = $null
+    $writer = $null
+    try {
+        $stream = [IO.File]::Open($temporary, 'CreateNew', 'Write', 'None')
+        $writer = [IO.StreamWriter]::new($stream, [Text.UTF8Encoding]::new($false))
+        $writer.Write($Content)
+        $writer.Flush()
+        $stream.Flush($true)
+        $writer.Dispose()
+        $writer = $null
+        $stream = $null
+        Assert-PlainEntry $Path
+        if (Test-Path -LiteralPath $Path) {
+            [IO.File]::Replace($temporary, $Path, [NullString]::Value)
+        } else {
+            [IO.File]::Move($temporary, $Path)
+        }
+    } finally {
+        if ($null -ne $writer) { $writer.Dispose() }
+        elseif ($null -ne $stream) { $stream.Dispose() }
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -ErrorAction SilentlyContinue }
+    }
+}
+
+function Get-FallbackReportRoot {
+    if ($null -eq $script:jarvisFallbackReportRoot) {
+        $temporaryRoot = [IO.Path]::GetTempPath()
+        Assert-PlainDirectory $temporaryRoot
+        $candidate = Join-Path $temporaryRoot ('JarvisInstallReport-' + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $candidate -ErrorAction Stop | Out-Null
+        Assert-PlainDirectory $candidate
+        $script:jarvisFallbackReportRoot = $candidate
+    }
+    return $script:jarvisFallbackReportRoot
+}
+
+function Write-BootstrapFiles([string]$Directory) {
+    Assert-PlainDirectory $Directory
+    $jsonPath = Join-Path $Directory 'installation-bootstrap.json'
+    $markdownPath = Join-Path $Directory 'installation-bootstrap.md'
+    $statusNames = @{ running = 'Выполняется'; passed = 'Проверено'; failed = 'Ошибка'; cancelled = 'Отменено'; not_checked = 'Не проверено' }
+    $lines = @(
+        '# Отчёт установки Jarvis',
+        '',
+        ('Запуск: ' + $jarvisBootstrap.run_id),
+        ('Начало (UTC): ' + $jarvisBootstrap.started_at_utc),
+        ('Обновлено (UTC): ' + $jarvisBootstrap.updated_at_utc),
+        ('Результат установки: ' + $statusNames[$jarvisBootstrap.status]),
+        '',
+        '| Этап | Статус |',
+        '| --- | --- |'
+    )
+    foreach ($phase in $jarvisBootstrap.phases) {
+        $lines += '| ' + $phase.name + ' | ' + $statusNames[$phase.status] + ' |'
+    }
+    foreach ($phase in $jarvisBootstrap.phases) {
+        if ($phase.status -in @('failed', 'cancelled')) {
+            $lines += @('', ('Категория: ' + $phase.error_category), ('Следующий шаг: ' + $phase.remedy))
+        }
+    }
+    $lines += @(
+        '',
+        'Этот отчёт проверяет только этапы установщика. Создание ярлыка не подтверждает запуск через меню «Пуск».',
+        'Подробная локальная диагностика: installation-report.json / installation-report.md с тем же идентификатором запуска. Если идентификатор отличается, файл относится к предыдущей попытке.',
+        'Полная приёмка MVP на Windows, реальные микрофон и динамики, Outlook OAuth/доставка и живая модель: НЕ ПРОВЕРЕНО. Выполните docs/WINDOWS_ACCEPTANCE.md.',
+        'Проверки не записывают звук, не вводят ключи, не отправляют письма и не заменяют пользовательское подтверждение.'
+    )
+    Write-AtomicReport $jsonPath ($jarvisBootstrap | ConvertTo-Json -Depth 8)
+    Write-AtomicReport $markdownPath ($lines -join [Environment]::NewLine)
+    # A complete, transferable document must exist even before Python is available.
+    # Use only installer-owned text: never embed exception messages, paths, credentials
+    # or arbitrary application-report fields in this conservative fallback.
+    $featureNames = @(
+        'Зависимости Python и native DLL',
+        'Chromium: локальная страница без сети и JavaScript',
+        'Загрузка локальной русской модели речи',
+        'Разрешения, симуляция, отмена и аудит',
+        'Локальный планировщик',
+        'Память: запись, чтение, изменение и удаление',
+        'Системный credential backend',
+        'Обнаружение микрофона, динамика и русского голоса',
+        'Видимое окно установленного приложения',
+        'Повторный запуск из меню «Пуск»',
+        'Windows: приложения и ввод после точного подтверждения',
+        'Фактическая публичная поисковая выдача',
+        'Запись, распознавание речи и слышимое озвучивание',
+        'Outlook: OAuth, черновик, отправка и доставка',
+        'Реальный запрос к облачной модели',
+        'Дополнительный ElevenLabs Free: API и звук',
+        'Полная Windows-приёмка MVP'
+    )
+    $shareLines = @(
+        '# Отчёт установки и проверки Jarvis',
+        '',
+        'Этот документ можно отправить целиком. Другие файлы рядом с ним не нужны.',
+        ('Запуск: ' + $jarvisBootstrap.run_id),
+        ('Начало (UTC): ' + $jarvisBootstrap.started_at_utc),
+        ('Обновлено (UTC): ' + $jarvisBootstrap.updated_at_utc),
+        ('Результат установщика: ' + $statusNames[$jarvisBootstrap.status]),
+        '',
+        'Сводная диагностика приложения пока недоступна. Ниже приведены только проверенные этапы установщика; функции не считаются рабочими без отдельного результата того же запуска.',
+        '',
+        '| Этап установки | Статус | Следующий шаг |',
+        '| --- | --- | --- |'
+    )
+    foreach ($phase in $jarvisBootstrap.phases) {
+        $remedy = '—'
+        if ($phase.status -in @('failed', 'cancelled', 'not_checked')) { $remedy = $phase.remedy }
+        if ($phase.id -eq 'application_setup' -and $phase.status -ne 'passed') {
+            $remedy = 'Повторите Install-Jarvis.cmd; сохраните этот документ для исправления. Живые проверки потребуют действий пользователя.'
+        }
+        $shareLines += '| ' + $phase.name + ' | ' + $statusNames[$phase.status] + ' | ' + $remedy + ' |'
+    }
+    $shareLines += @('', '| Функция | Статус |', '| --- | --- |')
+    foreach ($name in $featureNames) { $shareLines += '| ' + $name + ' | НЕ ПРОВЕРЕНО (not_checked) |' }
+    $shareLines += @(
+        '',
+        'Следующий шаг: исправьте указанный этап и повторите Install-Jarvis.cmd. Для живых функций потребуются действия пользователя в приложении: подключение аккаунта, ввод собственного ключа, удержание кнопки записи и точные подтверждения.',
+        'Отчёт не подтверждает работу Windows UIA, реального микрофона/динамика, публичного поиска, Outlook или облачной модели.',
+        'Проверки не записывают звук, не читают секреты, не отправляют письма и не заменяют пользовательское подтверждение.',
+        'Полная приёмка MVP остаётся НЕ ПРОВЕРЕНО. Выполните сценарии docs/WINDOWS_ACCEPTANCE.md.'
+    )
+    $shareMarkdown = $shareLines -join [Environment]::NewLine
+    $escaped = [Net.WebUtility]::HtmlEncode($shareMarkdown)
+    $shareHtml = '<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src ''none''; style-src ''unsafe-inline''; base-uri ''none''; form-action ''none''"><title>Отчёт Jarvis</title><style>body{margin:2rem auto;padding:0 1rem;max-width:80rem;font:16px/1.5 system-ui,sans-serif;color:#17202a;background:#fff}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}@media print{body{margin:0;max-width:none}}</style></head><body><pre>' + $escaped + '</pre></body></html>'
+    Write-AtomicReport (Join-Path $Directory 'Jarvis-Report.md') $shareMarkdown
+    Write-AtomicReport (Join-Path $Directory 'Jarvis-Report.html') $shareHtml
+    $script:jarvisSavedReportRoot = $Directory
+    Write-Host ('Jarvis bootstrap reports: ' + $jsonPath + ' ; ' + $markdownPath)
+}
+
+function Quote-ReportArgument([string]$Value) {
+    # ProcessStartInfo.Arguments uses Windows argument quoting, with no command shell.
+    $escaped = [regex]::Replace($Value, '(\\*)"', '$1$1\"')
+    $escaped = [regex]::Replace($escaped, '(\\+)$', '$1$1')
+    return '"' + $escaped + '"'
+}
+
+function Complete-ShareableReport {
+    if ($null -eq $script:jarvisSavedReportRoot) { return }
+    $reportDirectory = $script:jarvisSavedReportRoot
+    $reportPath = Join-Path $reportDirectory 'Jarvis-Report.html'
+    if ($script:jarvisRuntimeReady -and $null -ne $script:python -and $null -ne $script:jarvisRoot) {
+        $process = $null
+        $started = $false
+        try {
+            $exporter = Join-Path $PSScriptRoot 'export_report.py'
+            Assert-PlainDirectory $PSScriptRoot
+            Assert-PlainEntry $exporter
+            if (-not (Test-Path -LiteralPath $exporter -PathType Leaf)) { throw 'Exporter is unavailable.' }
+            $start = [Diagnostics.ProcessStartInfo]::new()
+            $start.FileName = $script:python
+            $arguments = @('-I', $exporter, '--root', $reportDirectory,
+                '--application-root', $script:jarvisRoot, '--run-id', $jarvisRunId)
+            $start.Arguments = ($arguments | ForEach-Object { Quote-ReportArgument $_ }) -join ' '
+            $start.UseShellExecute = $false
+            $start.CreateNoWindow = $true
+            $start.RedirectStandardOutput = $true
+            $start.RedirectStandardError = $true
+            $process = [Diagnostics.Process]::new()
+            $process.StartInfo = $start
+            if (-not $process.Start()) { throw 'Exporter did not start.' }
+            $started = $true
+            # Drain output directly to a null stream: no raw output in RAM reports,
+            # temporary files or console; exporter uses only the Python standard library.
+            $stdout = $process.StandardOutput.BaseStream.CopyToAsync([IO.Stream]::Null)
+            $stderr = $process.StandardError.BaseStream.CopyToAsync([IO.Stream]::Null)
+            if (-not $process.WaitForExit(30000)) { throw 'Exporter timed out.' }
+            if (-not $stdout.Wait(5000) -or -not $stderr.Wait(5000) -or $process.ExitCode -ne 0) {
+                throw 'Exporter did not complete.'
+            }
+        } catch {
+            Write-Warning 'Combined application diagnostics could not be exported. The standalone document includes the installer result; unavailable checks remain not_checked.'
+        } finally {
+            if ($null -ne $process) {
+                try {
+                    if ($started -and -not $process.HasExited) {
+                        $process.Kill()
+                        $process.WaitForExit(5000) | Out-Null
+                    }
+                } catch { } finally { $process.Dispose() }
+            }
+        }
+    }
+    Write-Host ('Send this Jarvis report: ' + [IO.Path]::GetFullPath($reportPath))
+}
+
+function Write-BootstrapReport {
+    $jarvisBootstrap.updated_at_utc = [DateTime]::UtcNow.ToString('o')
+    # Only advertise a document saved for the latest bootstrap state.
+    $script:jarvisSavedReportRoot = $null
+    if ($null -ne $script:jarvisReportRoot) {
+        try {
+            Write-BootstrapFiles $script:jarvisReportRoot
+            return
+        } catch {
+            Write-Warning 'The current bootstrap report could not be saved in JarvisInstall; an existing file may be stale. Trying a separate temporary report.'
+        }
+    }
+    try {
+        Write-BootstrapFiles (Get-FallbackReportRoot)
+    } catch {
+        Write-Warning 'No current bootstrap report could be saved. Check writable temporary storage; console output is the only result available.'
+    }
+}
+
+function Set-BootstrapPhase([string]$Phase, [ValidateSet('running', 'passed', 'failed', 'cancelled', 'not_checked')][string]$Status) {
+    $script:jarvisCurrentPhase = $Phase
+    foreach ($entry in $jarvisBootstrap.phases) {
+        if ($entry.id -eq $Phase) {
+            $entry.status = $Status
+            break
+        }
+    }
+    Write-BootstrapReport
+}
+
 function Test-Runtime([string]$Python, [string]$Version) {
     if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) { return $false }
     $result = & $Python -I -c 'import sys,struct,ssl,venv,ensurepip; print(chr(46).join(map(str,sys.version_info[:3]))+chr(47)+str(struct.calcsize(chr(80))*8))' 2>$null
@@ -28,18 +283,24 @@ function Test-Runtime([string]$Python, [string]$Version) {
 }
 
 try {
+    Set-BootstrapPhase 'host' 'running'
     $osBuild = [Environment]::OSVersion.Version.Build
+    if ($env:OS -eq 'Windows_NT') { $jarvisBootstrap.windows_build = $osBuild }
     $architecture = (Get-CimInstance Win32_Processor | Select-Object -First 1).Architecture
     if ($env:OS -ne 'Windows_NT' -or $osBuild -lt 22000 -or $architecture -ne 9 -or
         -not [Environment]::Is64BitProcess -or -not [Environment]::UserInteractive) {
         throw 'Use 64-bit PowerShell in an interactive Windows 11 x64 desktop session.'
     }
+    Set-BootstrapPhase 'host' 'passed'
+    Set-BootstrapPhase 'managed_root_lock' 'running'
+    $jarvisRoot = Join-Path $env:LOCALAPPDATA 'JarvisInstall'
     $repository = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).Path
-    $manifest = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'assets.json') -Raw | ConvertFrom-Json
     Assert-PlainDirectory $env:LOCALAPPDATA
     if (Test-Path -LiteralPath $jarvisRoot) {
         Assert-PlainDirectory $jarvisRoot
-        if (-not (Test-Path -LiteralPath (Join-Path $jarvisRoot '.jarvis-install'))) {
+        $marker = Join-Path $jarvisRoot '.jarvis-install'
+        Assert-PlainEntry $marker
+        if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) {
             throw 'Existing JarvisInstall directory has no ownership marker. Inspect it before setup.'
         }
     } else {
@@ -47,7 +308,12 @@ try {
         [IO.File]::WriteAllText((Join-Path $jarvisRoot '.jarvis-install'), '1')
     }
     # Exclusive OS handle: released after Ctrl+C/crash; no stale PID lock to remove.
+    Assert-PlainEntry (Join-Path $jarvisRoot 'setup.lock')
     $jarvisLock = [IO.File]::Open((Join-Path $jarvisRoot 'setup.lock'), 'OpenOrCreate', 'ReadWrite', 'None')
+    $jarvisReportRoot = $jarvisRoot
+    Set-BootstrapPhase 'managed_root_lock' 'passed'
+    Set-BootstrapPhase 'runtime' 'running'
+    $manifest = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'assets.json') -Raw | ConvertFrom-Json
     $cache = Join-Path $jarvisRoot 'cache'
     New-Item -ItemType Directory -Force -Path $cache | Out-Null
     Assert-PlainDirectory $cache
@@ -127,9 +393,18 @@ try {
             throw 'Python setup/repair failed. Check the visible installer and rerun.'
         }
     }
+    $jarvisRuntimeReady = $true
+    Set-BootstrapPhase 'runtime' 'passed'
+    Set-BootstrapPhase 'application_setup' 'running'
     Write-Host 'Preparing Jarvis. First installation needs network and at least 3 GB free.'
-    & $python -I (Join-Path $PSScriptRoot 'install.py') --root $jarvisRoot
+    & $python -I (Join-Path $PSScriptRoot 'install.py') --root $jarvisRoot --run-id $jarvisRunId
+    if ($LASTEXITCODE -eq 130) {
+        $jarvisCancelled = $true
+        throw 'Application setup was cancelled. Rerun to continue; user data is preserved.'
+    }
     if ($LASTEXITCODE -ne 0) { throw 'Application setup did not pass. Resolve the reported step and rerun this script.' }
+    Set-BootstrapPhase 'application_setup' 'passed'
+    Set-BootstrapPhase 'launcher_shortcut' 'running'
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Launch-Jarvis.pyw') -Destination $jarvisRoot -Force
     $shell = New-Object -ComObject WScript.Shell
     $programs = [Environment]::GetFolderPath('Programs')
@@ -139,10 +414,27 @@ try {
     $shortcut.WorkingDirectory = $jarvisRoot
     $shortcut.Description = 'Jarvis - local assistant'
     $shortcut.Save()
+    Set-BootstrapPhase 'launcher_shortcut' 'passed'
+    $jarvisBootstrap.status = 'passed'
+    $jarvisBootstrap.finished_at_utc = [DateTime]::UtcNow.ToString('o')
+    Write-BootstrapReport
     Write-Host 'Jarvis window observed; Start menu shortcut created. Native MVP acceptance remains pending.'
 } catch {
+    $outcome = 'failed'
+    if ($jarvisCancelled -or $_.Exception -is [System.Management.Automation.PipelineStoppedException]) { $outcome = 'cancelled' }
+    $jarvisBootstrap.status = $outcome
+    $jarvisBootstrap.finished_at_utc = [DateTime]::UtcNow.ToString('o')
+    Set-BootstrapPhase $jarvisCurrentPhase $outcome
     Write-Error ('Jarvis setup stopped: ' + $_.Exception.Message) -ErrorAction Continue
+    if ($outcome -eq 'cancelled') { exit 130 }
     exit 1
 } finally {
-    if ($null -ne $jarvisLock) { $jarvisLock.Dispose() }
+    # Ctrl+C can skip catch. Preserve an interrupted result before releasing the lock.
+    if ($jarvisBootstrap.status -eq 'running') {
+        $jarvisBootstrap.status = 'cancelled'
+        $jarvisBootstrap.finished_at_utc = [DateTime]::UtcNow.ToString('o')
+        Set-BootstrapPhase $jarvisCurrentPhase 'cancelled'
+    }
+    try { Complete-ShareableReport }
+    finally { if ($null -ne $jarvisLock) { $jarvisLock.Dispose() } }
 }

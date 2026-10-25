@@ -1,0 +1,29 @@
+[
+  {
+    "check": "trusted hold records from a focused composer; release returns transcript for review; synthetic gestures ignored",
+    "pass": true
+  },
+  {
+    "check": "Space hold and release uses isolated gesture bridge",
+    "pass": true
+  },
+  {
+    "check": "voice opt-in automatically starts the real Runner and acknowledges using fixture speaker",
+    "pass": true
+  },
+  {
+    "check": "focus loss cancels capture without submitting stale audio",
+    "pass": true
+  },
+  {
+    "check": "approval dialog stays inside narrow renderer without horizontal overflow",
+    "left": 17,
+    "right": 373,
+    "width": 390,
+    "scroll": 390
+  },
+  {
+    "check": "synthetic approval never executes; trusted click executes exact snapshot through PermissionEngine",
+    "pass": true
+  }
+]

@@ -1,9 +1,15 @@
 # Архитектура
 
+Браузер поддерживает Strict Sandbox (default) и явно включаемый Live Browser,
+в том числе подключение к существующему Chrome по CDP. Выбор проходит через AppConfig
+во все BrowserHost (planner, tools, Electron runtime). [Подробности](BROWSER_MODES.md).
+
 ## Текущее состояние
 
-Один Python-пакет, запускаемый через `python -m jarvis` или `jarvis`. Этапы 0–5
-реализовали desktop shell, локальные typed tools, PermissionEngine, approvals и audit.
+Один Python-пакет, запускаемый через `python -m jarvis` или `jarvis`. Этапы 0–8
+реализованы локально: shell, typed tools, PermissionEngine, approvals, audit, planner,
+голос, управляемые метки и Outlook. Переносимая подготовка этапа 9 реализована;
+native Windows и полный MVP остаются pending.
 Текстовая команда остаётся fake demo этапа 1. Кнопка «Открыть инструменты» открывает
 ручное окно локальных, Windows и браузерных инструментов. Windows UIA изолирован в helper-процессе;
 Playwright имеет отдельный asyncio owner. Отдельное окно планировщика использует offline
@@ -20,7 +26,7 @@ Manual UI / bounded Planner Runner
   -> deterministic risk policy
   -> ApprovalDialog + UI-only ApprovalAuthority for CONFIRM
   -> PermissionEngine.execute
-  -> pure preconditions -> atomic token consume -> durable audit
+  -> real-only side-effect-free preconditions -> atomic token consume -> durable audit
   -> adapter -> strict result schema -> verifier
   -> factual Outcome -> audit -> UI
 ```
@@ -109,11 +115,13 @@ text, typed result data, токены и signature не сохраняются �
 логируются как `unknown`, исключая утечку через имя.
 
 Local outbox — память одного окна проверки. Verifier читает receipt и сравнивает сохранённый
-payload с исходным снимком. При закрытии окна сообщения исчезают. Вложения в текущем
-контракте — только metadata name/SHA-256; настоящие файлы не читаются и не отправляются.
-Будущему внешнему adapter понадобится замороженное содержимое файлов и повторная проверка.
+payload с исходным снимком. При закрытии окна сообщения исчезают. Вложения именно
+тестового local outbox — только metadata name/SHA-256.
+Outlook этапа 8 отдельно хранит выбранные пользователем bytes в RAM, связывает size/hash/ID
+со snapshot и отправляет точные утверждённые bytes; это не произвольный file reader.
 
-SQLite memory и OAuth ещё не реализованы. Ключ OpenAI хранится в OS credential store,
+SQLite profile memory и MSAL OAuth реализованы в этапах 7–8; live OAuth пока не проверен.
+Ключ OpenAI хранится в OS credential store,
 не в памяти модели. Retrieved content никогда не меняет policy или tool registry.
 
 ## Решения
@@ -126,7 +134,7 @@ Python >=3.12, `src` layout, Hatchling; PySide6-Essentials и Pydantic. Верс
 ## Windows Automation, этап 3
 
 `tools/windows.py` содержит portable strict schemas и четыре ToolSpec. `get_open_windows`,
-`open_app`, `focus_app` — SAFE; `type_text` — CONFIRM. Регистрация не импортирует pywinauto.
+`open_app`, `focus_app`, `type_text` — SAFE. Регистрация не импортирует pywinauto.
 `platforms/windows/transport.py` запускает фиксированный модуль helper через Python `-I`,
 без shell. `worker.py` лениво импортирует `native.py` только на Windows. Pywinauto/psutil
 ограничены dependency marker `sys_platform == 'win32'`.
@@ -165,8 +173,9 @@ compare-and-write. Во время подтверждённого ввода н�
 
 ## Browser Automation, этап 4
 
-`tools/browser.py` регистрирует восемь strict tools. `read`/`get_tabs` — SAFE;
-`open`/`navigate`/`search`/`click`/`type`/`close` — CONFIRM. Названия `read` и `close`
+`tools/browser.py` регистрирует восемь strict tools. Навигация, поиск, чтение и ввод — SAFE;
+`click`/`close` классифицируются по snapshot через `ToolSpec.classify_risk`.
+Таблица рисков: [PERMISSION_POLICY.md](PERMISSION_POLICY.md). Названия `read` и `close`
 соответствуют текущему roadmap; в исходном плане это `read_page` и `close_tab`.
 `ToolSpec.policy` — чистая синхронная проверка во время normalize, до snapshot;
 она работает и в simulation. Она не вызывает browser/DNS/adapters. Prepared snapshots
@@ -280,3 +289,117 @@ MSAL/OS storage работают в killable helper; Graph HTTP — bounded asyn
 и свежего visible-window receipt. Перезапуск восстанавливает компоненты, не касается
 профиля/SQLite/OS credentials. Stable launcher не зависит от пути репозитория.
 См. [MILESTONE_9.md](MILESTONE_9.md).
+
+
+## Предлагаемая архитектура полного продукта — этапы 10–32
+
+**Ниже проект, не текущая реализация.** Номера и gates: [ROADMAP.md](ROADMAP.md).
+Текущие границы Windows/browser/permissions выше сохраняются до отдельных принятых
+расширений. Английский default не реализован: текущие UI/рецепты/summary русские,
+native TTS требует русский голос; locale/time zone settings отсутствуют.
+
+### Localization и единый интерфейс
+
+Этап 10: стабильные message IDs, EN/RU resource catalogs и plural/formatting service;
+отдельные settings UI locale, conversation/voice language и time zone. Данные документов,
+account labels и approved payload не переводятся ресурсным слоем. Форматированное время
+отделено от canonical instant/zone/offset действия. Provider language preferences —
+ограниченные данные, не замена policy. Speech assets выбираются локально, автоматически
+при старте не загружаются; согласованная подготовка ресурсов использует setup boundary.
+
+Этап 12: первый запуск и постоянный Modules & Connections используют те же contracts,
+settings и connection state, без отдельного неконтролируемого execution path. Wizard state
+содержит только завершённые настройки и opaque secure references, не tokens/approvals.
+Не превращать demo dashboard в доказательство execution; первая реальная задача должна
+проходить существующий Runner/engine и показывать фактические outcomes.
+[ONBOARDING.md](ONBOARDING.md) задаёт все семь экранов и независимое восстановление ошибок.
+
+### Адаптеры и исполнение
+
+[INTEGRATION_CONTRACT.md](INTEGRATION_CONTRACT.md) расширяет ToolSpec versioned metadata,
+auth/account lifecycle, scope/risk, rate/cost limits, verification и duplicate handling.
+Доверенные manifests регистрируются до seal; добавление пакета не требует переписывать
+core. Model не может загружать code/plugins, выбирать credential backend или менять schemas.
+Установка пакета и регистрация — разные действия; install не даёт service permissions.
+
+Схема будущего взаимодействия:
+
+```text
+Text / reviewed voice / explicit wizard UI / enabled routine
+  -> one orchestrator + shared budget + selected source context
+  -> optional specialized analysis roles (data only)
+  -> registered tool or UI-only setup operation
+  -> PermissionEngine + current identity + exact UI approval when required
+  -> trusted service/platform adapter -> independent verifier
+  -> outcome + minimal audit + access-controlled source-linked report
+```
+
+OAuth/MFA остаются пользовательским UI. Существующий Outlook UI-only setup вне engine
+является нынешней реализацией; этап 11 вводит engine-registered setup path с отдельной
+UI authority, не выставляя connect/disconnect модели. Bootstrap этапа 9 также остаётся
+внешним доверенным installer; модель не получает универсальный install tool.
+
+Official APIs предпочтительны structured browser, затем UIA, затем visual route. Для
+authenticated browser (22) отдельные sessions/adapters и per-site policy; текущий offline,
+script-disabled anonymous transport не меняется автоматически. Windows inputs/controlled
+transfer (23) отдельно связывают observed source/destination и payload. Visual route (24)
+выбирает разрешённый monitor/window/region, учитывает DPI, получает local OCR либо отдельный
+cloud disclosure, и только затем предлагает observable target. Координата производна от
+свежего наблюдения; stale/ambiguous/occluded target останавливает действие.
+
+### Память, источники и секреты
+
+Этап 25 отделяет personal preferences/workflows от company KB. Source records имеют
+owner, user/org/account ACL, source ID/link, observed/updated timestamps, retention и
+freshness/conflict status. Retrieval проверяет актуальные права, а не только права при
+ingestion. Явный выбор источников/разрешённых полей; view/correct/delete/disable очищают
+применимые индексы и кэши. Backup/retention/encryption/cloud processing — отдельные решения,
+не уже реализованные свойства. Старые short labels этапа 7 не превращаются в бесконечные notes.
+
+Source-linked workflow report — отдельные защищённые task data, не поля raw audit.
+Основной audit остаётся metadata-only; локальная persistence полного task payload требует
+согласованного storage scope. После restart approval не восстанавливается из отчёта.
+1Password (21) предоставляет trusted helper конкретный разрешённый secret; модели виден
+лишь конечный статус операции. OS credential store хранит требуемые локальные credentials,
+не заменяется vault-доступом. Секрет не проходит через tool result, memory или report.
+
+### Orchestrator, роли и фоновое выполнение
+
+Этап 26 вводит workflow state machine, bounded plan и source lineage между email/task/event.
+Планирование/анализ можно разделить на роли; issued effects сериализуются/блокируются общим
+gateway и intent ledger. Общие budgets steps/time/tokens/cost не умножаются числом ролей.
+Возможная параллельность read-only анализа не даёт параллельно потребить одно approval.
+Нет distributed exactly-once promise: неопределённый write блокирует автоматический повтор,
+дальше только bounded authorized reconciliation и честный partial report.
+
+| Роль | Когда отдельный анализ полезен | Данные и граница |
+| --- | --- | --- |
+| Email | Оценка важности/рутинности в выбранном наборе писем | Только selected mailbox/messages; draft не send authority |
+| Calendar | Согласование времени/конфликтов | Selected calendars, attendees и time zone; invite требует action approval |
+| Tasks | Разбиение поручений на задачи | Selected projects/assignees и source items; no cross-workspace inference |
+| Social | Контекст conversation и стиль ответа | Selected pages/media/comments; publishing отдельно |
+| Finance | Сводка задолженности/исключений | Разрешённые invoice/payment-status reads; без денег и record writes |
+| Company knowledge | Поиск и сопоставление источников | ACL-filtered KB, provenance/conflict; не вся компания |
+| Browser | Сложное чтение страниц/поиск подходящих controls | Только разрешённая current session/observations; no arbitrary JS |
+| Windows | Разбор неоднозначных observable UI targets | Только выбранные apps/windows/region; не вся площадь экрана |
+
+Простой API read, deterministic format или один exact write выполняется обычным tool,
+без отдельного агента. Главный orchestrator формирует единый audit/report. Ни один агент
+не имеет ApprovalAuthority и не подтверждает действия другого; microservices не нужны
+без измеренной изоляционной/операционной потребности.
+
+Этап 27: локальный scheduler/event receiver создаёт bounded task только по сохранённому
+explicit enablement. Selected sources, time zone/quiet hours, limits, disable и missed-run
+state видны пользователю. По умолчанию только read/proposals; external effects ожидают
+индивидуального UI approval. Computer off/sleep означает отсутствие гарантий выполнения.
+Cloud runner/standing authority требуют отдельной архитектуры и решения, не добавлены здесь.
+
+### Демонстрации
+
+Этап 28: recording controller с indicator и scope → минимальные observations → draft
+workflow (parameters/conditions/tool IDs/verifiers) → user edit/review → simulation →
+approved live trial → versioned reuse. Secrets и лишние персональные данные исключаются
+до передачи/хранения, login/payment scenes пропускаются или останавливают capture.
+Изменение UI/schema/target требует нового наблюдения или исправления workflow. Записанный
+UI approval не становится исполняемым разрешением; каждый будущий action проходит engine.
+Версии и observations удаляемы; неподтверждённое обобщение одного примера не исполняется.

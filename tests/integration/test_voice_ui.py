@@ -257,3 +257,57 @@ def test_escape_in_modal_cancels_voice_and_plan(qtbot: QtBot, tmp_path: Path) ->
         assert window.outbox.count == 0 and not window.voice.deadline.isActive()
     finally:
         window.shutdown()
+
+
+@pytest.mark.parametrize(
+    "confidence,enabled,started", [(0.75, True, True), (0.749, True, False), (0.99, False, False)]
+)
+def test_optional_autostart_keeps_manual_review_below_threshold(
+    qtbot: QtBot,
+    tmp_path: Path,
+    confidence: float,
+    enabled: bool,
+    started: bool,
+) -> None:
+    fixture = VoiceFixture("проверь систему", confidence=confidence)
+    window = make_window(qtbot, tmp_path, fixture)
+    try:
+        qtbot.waitUntil(lambda: window.memory.available and window.memory.worker is None)
+        window.voice.auto_start.setChecked(enabled)
+        record(qtbot, window.voice)
+        qtbot.waitUntil(lambda: window.worker is None and window.voice.worker is None)
+        assert bool(window.output.toPlainText()) == started, (
+            window.status.text(),
+            window.voice.status.text(),
+            window.command.toPlainText(),
+        )
+        assert fixture.spoken == (["Принял, выполняю"] if started else [])
+        assert window.command.toPlainText() == fixture.text
+    finally:
+        window.shutdown()
+
+
+def test_autostart_still_waits_for_exact_action_approval(qtbot: QtBot, tmp_path: Path) -> None:
+    fixture = VoiceFixture("отправь сообщение")
+    panel = VoicePanel(recorder=fixture, recognizer=fixture, speaker=fixture)
+    window = PlannerWindow(
+        AppConfig(tmp_path),
+        voice_panel=panel,
+        provider=Scripted([call("local.append_message", MESSAGE)]),
+    )
+    qtbot.addWidget(window)
+    window.show()
+    try:
+        qtbot.waitUntil(lambda: window.memory.available and window.memory.worker is None)
+        window.voice.auto_start.setChecked(True)
+        window.cloud_consent.setChecked(True)
+        window.simulation.setChecked(False)
+        record(qtbot, panel)
+        qtbot.waitUntil(lambda: window.approval_dialog is not None)
+        assert window.outbox.count == 0
+        assert not window.cloud_consent.isChecked()
+        window.stop()
+        qtbot.waitUntil(lambda: window.worker is None)
+        assert window.outbox.count == 0
+    finally:
+        window.shutdown()

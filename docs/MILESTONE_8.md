@@ -1,5 +1,7 @@
 # Этап 8 — Outlook через OAuth / Microsoft Graph
 
+> Risk policy updated on 2026-10-24: see [PERMISSION_POLICY.md](PERMISSION_POLICY.md). Historical approval requirements below are superseded by that table.
+
 Дата: 2026-09-15. Пользователь выбрал **Outlook**. Реализация и fixture-проверки выполнены
 на macOS / Python 3.12.7. Живые OAuth, почта, Windows, OpenAI и голосовое оборудование
 **не проверены**. Это не завершение MVP; установщик и Windows E2E относятся к этапу 9.

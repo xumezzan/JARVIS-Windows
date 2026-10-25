@@ -1,11 +1,31 @@
 """Headless by default; set QT_QPA_PLATFORM=cocoa/windows for native GUI verification."""
 
+from __future__ import annotations
+
 import os
 import sys
+from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 import pytest
 
+if TYPE_CHECKING:
+    from PySide6.QtWidgets import QApplication
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+@pytest.fixture(scope="session")
+def qapp(qapp: QApplication) -> Iterator[QApplication]:
+    # Wrap pytest-qt's fixture for the whole QApplication lifetime, as in production.
+    # Pure backend runs never request this fixture and do not initialize Qt.
+    from jarvis.ui.garbage_collection import GuiGarbageCollector
+
+    collector = GuiGarbageCollector(qapp)
+    try:
+        yield qapp
+    finally:
+        collector.close()
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

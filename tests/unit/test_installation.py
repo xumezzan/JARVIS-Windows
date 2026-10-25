@@ -16,6 +16,7 @@ import pytest
 
 from jarvis.installation import setup
 from jarvis.installation.assets import SetupError, download, extract_model
+from jarvis.installation.report import InstallationReport
 
 
 def archive(path: Path, names: list[str]) -> Path:
@@ -178,10 +179,20 @@ def test_two_slot_failure_keeps_active_app_and_data(
         slot.mkdir()
         return slot
 
-    def check(*args: Any) -> dict[str, Any]:
+    def check(
+        slot: Path,
+        model: str,
+        install_root: Path,
+        report: InstallationReport | None = None,
+    ) -> dict[str, Any]:
         called.append("check")
         if phase == "check":
             raise SetupError("missing runtime")
+        from jarvis.installation.probe import PROBE_CHECKS
+
+        assert report is not None
+        for name in (*PROBE_CHECKS, "pip_check", "gui_smoke"):
+            report.record(name, "passed")
         return {}
 
     def launch(*args: Any) -> None:

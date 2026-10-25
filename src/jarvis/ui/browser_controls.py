@@ -13,17 +13,26 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from jarvis.security.browser_policy import BrowserMode
 from jarvis.tools.browser import BrowserResult, ElementTarget, PageTarget, PageView
 
 
 class BrowserControls(QWidget):
-    def __init__(self) -> None:
+    def __init__(self, mode: BrowserMode = BrowserMode.STRICT, *, attached: bool = False) -> None:
         super().__init__()
         self.tool = ""
         self.views: dict[str, PageView] = {}
         layout = QVBoxLayout(self)
         notice = QLabel(
-            "Отдельный анонимный сеанс без JavaScript. Поддерживаются статические страницы "
+            (
+                "Live Browser · CDP: видимый Chrome с его входами и cookies. "
+                "При закрытии Jarvis вкладки и браузер сохраняются."
+                if attached
+                else "Live Browser: JavaScript, cookies, сабресурсы и HTTPS-редиректы включены. "
+                "Отдельный видимый сеанс закрывается вместе с этим окном."
+            )
+            if mode is BrowserMode.LIVE
+            else "Strict Sandbox: отдельный анонимный сеанс без JavaScript. Статические страницы "
             "и поиск через GET-формы; отправка POST отключена. Вкладки и введённый текст "
             "удаляются при закрытии этого окна."
         )
@@ -85,8 +94,8 @@ class BrowserControls(QWidget):
         if view is None or view.target != target:
             return
         for element in view.elements:
-            if (self.tool == "browser.type" and element.role == "textbox") or (
-                self.tool == "browser.click" and element.request is not None
+            if (self.tool == "browser.type" and element.role in ("textbox", "searchbox")) or (
+                self.tool == "browser.click" and element.role in ("button", "link")
             ):
                 self.elements.addItem(f"{element.role}: {element.name}", element)
 

@@ -118,6 +118,113 @@ SHA-256 с release metadata. Parser успешно разобрал оба `.ps1
 
 ## Открытые ворота
 
+### Дополнение 2026-10-14 — автоматическая диагностика и отчёты
+
+В рамках этапа 9 установщик расширен по запросу пользователя: он проверяет безопасные
+локальные функции и сохраняет текущие результаты, в том числе при сбое и обычной отмене.
+Это переносимое дополнение, **не новая Windows-приёмка** и не реализация этапов 10–32.
+
+- `installation-report.json` теперь schema 2; рядом создаётся читаемый русский
+  `installation-report.md`. Каждая проверка имеет статус, фиксированную категорию,
+  длительность, границу доказательства и следующий шаг. Отчёт обновляется до и после
+  проверки; прежний успешный файл не заменяет текущий результат.
+- Bootstrap создаёт свои `installation-bootstrap.json`/`.md` с общим UUID `run_id`:
+  host, managed root/lock, runtime, application setup, launcher/shortcut. До безопасного
+  корня и exclusive lock отчёт находится в новом временном каталоге, путь виден в консоли.
+  PS source имеет UTF-8 BOM для русских строк Windows PowerShell 5.1.
+- Вместо остановки на первом импорте независимые ограниченные процессы проверяют все
+  компоненты, локальный Chromium/Vosk, устройства и SAPI. Обязательные ошибки или
+  отсутствующие результаты запрещают запуск и активацию кандидата.
+- Добавлены реальные локальные probes PermissionEngine/simulation/cancel/audit,
+  OfflineProvider/Runner и synthetic memory roundtrip. Используются только временные
+  данные. Native credential probe лишь строит backend, не читает/записывает secrets.
+- Исправлен cleanup: timeout/ошибка Windows taskkill не пропускает kill/wait прямого
+  дочернего процесса. Очистка полного Windows process tree по-прежнему требует native проверки.
+- Live модель, почта, запись/звук, UIA, public search, запуск из «Пуск» и полная приёмка
+  остаются `not_checked`/`pending`. `automatic_checks_passed` означает только описанную
+  автоматическую диагностику. GUI smoke по-прежнему проверяет demo shell.
+
+Охват, значения статусов, команды и невозможность гарантировать файл до старта скрипта
+или после hard kill описаны в [INSTALLATION_DIAGNOSTICS.md](INSTALLATION_DIAGNOSTICS.md).
+
+Проверка на Mac, Python 3.12.7, отдельный venv и `pip install -e ".[dev,voice]`:
+
+| Проверка | Результат дополнения |
+| --- | --- |
+| Focused installer/report/offline probes | 103 passed |
+| Full `QT_QPA_PLATFORM=offscreen python -m pytest` | 527 passed, 5 skipped |
+| Ruff check / format --check | Passed, 152 файла |
+| Mypy | Passed, 118 source files |
+| `python -m pip check` | No broken requirements |
+| Cocoa `python -m jarvis --smoke-test` | Success, exit 0 |
+| Интерактивный Cocoa `python -m jarvis` с временными данными | Planner/offline/execute: два `local.check: SUCCESS`, окна закрыты |
+| `python -m build` | Wheel и sdist собраны |
+| PowerShell 7.6.7 parser на Mac | Оба `.ps1` синтаксически разобраны; PS5.1/COM/Windows не запускались |
+
+Команды isolated probes `python -m jarvis.installation.probe --check permissions`,
+`--check planner`, `--check memory`, `--check offline_chromium` выполнены на Mac;
+это локальные исходы, не evidence Windows. Live credentials, model/mail API и аудио
+не использовались. Версии зависимостей не закреплялись; native gates остаются ниже.
+
+### Дополнение 2026-10-15 — один документ для отправки
+
+По запросу пользователя установка теперь сохраняет **`Jarvis-Report.html`** и текстовую
+копию **`Jarvis-Report.md`**. HTML самодостаточен: UTF-8, без JavaScript, внешних ресурсов,
+аккаунтных данных и зависимости от соседних файлов. Путь печатается после завершения.
+Основной каталог — `%LOCALAPPDATA%\JarvisInstall`; при раннем отказе используется
+напечатанный временный каталог. Сохраняются прежние исходные JSON/Markdown-отчёты.
+
+- PowerShell пишет консервативный документ даже без готового Python. В `finally`, если
+  runtime проверен, ограниченный stdlib-only exporter объединяет текущий bootstrap и
+  диагностику приложения. При сбое exporter остаётся консервативный документ.
+- Объединяются только одинаковые UUID `run_id`. Отсутствующий, устаревший, повреждённый,
+  чрезмерный или ссылающийся на symlink отчёт не используется как доказательство.
+  Произвольные label/evidence/exception/stdout/пути из JSON не копируются: используются
+  фиксированный каталог и разрешённые metadata версий/хэша исходников/Windows build.
+- Матрица перечисляет текущие функции и отдельно показывает фактические локальные
+  проверки, обнаружение компонентов и непроверенные реальные сценарии. Импорт Vosk,
+  обнаружение аудиоустройства или `202` не превращаются в доказательство речи/доставки.
+  Установщик не может отметить ручную приёмку успешной.
+- Добавлены ограниченные `browser_policy` и `outlook_local`: реальный PermissionEngine
+  проверяет browser schema/policy/simulation без backend, синтетический RAM-черновик,
+  очистку и запрет удалённого draft/send без approval. OAuth/Graph/credentials/сеть/аудио
+  не вызываются. Проверки не создают approval authority.
+- Исправлен обнаруженный при проверке перезаписи отчёта вызов .NET `File.Replace`:
+  вместо преобразуемого в пустую строку `$null` передаётся `[NullString]::Value`.
+  Это сохраняет возможность обновлять текущий отчёт после первой записи.
+
+Фактическая проверка на Mac, CPython 3.12.7, отдельный
+`/private/tmp/jarvis-share-report-venv`, установка `python -m pip install -e ".[dev,voice]"`:
+
+| Проверка | Результат |
+| --- | --- |
+| Exporter: matching/stale/malformed/secret exclusion, manual false-pass, CLI `-I -S` | 33 passed |
+| Offline diagnostic probes, включая новые browser/Outlook проверки | 23 passed |
+| Полный `QT_QPA_PLATFORM=offscreen python -m pytest -q` | **571 passed, 5 skipped**, 39.37 s |
+| `python -m ruff check .` / `python -m ruff format --check .` | Passed, 156 файлов |
+| `python -m mypy` / `python -m mypy --platform win32` | Passed, 120 source files; win32 — только статический анализ |
+| `python -m pip check` | No broken requirements |
+| `python -I -m jarvis.installation.probe --check browser_policy` / `--check outlook_local` | Оба `passed`; локальные синтетические данные |
+| Cocoa `python -m jarvis --smoke-test` | Success, exit 0 |
+| Интерактивный Cocoa `python -m jarvis`, временные данные | Через native UI: offline/execute, два `local.check: SUCCESS`; окно закрыто, exit 0 |
+| PowerShell 7.6.7 parser и ранний Mac-отказ bootstrap | Синтаксис принят; итоговые HTML/MD обновлены и путь показан при отказе host; Windows setup не запускался |
+| `python -m build` и проверка состава архивов | Wheel/sdist собраны; новые report/probe/exporter включены |
+| `git diff --check` | Passed |
+
+Первый полный прогон имел один timeout entrypoint при чтении старого сгенерированного
+`__pycache__`; удалены только эти производные каталоги в `src`/`tests`, данные/исходники
+не менялись. Повторный focused entrypoint: 4 passed; финальный полный прогон выше прошёл.
+Визуальный просмотр HTML через встроенный браузер не выполнен: его политика запрещает
+`file:` URL. Структура и самостоятельность документа проверены тестами, без обхода политики.
+Зависимости не закреплялись, живые credentials/API и запись/озвучивание не использовались.
+Доставка изменений через опубликованный `main` этой локальной задачей не выполнялась.
+
+**Windows-установка, PS5.1/Win32/COM, полный MVP и живые сценарии остаются непроверенными.**
+Этот документ можно будет отправить в чат после установки на целевом ноутбуке;
+описание и точные Windows-команды — [INSTALLATION_DIAGNOSTICS.md](INSTALLATION_DIAGNOSTICS.md).
+
+### Оставшаяся native-приёмка
+
 1. Чистая Windows 11 x64: runtime 3.13.15, все wheels/native DLL, Authenticode, SAPI,
    permissions, кириллица/пробелы, первый/повторный запуск, ярлык, offline repeat и repair.
 2. Реальный Windows MVP: Notepad UIA/read-back, Chrome/VS Code, действительная поисковая

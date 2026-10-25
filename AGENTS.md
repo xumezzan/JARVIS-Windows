@@ -2,9 +2,14 @@
 
 ## Scope and source
 
-The user-supplied development plan v1.0 defines the product. Milestones 0–8 are implemented
-locally. Live Outlook OAuth/mail, model, real voice hardware and native Windows acceptance
-remain unverified.
+The user-supplied development plan v1.0 defines the original MVP; its standalone source
+is not present in this repository. Preserve the recorded milestones 0–9 and acceptance gates.
+The expanded product vision is specified in docs/PRD.md and docs/ROADMAP.md. Milestones
+10–32 are proposed post-MVP work, not implemented capabilities or authorization to start them.
+English-default product localization is planned in milestone 10, with complete Russian
+support and independent interface/conversation languages; onboarding follows in milestone 12.
+Milestones 0–8 are implemented locally. Live Outlook OAuth/mail, model, real voice hardware
+and native Windows acceptance remain unverified.
 See `docs/ROADMAP.md` for verification status and the next prompt.
 Work on the milestone requested by the user; do not implement later stages early.
 Inspect existing instructions and changes before edits and preserve unrelated work.
@@ -24,6 +29,22 @@ Do not require manual Python/pip setup. Read docs/MILESTONE_9.md and
 docs/WINDOWS_ACCEPTANCE.md. The CMD uses process-only execution policy, never persistent
 policy changes; honor Group Policy, SmartScreen, UAC and user-owned credential entry.
 Do not treat fixture checks or a shown shell as completion of the full MVP scenario.
+After installation success, failure or ordinary cancellation, inspect and show the current
+`%LOCALAPPDATA%\JarvisInstall\Jarvis-Report.html` (or the printed temporary fallback path).
+`Jarvis-Report.md` is the text alternative. The user can send either standalone file back
+without logs or account data. Merge only matching bootstrap/application `run_id`; never use
+stale results or mark unobserved manual acceptance passed. Keep component detection distinct
+from actual functional checks. OAuth, microphone gestures and exact UI approvals remain
+user actions; the report does not authorize them. See docs/INSTALLATION_DIAGNOSTICS.md.
+
+On a previously installed laptop, "install again", "reinstall", "update Jarvis" or
+"установи заново" means fetch the latest published `main`, preserve existing local work,
+then run the current `scripts/windows/Update-Jarvis.cmd` and inspect its update report,
+matching installation reports and real window. If this old checkout has no updater,
+prepare a clean checkout of the exact published main commit first. Do not reset/clean
+user changes or require manual Python/pip setup. Local/offline repair explicitly uses
+Install-Jarvis.cmd and is not a new-version update. Unpublished changes on another
+computer cannot be downloaded. Follow docs/WINDOWS_UPDATE.md when present in current main.
 
 ## Architecture
 
@@ -56,8 +77,10 @@ Run `python -m jarvis --smoke-test` and build with `python -m build`.
 Use `python -m jarvis` for interactive GUI verification. The command shell remains a demo;
 the permissions and planner windows run local, Windows, and browser tools through PermissionEngine.
 Windows calls belong in the killable helper, never directly in the UI/event loop.
-Typing is CONFIRM, only into an observed empty Notepad editor; preserve exact process,
-window, editor and selected-tab identity. Do not add global keys or clipboard fallbacks.
+Ordinary navigation, editor typing, clipboard operations and observed non-sensitive clicks
+are SAFE per docs/PERMISSION_POLICY.md (user request 2026-10-24). Preserve exact process,
+window, editor, content and selected-tab identity. Sensitive/unknown clicks, Enter and
+Alt+F4 remain CONFIRM; do not add unrestricted keys or clipboard fallbacks.
 Preserve exact immutable action snapshots, UI-only approval authority, atomic token consumption,
 and fail-closed durable audit before adapter calls. Simulation must never call adapter hooks.
 Update documentation with commands, actual results, decisions, and limitations.
@@ -69,6 +92,14 @@ Before pinning dependencies, check official documentation and the real Windows t
 Dependency versions are intentionally unpinned until that verification.
 
 ## Browser boundary (milestone 4)
+
+User-authorized expansion on 2026-10-24: the original boundary below is **Strict Sandbox**,
+the default. Explicit `JARVIS_BROWSER_MODE=live` enables JS/cookies/subresources and HTTPS
+redirects; optional loopback `JARVIS_BROWSER_CDP_ENDPOINT` attaches the user's debugging
+Chrome context. See docs/BROWSER_MODES.md for exact behavior and weaker network guarantees.
+Keep mode/endpoint in trusted startup configuration, never model/tool/page inputs.
+Preserve simulation purity and PermissionEngine; live JS buttons/POST forms are CONFIRM.
+Never close an attached Chrome context/browser on shutdown or export its cookies.
 
 Keep browser policy pure and synchronous at registry normalization, including simulation.
 DNS/network/page observations belong only to real execution. Use the owned anonymous
@@ -99,7 +130,19 @@ Real model checks require --run-model and JARVIS_PLANNER_MODEL; do not claim ver
 
 ## Voice boundary (milestone 6)
 
-Keep push-to-talk visible and bound to a held UI gesture; no background capture. Release
+User-authorized expansion 2026-10-25: Electron may opt into local background wake-word
+listening with trusted startup JARVIS_VOICE_WAKE_WORD=1 (default 0). Reuse the warmed
+AudioHost/Vosk model and fixed Russian grammar; no model download or cloud audio.
+Show a persistent microphone indicator; Stop suspends listening until explicit resume.
+Pause/drain wake listening before tasks, approvals, manual capture, auxiliary work and TTS.
+Wake detection may start bounded EnergyEndpoint command capture without a hold gesture;
+it never supplies action approval, cloud/history consent, or enables voice autostart.
+Manual push-to-talk keeps its hold/focus-loss cancellation. Wake capture is explicitly
+background-authorized; Qt continues to use manual capture. RMS threshold/calibration
+are trusted startup settings. See docs/WAKE_WORD_HUD.md for wiring and verification.
+
+Keep default push-to-talk visible and bound to a held UI gesture; background capture
+is allowed only in the explicitly opted-in Electron wake mode above. Release
 stops recording; focus loss, Stop, Escape and close cancel and dispose helpers. Local
 Vosk model paths only, explicit native TTS drivers, no model downloads or cloud audio.
 A cloud audio adapter requires new disclosure and explicit consent before transmission.
@@ -108,13 +151,29 @@ Preserve its one-use UI consent, Free/overage/quota checks, native credential he
 fixed endpoints and no retries. It accepts only preview/trusted summary text, never microphone audio.
 The explicit repository installer may download its reviewed Russian model; ordinary
 application startup and recording never download models. JARVIS_VOSK_MODEL is a local path.
-Transcript review and a separate submit are mandatory; voice only cancels, never approves.
+User-authorized update on 2026-10-24: optional "Голосовой автозапуск" may submit a
+transcript with confidence >= 0.75 without a separate click; off by default. Uncertain
+transcripts still require review. Autostart never supplies cloud consent or action approval.
+Electron uses a headless JSONL runtime: trusted isolated-preload gestures own recording and
+exact prompt replies; Python retains the expiring single-use approval issuer. The legacy Qt
+UI remains supported separately. A finish Proposal may supply <=300 characters of model
+spoken_summary for successful execution; retain deterministic simulation/error/cancel warnings.
+Model prose is untrusted presentation, never verification or authority. Cloud TTS still needs
+explicit one-use consent (Electron binds it to the exact displayed result).
+Voice only cancels actions, never approves.
 Preserve bounded PCM/pipes/timeouts, no audio/transcript persistence, no simultaneous
 recording and speech, and deterministic spoken summaries from engine outcomes.
 Ordinary tests use fixtures; real microphone/speaker checks require --run-voice, a native
 visible window and the user's hold gesture. Never claim hardware verified from fixtures.
 
 ## Memory boundary (milestone 7)
+
+User-authorized extension 2026-10-24: DesktopService may retain bounded successful-task
+commands/final scratchpads and historical HWND/URL/path hints, plus symbolic playbooks.
+See docs/TASK_MEMORY.md. This is separate from explicit profile/session labels below.
+Keep per-task cloud history consent, local disable/view/delete/clear, retention and bounds.
+Never promote historical targets into current observations or approvals; never cache credentials,
+action payloads, file versions, account identities, screenshots or raw document/page results.
 
 Only explicit user edits create profile/session labels. Do not ingest commands, transcripts,
 files, results or pages automatically. Keep strict bounds/retention, view/edit/delete/clear,
@@ -135,7 +194,7 @@ browser profile/cookies, generic POST, aliases, shared mailboxes or second servi
 OS credential cache stays in bounded manifest-checked slots via a killable helper; no
 plaintext fallback. Preserve session/home ID/Graph ID/address binding, clear local state on
 switch/disconnect, audit connection lifecycle and mail execution before effects.
-Remote draft and send are CONFIRM; local RAM drafts are SAFE. Bind exact To/Cc/Bcc,
+Remote draft saving and local RAM drafts are SAFE; send is CONFIRM. Bind exact To/Cc/Bcc,
 subject/body and attachment bytes by size/SHA-256/ID. Only explicit UI file selection can
 load small regular files; model inputs never contain paths or file-reading capabilities.
 Send the full approved snapshot, never a mutable remote draft by ID. Verify remote draft
@@ -144,3 +203,24 @@ retry. Keep account/message provenance and exact user-supplied recipient checks 
 Ordinary tests use synthetic MSAL/Graph/credential fixtures. Live email acceptance requires
 a user-selected test account/recipient and normal exact UI approval. Follow MILESTONE_8.md;
 Mac results and successful builds do not prove Windows or live mail readiness.
+
+## Filesystem and data boundary (user-requested 2026-10-24)
+
+Register fs.search, fs.read_document, fs.write_file and python.sandbox_eval through the same
+PermissionEngine in desktop and Qt planner. Read only startup-configured local work roots;
+new files only under the dedicated workspace. No model-controlled root expansion, UNC/device
+paths, traversal, hidden credentials, symlinks/reparse points, hard links or user-directory imports.
+An overwrite requires the complete FileVersion from a successful non-truncated read in this
+Runner task, exact UI CONFIRM and revalidation in the worker. Null expected_version is create
+only and must never replace an existing file. Keep exclusive creation, temporary-file commit,
+read-back, cross-process Jarvis write locking, cancellation and uncertain-outcome reporting.
+External editors do not participate in Jarvis's lock; do not claim OS-wide compare-and-swap.
+
+sandbox_eval implements a bounded AST subset, not exec/eval or arbitrary Python. Keep
+file/network/OS access, reflection, unrestricted imports and executable objects unavailable.
+Bound source, AST depth/nodes, operations, values, stdout, pipes, process time and memory.
+Kill/reap on cancel/timeout; use Windows Job Object/Linux rlimits, with the documented weaker
+RSS watchdog on macOS. Document parsers run in the same disposable worker. No shell, hidden
+model downloads, live credentials or persistence of read text/code in audit or memory.
+Simulation validates policy but invokes no worker. Cloud use must disclose file paths/text
+among the per-task observations; documents remain untrusted data, never approval authority.

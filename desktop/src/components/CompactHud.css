@@ -1,0 +1,37 @@
+html[data-surface="hud"],
+html[data-surface="hud"] body,
+html[data-surface="hud"] #root {
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  pointer-events: none;
+}
+.compact-hud {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 5px;
+  height: 100px;
+  padding: 10px;
+  border-radius: var(--radius-control);
+  background: rgba(8, 15, 22, .94);
+  box-shadow: 0 3px 5px rgba(0, 0, 0, .3);
+}
+.compact-hud-orb { width: 54px; height: 54px; flex: 0 0 54px; }
+.compact-hud-content { min-width: 0; flex: 1; }
+.compact-hud-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.compact-hud-heading strong { font-size: 15px; font-weight: 500; }
+.compact-hud-heading span { color: var(--accent-light); font-size: 11px; font-variant-numeric: tabular-nums; }
+.compact-hud-content p { margin: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compact-hud-status { font-size: 12px; color: var(--accent-light); }
+.compact-hud-command { font-size: 11px; color: var(--muted); }
+.compact-hud-content small { display: block; font-size: 9px; color: var(--muted); white-space: nowrap; }
+
+.compact-hud-orb.has-notification { animation: watcher-attention 1.8s ease-out 2; }
+@keyframes watcher-attention { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) {
+  .compact-hud-orb.has-notification { animation: none; }
+}

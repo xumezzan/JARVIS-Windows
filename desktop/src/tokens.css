@@ -1,0 +1,53 @@
+:root {
+  color-scheme: dark;
+  --background: #080f16;
+  --background-deep: #060c12;
+  --foreground: #f1f4fc;
+  --muted: #9aacc5;
+  --muted-soft: #7d90aa;
+  --accent: #3f7bff;
+  --accent-light: #65b4ff;
+  --accent-wash: rgba(63, 123, 255, 0.12);
+  --accent-hover: rgba(63, 123, 255, 0.2);
+  --accent-glow: rgba(63, 123, 255, 0.3);
+  --glass: rgba(20, 29, 39, 0.52);
+  --glass-raised: rgba(32, 44, 60, 0.62);
+  --glass-hover: rgba(44, 62, 84, 0.54);
+  --glass-strong: #111c29;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(175, 201, 237, 0.2);
+  --rule: rgba(175, 201, 237, 0.065);
+  --transparent: rgba(0, 0, 0, 0);
+  --shadow: 0 12px 36px rgba(0, 0, 0, 0.16);
+  --ambient: rgba(63, 123, 255, 0.055);
+  --success: #42d6ab;
+  --success-surface: rgba(26, 148, 116, 0.65);
+  --error: #ff9dba;
+  --teams: #596bff;
+  --teams-dark: #3445bf;
+  --outlook: #149ef3;
+  --calendar-green: #2da16b;
+  --calendar-yellow: #f9cc56;
+  --asana: #ff6a80;
+  --logo-ink: #0c1119;
+  --logo-paper: #f4f4f3;
+  --orb-blue: #3f7bff;
+  --orb-cyan: #76bdff;
+  --orb-white: #e7f5ff;
+  --orb-deep: #123a91;
+  --radius-card: 20px;
+  --radius-control: 14px;
+  --radius-small: 10px;
+  --radius-pill: 999px;
+  --card-padding: 24px;
+  --sidebar-width: 180px;
+  --titlebar-height: 52px;
+  --layout-gap: 20px;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --duration: 180ms;
+}
+:root[data-theme="Graphite"] {
+  --background: #10151c;
+  --background-deep: #0d1218;
+  --glass: rgba(27, 35, 45, 0.58);
+}

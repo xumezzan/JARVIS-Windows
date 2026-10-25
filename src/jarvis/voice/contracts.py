@@ -23,6 +23,11 @@ class VoiceError(Exception):
 
 
 ERROR_TEXT = {
+    "wake_model": (
+        "Модель Vosk не поддерживает «джарвис» или словарь активации. "
+        "Выберите совместимую локальную модель."
+    ),
+    "voice_config": "Проверьте голосовые настройки: порог RMS должен быть числом от 1 до 32768.",
     "eleven_credentials": "Сохраните API-ключ ElevenLabs в настройках голоса, не в чате.",
     "eleven_free": "Озвучивание остановлено: нужен тариф Free с отключённой оплатой сверх лимита.",
     "eleven_quota": "Бесплатный лимит закончился или слишком мал. Выберите системный голос.",
@@ -100,7 +105,7 @@ class Speaker(Protocol):
 
 
 def spoken_result(result: PlanResult) -> str:
-    """Speak only deterministic engine statuses, never model/tool text or secret content."""
+    """Model prose is presentation only; preserve engine warnings and deterministic fallback."""
     titles = {
         "finished": "Планировщик завершил работу.",
         "simulated": "Симуляция завершена. Реальные действия не выполнялись.",
@@ -110,6 +115,8 @@ def spoken_result(result: PlanResult) -> str:
         "timeout": "Истекло время задачи.",
         "limit": "Достигнут предел шагов или уточнений.",
     }
+    if result.spoken_summary.strip() and result.status == "finished":
+        return result.spoken_summary.strip()
     text = titles[result.status]
     verified = sum(step.outcome.status is Status.SUCCESS for step in result.steps)
     if verified:

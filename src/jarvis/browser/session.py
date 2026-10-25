@@ -1,4 +1,4 @@
-"""One owned Playwright context, serialized on its host loop. No browser-side networking."""
+"""Serialized Strict Sandbox or live browser context, optionally attached over CDP."""
 
 import asyncio
 import hashlib
@@ -9,11 +9,17 @@ from uuid import uuid4
 from playwright.async_api import Browser, BrowserContext, Page, Playwright, Route, async_playwright
 
 from jarvis.browser.inspection import INSPECT
+from jarvis.browser.live import LiveNetworkGuard
 from jarvis.browser.network import fetch
-from jarvis.security.browser_policy import NetworkPolicy, normalized_url, origin
+from jarvis.security.browser_policy import (
+    BrowserMode,
+    NetworkPolicy,
+    normalized_url,
+    origin,
+    validate_cdp_endpoint,
+)
 from jarvis.tools.base import ToolError
 from jarvis.tools.browser import (
-    SCHEMAS,
     BrowserCommand,
     BrowserResult,
     ClickElement,
@@ -26,6 +32,7 @@ from jarvis.tools.browser import (
     RequestIntent,
     SearchWeb,
     TypeElement,
+    browser_schemas,
 )
 
 
@@ -43,9 +50,17 @@ class Grant:
 
 
 class BrowserSession:
-    def __init__(self, policy: NetworkPolicy, *, headless: bool = True) -> None:
+    def __init__(
+        self, policy: NetworkPolicy, *, headless: bool = True, cdp_endpoint: str = ""
+    ) -> None:
         self.policy = policy
         self.headless = headless
+        self.cdp_endpoint = validate_cdp_endpoint(cdp_endpoint) if cdp_endpoint else ""
+        if self.cdp_endpoint and policy.mode is not BrowserMode.LIVE:
+            raise ValueError("CDP requires Live Browser mode.")
+        self.live = policy.mode is BrowserMode.LIVE
+        self.schemas = browser_schemas(policy)
+        self.network_guard = LiveNetworkGuard(policy) if self.live else None
         self.playwright: Playwright | None = None
         self.browser: Browser | None = None
         self.context: BrowserContext | None = None
@@ -63,6 +78,15 @@ class BrowserSession:
             return
         try:
             self.playwright = await async_playwright().start()
+            if self.cdp_endpoint:
+                self.browser = await self.playwright.chromium.connect_over_cdp(
+                    self.cdp_endpoint, timeout=10000
+                )
+                if not self.browser.contexts:
+                    raise ToolError("browser_unavailable")
+                self.context = self.browser.contexts[0]
+                await self.refresh_tabs()
+                return
             self.browser = await self.playwright.chromium.launch(
                 headless=self.headless,
                 args=[
@@ -73,20 +97,47 @@ class BrowserSession:
                 ],
             )
             self.context = await self.browser.new_context(
-                java_script_enabled=False,
+                java_script_enabled=self.live,
                 service_workers="block",
                 accept_downloads=False,
                 permissions=[],
                 ignore_https_errors=False,
-                offline=True,
+                offline=not self.live,
             )
             self.context.set_default_timeout(5000)
             self.context.set_default_navigation_timeout(10000)
-            await self.context.route("**/*", self.route)
-            self.context.on("page", self._page_opened)
+            if not self.live:
+                await self.context.route("**/*", self.route)
+                self.context.on("page", self._page_opened)
         except Exception:
             await self.close()
             raise ToolError("browser_unavailable") from None
+
+    async def adopt(self, page: Page) -> str:
+        if self.network_guard is not None:
+            await self.network_guard.attach(page)
+        tab_id = uuid4().hex
+        self.pages[tab_id] = page
+        self.documents[tab_id] = uuid4().hex
+        page.on("framenavigated", lambda frame: self._navigated(tab_id, page, frame))
+        return tab_id
+
+    async def refresh_tabs(self) -> None:
+        for key, page in list(self.pages.items()):
+            if page.is_closed():
+                self.pages.pop(key)
+                self.documents.pop(key)
+                if self.network_guard is not None:
+                    await self.network_guard.detach(page)
+        if self.cdp_endpoint and self.context is not None:
+            for page in self.context.pages:
+                if page in self.pages.values() or page.is_closed() or len(self.pages) >= 8:
+                    continue
+                try:
+                    self.policy.validate(page.url)
+                except ToolError:
+                    continue  # Chrome internals/blank/private tabs are never tool targets.
+                await self.adopt(page)
 
     def _page_opened(self, page: Page) -> None:
         if self._new_page:
@@ -183,8 +234,10 @@ class BrowserSession:
         page = self.pages.get(tab_id)
         if page is None or page.is_closed():
             raise ToolError("page_changed")
+        if self.network_guard is not None and page in self.network_guard.failures:
+            raise ToolError("browser_failure")
         url = self.policy.validate(page.url)
-        raw = cast(dict[str, Any], await page.evaluate(INSPECT))
+        raw = cast(dict[str, Any], await page.evaluate(INSPECT, self.live))
         if not raw.get("material"):
             raise ToolError("browser_failure")
         elements = []
@@ -201,7 +254,9 @@ class BrowserSession:
                             )
                         }
                     )
-                elif item["role"] != "textbox":
+                elif item["role"] not in ("textbox", "searchbox") and not (
+                    self.live and item["role"] == "button"
+                ):
                     continue  # Ambiguous button, popup, or unsupported form.
                 element = ElementTarget(
                     role=item["role"],
@@ -226,6 +281,7 @@ class BrowserSession:
                 url=url,
                 origin=origin(url),
                 fingerprint=digest(raw["material"]),
+                has_unsaved_changes=raw["has_unsaved_changes"],
             ),
             title=raw["title"],
             text=raw["text"],
@@ -243,10 +299,64 @@ class BrowserSession:
         if args.element not in current.elements:
             raise ToolError("page_changed")
 
+    async def highlight_click(self, args: ClickElement) -> None:
+        """Use viewport coordinates inside the browser, avoiding guessed browser chrome/DPI."""
+        if self.headless:
+            return
+        page = self.pages[args.target.tab_id]
+        await page.bring_to_front()
+        locator = page.get_by_role(args.element.role, name=args.element.name, exact=True)
+        await locator.scroll_into_view_if_needed(timeout=5000)
+        await locator.click(trial=True, timeout=5000)
+        await self.check_element(args)
+        bounds = await locator.bounding_box()
+        if bounds is None:
+            raise ToolError("page_changed")
+        marker = await locator.evaluate_handle("""element => {
+            const r = element.getBoundingClientRect();
+            const marker = document.createElement('div');
+            marker.setAttribute('aria-hidden', 'true');
+            Object.assign(marker.style, {
+                position: 'fixed', left: `${r.x}px`, top: `${r.y}px`,
+                width: `${r.width}px`, height: `${r.height}px`,
+                pointerEvents: 'none', zIndex: '2147483647', boxSizing: 'border-box',
+                border: '2px solid rgba(101,180,255,.9)', borderRadius: '5px',
+                background: 'rgba(63,123,255,.08)', boxShadow: 'inset 0 0 10px rgba(63,123,255,.5)'
+            });
+            document.documentElement.append(marker);
+            return marker;
+        }""")
+        try:
+            await page.evaluate(
+                "() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))"
+            )
+            await asyncio.sleep(0.3)
+        finally:
+            try:
+                await marker.evaluate("element => element.remove()")
+            finally:
+                await marker.dispose()
+        await self.check_element(args)
+        if await locator.bounding_box() != bounds:
+            raise ToolError("page_changed")
+
     async def navigate(
         self, page: Page, intent: RequestIntent, *, click: ElementTarget | None = None
-    ) -> int:
+    ) -> int | None:
         intent = intent.model_copy(update={"url": self.policy.validate(intent.url)})
+        if self.live:
+            self._loading_page = page
+            previous = self.policy.validate(page.url) if page.url != "about:blank" else ""
+            response = await page.goto(intent.url, wait_until="domcontentloaded", timeout=10000)
+            self._loading_page = None
+            current = self.policy.validate(page.url)
+            if response is None:
+                if current == intent.url and previous.split("#")[0] == current.split("#")[0]:
+                    return None  # Same-document SPA navigation, no fabricated HTTP status.
+                raise ToolError("browser_failure")
+            if not 200 <= response.status < 300:
+                raise ToolError("browser_failure")
+            return response.status
         grant = Grant(page, intent)
         self._loading_page = page
         self.grant = grant
@@ -279,17 +389,19 @@ class BrowserSession:
     async def dispatch(self, command: BrowserCommand) -> BrowserResult:
         if self._popup_failure:
             raise ToolError("browser_cleanup")
-        args = SCHEMAS[command.operation].model_validate_json(command.parameters)
+        args = self.schemas[command.operation].model_validate_json(command.parameters)
         if command.phase == "verify":
             result = command.result
             if result is None:
                 raise ToolError("browser_failure")
             if result.page is not None:
-                if isinstance(
-                    args, (OpenPage, NavigatePage, SearchWeb)
-                ) and result.page.target.url != self.policy.validate(args.url):
+                if (
+                    not self.live
+                    and isinstance(args, (OpenPage, NavigatePage, SearchWeb))
+                    and result.page.target.url != self.policy.validate(args.url)
+                ):
                     raise ToolError("browser_failure")
-                if isinstance(args, ClickElement):
+                if not self.live and isinstance(args, ClickElement):
                     assert args.element.request is not None
                     if result.page.target.url != self.policy.validate(args.element.request.url):
                         raise ToolError("browser_failure")
@@ -303,9 +415,12 @@ class BrowserSession:
             if command.operation == "type":
                 assert isinstance(args, TypeElement)
                 page = self.pages[args.target.tab_id]
-                value = await page.get_by_role(
-                    args.element.role, name=args.element.name, exact=True
-                ).input_value()
+                locator = page.get_by_role(args.element.role, name=args.element.name, exact=True)
+                value = (
+                    await locator.inner_text()
+                    if await locator.get_attribute("contenteditable") == "true"
+                    else await locator.input_value()
+                )
                 if value != args.text:
                     raise ToolError("browser_failure")
             if command.operation == "get_tabs":
@@ -323,28 +438,33 @@ class BrowserSession:
             return BrowserResult()
         match command.operation:
             case "get_tabs":
+                if self.cdp_endpoint:
+                    await self.start()
+                    await self.refresh_tabs()
                 return BrowserResult(tabs=[(await self.observe(key)).target for key in self.pages])
             case "open" | "search":
                 assert isinstance(args, (OpenPage, SearchWeb))
+                await self.start()
                 if len(self.pages) >= 8:
                     raise ToolError("browser_failure")
-                await self.start()
                 assert self.context is not None
                 self._new_page = True
                 try:
                     page = await self.context.new_page()
                 finally:
                     self._new_page = False
-                tab_id = uuid4().hex
-                self.pages[tab_id] = page
-                self.documents[tab_id] = uuid4().hex
-                page.on("framenavigated", lambda frame: self._navigated(tab_id, page, frame))
+                tab_id = ""
                 try:
+                    tab_id = await self.adopt(page)
+                    if self.live:
+                        await page.bring_to_front()
                     status = await self.navigate(page, RequestIntent(url=args.url))
                     return BrowserResult(page=await self.observe(tab_id), response_status=status)
                 except BaseException:
                     await self.cancel_pending()
                     await page.close()
+                    if self.network_guard is not None:
+                        await self.network_guard.detach(page)
                     self.pages.pop(tab_id, None)
                     self.documents.pop(tab_id, None)
                     raise
@@ -357,7 +477,16 @@ class BrowserSession:
                     page=await self.observe(args.target.tab_id), response_status=status
                 )
             case "click":
-                assert isinstance(args, ClickElement) and args.element.request is not None
+                assert isinstance(args, ClickElement)
+                await self.highlight_click(args)
+                if self.live:
+                    page = self.pages[args.target.tab_id]
+                    await page.get_by_role(
+                        args.element.role, name=args.element.name, exact=True
+                    ).click(timeout=5000)
+                    await page.wait_for_load_state("domcontentloaded", timeout=10000)
+                    return BrowserResult(page=await self.observe(args.target.tab_id))
+                assert args.element.request is not None
                 status = await self.navigate(
                     self.pages[args.target.tab_id], args.element.request, click=args.element
                 )
@@ -377,13 +506,15 @@ class BrowserSession:
             case "close":
                 assert isinstance(args, ReadPage)
                 await self.pages[args.target.tab_id].close(run_before_unload=False)
+                if self.network_guard is not None:
+                    await self.network_guard.detach(self.pages[args.target.tab_id])
                 self.pages.pop(args.target.tab_id)
                 self.documents.pop(args.target.tab_id)
                 return BrowserResult(closed_tab=args.target.tab_id)
         raise ToolError("browser_failure")
 
     def _navigated(self, tab_id: str, page: Page, frame: Any) -> None:
-        if frame == page.main_frame:
+        if frame == page.main_frame and tab_id in self.pages:
             self.documents[tab_id] = uuid4().hex
 
     async def cancel_pending(self) -> None:
@@ -411,7 +542,12 @@ class BrowserSession:
             await self.cancel_pending()
         except Exception:
             failed = True
-        for resource in (self.context, self.browser):
+        if self.network_guard is not None:
+            try:
+                await self.network_guard.close()
+            except Exception:
+                failed = True
+        for resource in () if self.cdp_endpoint else (self.context, self.browser):
             if resource is not None:
                 try:
                     async with asyncio.timeout(3):

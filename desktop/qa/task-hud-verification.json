@@ -1,0 +1,33 @@
+{
+  "platform": "darwin",
+  "checks": [
+    {
+      "check": "real Electron HUD transition and native target paint/300ms receipt, fixture adapter; original window restored",
+      "pass": true,
+      "isolation": {
+        "node": "undefined",
+        "overflow": false,
+        "stop": 44
+      }
+    },
+    {
+      "check": "exact approval remains in the visible interactive workbench; cancellation restores it",
+      "pass": true
+    },
+    {
+      "check": "clarification restores the complete interactive workbench",
+      "pass": true
+    },
+    {
+      "check": "simulation never calls target display/adapter",
+      "pass": true
+    },
+    {
+      "check": "cancel during preview hides both overlays and restores workbench",
+      "pass": true
+    }
+  ],
+  "limitations": [
+    "Windows native UIA/click-through and mixed-DPI monitors need Windows acceptance. Fixture paint is not a real Windows click."
+  ]
+}

@@ -72,7 +72,7 @@ def test_tab_switch_denied(desktop: NativeDesktop, monkeypatch: pytest.MonkeyPat
 def test_literal_directed_message_and_readback(
     desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    editor = Mock(handle=101)
+    editor = Mock(handle=101, element_info=Mock(class_name="Edit"))
     monkeypatch.setattr(desktop, "resolve_editor", lambda *args, **kwargs: editor)
     text = "Жарвис {ENTER}\nsecond line"
     monkeypatch.setattr(desktop, "read", lambda *args: text)
@@ -103,16 +103,21 @@ def test_executable_allowlist_no_path_search(
 
 def test_ambiguous_editor_fails_closed(desktop: NativeDesktop) -> None:
     def editor() -> Mock:
-        return Mock(element_info=Mock(control_type="Edit", class_name="Edit"))
+        return Mock(
+            element_info=Mock(
+                control_type="Edit", class_name="Edit", element=Mock(CurrentIsPassword=False)
+            ),
+            children=Mock(return_value=[]),
+        )
 
     window = Mock(element_info=Mock(class_name="Notepad"))
-    window.descendants.return_value = [editor(), editor()]
+    window.children.return_value = [editor(), editor()]
     with pytest.raises(ToolError, match="control_unsupported"):
         desktop.editor(window)
 
 
-def test_notepad_dialog_is_not_a_document_target(desktop: NativeDesktop) -> None:
-    window = Mock(element_info=Mock(class_name="#32770"))
+def test_window_without_editable_controls_is_not_a_typing_target(desktop: NativeDesktop) -> None:
+    window = Mock(element_info=Mock(class_name="#32770"), children=Mock(return_value=[]))
     with pytest.raises(ToolError, match="control_unsupported"):
         desktop.editor(window)
     window.descendants.assert_not_called()

@@ -14,7 +14,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Launch the shell; help and version remain usable without initializing Qt."""
     parser = argparse.ArgumentParser(
         prog="jarvis",
-        description="Jarvis Desktop Preview: local demonstration, no command execution.",
+        description=("Jarvis: local assistant with reviewed tasks. Demo: no command execution."),
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {version('jarvis-windows')}"
@@ -36,6 +36,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     from PySide6.QtWidgets import QApplication
 
     from jarvis.observability.logging import ShellLog
+    from jarvis.ui.garbage_collection import GuiGarbageCollector
     from jarvis.ui.main_window import MainWindow
 
     try:
@@ -47,6 +48,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 2
     application = QApplication(["jarvis"])
+    collector = GuiGarbageCollector(application)
     application.setApplicationName("Jarvis")
     application.setOrganizationName("Jarvis")
     window = MainWindow(config, log)
@@ -61,7 +63,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.smoke_test:
         window.task_finished.connect(finish_smoke)
-        window.command_input.setPlainText("Проверка интерфейса Jarvis")
+        window.demo_input.setPlainText("Проверка интерфейса Jarvis")
         QTimer.singleShot(0, window.submit)
         QTimer.singleShot(config.task_timeout_ms + 2000, window.close)
     window.show()
@@ -87,4 +89,5 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = application.exec()
     finally:
         window.shutdown()
+        collector.close()
     return smoke_result if args.smoke_test else result

@@ -48,7 +48,7 @@ def register_outlook(registry: ToolRegistry, session: MailSession) -> None:
             "/me/mailFolders/" + args.folder + "/messages",
             params={
                 "$top": str(args.limit),
-                "$select": "id,subject,from,receivedDateTime,isDraft",
+                "$select": "id,subject,from,receivedDateTime,isDraft,importance,isRead",
                 "$orderby": "receivedDateTime desc",
             },
         )
@@ -56,7 +56,18 @@ def register_outlook(registry: ToolRegistry, session: MailSession) -> None:
         if not isinstance(values, list) or len(values) > args.limit:
             raise ValueError("mail_response")
         safe = [
-            {key: row.get(key) for key in ("id", "subject", "from", "receivedDateTime", "isDraft")}
+            {
+                key: row.get(key)
+                for key in (
+                    "id",
+                    "subject",
+                    "from",
+                    "receivedDateTime",
+                    "isDraft",
+                    "importance",
+                    "isRead",
+                )
+            }
             for row in values
             if isinstance(row, dict)
         ]
@@ -132,8 +143,8 @@ def register_outlook(registry: ToolRegistry, session: MailSession) -> None:
     registry.register(
         ToolSpec(
             "outlook.save_draft",
-            "Передать полный черновик в Outlook; CONFIRM.",
-            Risk.CONFIRM,
+            "Сохранить полный черновик в Outlook без отправки получателям.",
+            Risk.SAFE,
             SaveInput,
             MailResult,
             check,

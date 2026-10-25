@@ -1,0 +1,181 @@
+{
+  "errors": [],
+  "viewport": [
+    1536,
+    1024
+  ],
+  "scroll": [
+    1536,
+    1024
+  ],
+  "elements": [
+    {
+      "selector": "sidebar",
+      "box": [
+        0,
+        0,
+        180,
+        1024
+      ],
+      "color": "rgb(241, 244, 252)",
+      "background": "rgba(0, 0, 0, 0)",
+      "radius": "0px",
+      "padding": "24px 10px",
+      "border": "rgb(241, 244, 252)"
+    },
+    {
+      "selector": "titlebar",
+      "box": [
+        180,
+        0,
+        1356,
+        52
+      ],
+      "color": "rgb(241, 244, 252)",
+      "background": "rgba(0, 0, 0, 0)",
+      "radius": "0px",
+      "padding": "0px",
+      "border": "rgb(241, 244, 252)"
+    },
+    {
+      "selector": "dashboard",
+      "box": [
+        180,
+        52,
+        1356,
+        972
+      ],
+      "color": "rgb(241, 244, 252)",
+      "background": "rgba(0, 0, 0, 0)",
+      "radius": "0px",
+      "padding": "20px 20px 24px",
+      "border": "rgb(241, 244, 252)"
+    },
+    {
+      "selector": "column left-column",
+      "box": [
+        200,
+        72,
+        361,
+        928
+      ],
+      "color": "rgb(241, 244, 252)",
+      "background": "rgba(0, 0, 0, 0)",
+      "radius": "0px",
+      "padding": "0px",
+      "border": "rgb(241, 244, 252)"
+    },
+    {
+      "selector": "glass-card today-card",
+      "box": [
+        200,
+        72,
+        361,
+        410
+      ],
+      "color": "rgb(241, 244, 252)",
+      "background": "rgba(20, 29, 39, 0.52)",
+      "radius": "20px",
+      "padding": "24px",
+      "border": "rgba(255, 255, 255, 0.07)"
+    },
+    {
+      "selector": "glass-card activity-card",
+      "box": [
+        200,
+        498,
+        361,
+        289
+      ],
+      "color": "rgb(241, 244, 252)",
+      "background": "rgba(20, 29, 39, 0.52)",
+      "radius": "20px",
+      "padding": "24px",
+      "border": "rgba(255, 255, 255, 0.07)"
+    },
+    {
+      "selector": "glass-card apps-card",
+      "box": [
+        200,
+        803,
+        361,
+        197
+      ],
+      "color": "rgb(241, 244, 252)",
+      "background": "rgba(20, 29, 39, 0.52)",
+      "radius": "20px",
+      "padding": "24px",
+      "border": "rgba(255, 255, 255, 0.07)"
+    },
+    {
+      "selector": "column center-column",
+      "box": [
+        581,
+        72,
+        436,
+        928
+      ],
+      "color": "rgb(241, 244, 252)",
+      "background": "rgba(0, 0, 0, 0)",
+      "radius": "0px",
+      "padding": "0px",
+      "border": "rgb(241, 244, 252)"
+    },
+    {
+      "selector": "column right-column",
+      "box": [
+        1037,
+        72,
+        479,
+        928
+      ],
+      "color": "rgb(241, 244, 252)",
+      "background": "rgba(0, 0, 0, 0)",
+      "radius": "0px",
+      "padding": "0px",
+      "border": "rgb(241, 244, 252)"
+    },
+    {
+      "selector": "glass-card workflow-card",
+      "box": [
+        1037,
+        72,
+        479,
+        431
+      ],
+      "color": "rgb(241, 244, 252)",
+      "background": "rgba(20, 29, 39, 0.52)",
+      "radius": "20px",
+      "padding": "24px",
+      "border": "rgba(255, 255, 255, 0.07)"
+    },
+    {
+      "selector": "glass-card summary-card",
+      "box": [
+        1037,
+        519,
+        479,
+        363
+      ],
+      "color": "rgb(241, 244, 252)",
+      "background": "rgba(20, 29, 39, 0.52)",
+      "radius": "20px",
+      "padding": "24px",
+      "border": "rgba(255, 255, 255, 0.07)"
+    },
+    {
+      "selector": "glass-card suggestion-card",
+      "box": [
+        1037,
+        898,
+        479,
+        102
+      ],
+      "color": "rgb(241, 244, 252)",
+      "background": "rgba(20, 29, 39, 0.52)",
+      "radius": "20px",
+      "padding": "24px",
+      "border": "rgba(255, 255, 255, 0.07)"
+    }
+  ]
+}

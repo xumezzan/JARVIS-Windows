@@ -1,6 +1,7 @@
 """Single production entry point for typed tools, approval, cancellation and factual audit."""
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from threading import Event, RLock
 from time import monotonic
@@ -20,6 +21,8 @@ class Outcome:
     error: ErrorCode = ErrorCode.NONE
     may_have_effects: bool = False
     result_json: str | None = field(default=None, repr=False)
+    # Ephemeral verified image handoff; never part of textual results or audit.
+    screenshot_b64: str | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -51,7 +54,7 @@ class PermissionEngine:
             payload = tool.normalize(arguments)
             if len(payload.encode()) > 65536:
                 raise ValueError("Action exceeds snapshot limit.")
-            action = Action(request_id, tool.name, payload, tool.risk, mode)
+            action = Action(request_id, tool.name, payload, tool.classify_risk(payload), mode)
         except Exception:
             return self._invalid(request_id, mode if isinstance(mode, Mode) else Mode.SIMULATION)
         try:
@@ -106,6 +109,7 @@ class PermissionEngine:
         started: float | None = None,
         may_have_effects: bool = False,
         result: str | None = None,
+        screenshot_b64: str | None = None,
     ) -> Outcome:
         try:
             self._audit.write(
@@ -128,7 +132,7 @@ class PermissionEngine:
             )
         except Exception:
             return Outcome(action.request_id, Status.ERROR, ErrorCode.AUDIT, may_have_effects)
-        return Outcome(action.request_id, status, error, may_have_effects, result)
+        return Outcome(action.request_id, status, error, may_have_effects, result, screenshot_b64)
 
     def cancel(self, action: Action) -> None:
         with self._lock:
@@ -212,12 +216,19 @@ class PermissionEngine:
                     may_have_effects=True,
                 )
             await context.checkpoint()
+            result_json = canonical(result)
+            screenshot_b64 = None
+            if action.tool == "windows.screenshot":
+                metadata = json.loads(result_json)
+                screenshot_b64 = metadata.pop("image_base64")
+                result_json = json.dumps(metadata, ensure_ascii=False, sort_keys=True)
             return self._finish(
                 action,
                 Status.SUCCESS,
                 started=started,
                 may_have_effects=True,
-                result=canonical(result),
+                result=result_json,
+                screenshot_b64=screenshot_b64,
             )
 
         async def cancellation() -> None:
@@ -258,7 +269,7 @@ class PermissionEngine:
             return self._finish(
                 action,
                 Status.TIMEOUT
-                if error.code in ("native_timeout", "browser_timeout")
+                if error.code in ("native_timeout", "browser_timeout", "worker_timeout")
                 else Status.ERROR,
                 ErrorCode(error.code),
                 started,

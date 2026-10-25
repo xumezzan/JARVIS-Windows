@@ -1,5 +1,7 @@
 # Этап 3 — Windows Automation
 
+> Risk policy updated on 2026-10-24: see [PERMISSION_POLICY.md](PERMISSION_POLICY.md). Historical approval requirements below are superseded by that table.
+
 Дата: 2026-09-15. Реализация и portable-проверки выполнены на macOS arm64 / Python 3.12.7.
 **Настоящая Windows 11 недоступна: native-приёмка остаётся открытой.**
 

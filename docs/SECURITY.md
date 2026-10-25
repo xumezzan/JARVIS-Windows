@@ -1,5 +1,10 @@
 # Модель безопасности
 
+Браузерная граница ниже описывает Strict Sandbox. С 2026-10-24 доступен opt-in
+Live Browser / CDP с более широким доступом и более слабой сетевой изоляцией:
+[настройки и точные ограничения](BROWSER_MODES.md). Он не экспортирует cookies,
+но код сайта выполняет собственные запросы вне отдельных approval PermissionEngine.
+
 Этапы 2–4 реализуют PermissionEngine, exact approvals, SQLite audit и Windows-адаптер
 в отдельном процессе. Планировщик использует offline recipes или opt-in OpenAI adapter;
 ключ хранится в системном credential store. Этап 8 добавляет явно подключаемый Outlook
@@ -30,13 +35,15 @@ exception text и approval tokens. Это ограничение текущег�
 
 ## Risk policy
 
-- SAFE: чтение или обратимое локальное действие в разрешённых границах. Открытие
-  приложения и поиск проходят policy check даже без интерактивного подтверждения.
+- SAFE: чтение, навигация, поиск, ввод в наблюдённые редакторы, обычные клики,
+  переключение окон, буфер обмена и сохранение черновика Outlook без отправки.
 - CONFIRM: отправка, публикация и потенциально разрушительные действия. Нужен approval.
 - CRITICAL: установка, безвозвратное удаление, безопасность и credentials; отключено в MVP.
 - BLOCKED: переводы, раскрытие секретов, отключение защиты, скрытое наблюдение; отказ всегда.
 
 Неизвестный инструмент, неверная схема или недоказанные preconditions отклоняются.
+Точная актуальная таблица, эвристика подписей RU/EN, защита несохранённых форм и
+консервативные исключения: [PERMISSION_POLICY.md](PERMISSION_POLICY.md).
 Risk нельзя понизить по предложению модели. Навигация, generic click, ввод текста и
 другие составные действия должны учитывать target и реальный эффект. Неизвестную
 внешнюю отправку запрещать, пока adapter не умеет показать и связать точный payload.
@@ -66,6 +73,47 @@ Stop запрещает запуск новых шагов, отменяет н�
 adapter. Timeout не означает, что удалённая сторона ничего не сделала: не утверждать
 откат или успех без проверки. Результаты и duration отражают наблюдаемые факты.
 
+### Проверка SQLite audit при 30 шагах (2026-10-24)
+
+`AuditLog.write()` сериализует фиксированные 15 полей metadata. `arguments` всегда
+равен `[REDACTED]`; `result_summary` содержит только status либо тип события.
+`AuditEvent` не принимает action payload, текст команды, UIA-деревья или tool result.
+Проверены все production call sites: PermissionEngine, UI approvals и Outlook
+connect/disconnect. Имена инструментов поступают из registry; неизвестное имя
+заменяется на `unknown`, actor задаётся доверенным кодом. Это не универсальный
+фильтр для произвольных данных, ошибочно помещённых будущим кодом в metadata.
+
+`PRAGMA synchronous=FULL` и отдельный коммит события сохранены. Перед adapter
+выполняется запись `STARTED`; сбой записи блокирует вызов. SAFE исполнение обычно
+даёт три записи (prepared/started/finished), CONFIRM добавляет approved. Результат
+проверки/ошибки записывается отдельно; audit failure не считается успехом.
+
+Регрессия `tests/integration/test_audit_payloads.py` выполняет две задачи по 30 шагов:
+256 UIA-элементов с длинными именами, аргументы clipboard по 4000 символов,
+base64-скриншоты по 64 КиБ и 14 точных подтверждений Enter. До каждого из 60
+вызовов mock adapter отдельное SQLite-соединение видит уже закоммиченный STARTED
+нужного инструмента. После закрытия writer проверяются все строки, полный файл,
+фиксированная схема, redaction, lifecycle и `PRAGMA integrity_check`.
+
+Наблюдавшийся результат на macOS: **194 события, 438–455 байт на JSON-запись,
+86400 байт записей, 102400 байт (100 КиБ) файл SQLite**. Сырые UIA-данные, тексты,
+полные изображения и префиксы base64 в файле отсутствуют. Это проверка настоящей
+SQLite с synthetic Windows adapters, без чтения пользовательской базы и без
+измерения Windows disk/fsync latency. Production AuditLog менять не потребовалось.
+База продолжает расти с количеством событий; автоматическая ротация/удаление
+этим изменением не добавлены.
+
+Команда проверки (также применима на Windows после установки зависимостей):
+
+```sh
+python -m pytest tests/integration/test_audit_payloads.py tests/unit/test_permissions.py tests/integration/test_desktop_service.py -q
+```
+
+Focused run: **86 passed**. После финальных проверок tool identity и base64-prefix
+полный набор: **808 passed, 5 skipped**, 58.60 s. Ruff lint/format, mypy (137 файлов),
+native Mac GUI smoke, wheel/sdist и `git diff --check` прошли. Пропущены live model,
+real voice и три native Windows acceptance cases; Windows timing не проверялся.
+
 ## Секреты и личные данные
 
 Никаких plaintext passwords в source, fixtures, docs, JSON, `.env`, SQLite или prompt.
@@ -93,7 +141,8 @@ Authority — capability trusted UI composition, недоступный чере
 
 Preconditions обязаны быть side-effect-free. Для настоящих файлов, UIA и сетевых операций
 нужны дополнительные adapter-specific invariants; тестовый in-memory outbox их не доказывает.
-Attachment signature сейчас связывает metadata, а не выполняет чтение/проверку настоящего файла.
+В local test outbox attachment signature связывает только metadata. Outlook этапа 8
+отдельно связывает реально выбранные UI bytes по size/SHA-256/ID; это не общий file reader.
 
 ## Windows-граница этапа 3
 
@@ -103,13 +152,13 @@ Attachment signature сейчас связывает metadata, а не выпо�
   в другом каталоге не добавляет приложение в allowlist. Установка со своими путями
   сейчас не поддерживается. Защита от замены бинарника доверенным локальным пользователем
   или от скомпрометированного приложения не заявляется.
-- Ввод только CONFIRM в наблюдённый пустой Notepad. Снимок связывает process identity,
-  окно, редактор, выбранную вкладку, service/action_type и буквальный текст. Нет global
-  keys, shell, clipboard, Enter/submit и ввода в Chrome/VS Code.
+- Ввод SAFE в точно наблюдённый поддерживаемый редактор; непустой требует digest контента.
+  Снимок связывает process identity, окно, редактор, выбранную вкладку и буквальный текст.
+  Cross-app контракты описаны в [WINDOWS_CROSS_APP.md](WINDOWS_CROSS_APP.md).
 - UIA/native calls живут в killable helper. При отмене ожидается завершение helper,
   но запущенное приложение и уже выданное сообщение ОС не откатываются. Retry отсутствует.
-- Нет автоматического закрытия, сохранения, очистки или замены существующего документа.
-  Непустой/изменённый target отклоняется. Между проверкой пустоты и доставкой сообщения
+- Изменённый после наблюдения target отклоняется. Замена наблюдённого текста разрешена.
+  Закрытие требует CONFIRM. Между проверкой контента и доставкой сообщения
   нет атомарной транзакции: одновременное ручное редактирование остаётся ограничением.
 - Заголовки окон — недоверенный текст, отображаемый буквально. Payload передаётся в
   UTF-8 по stdin и не попадает в argv, файлы или audit; raw native exceptions подавляются.
@@ -118,8 +167,8 @@ Attachment signature сейчас связывает metadata, а не выпо�
 
 ## Браузерная граница этапа 4
 
-- Любой сетевой переход, поиск, ввод, клик и закрытие вкладки — CONFIRM. SAFE чтение
-  не делает HTTP requests. Симуляция проверяет static URL/risk/schema policy без DNS,
+- Навигация, поиск, ввод и обычные GET-клики — SAFE. Опасные подписи/POST и закрытие
+  изменённой формы — CONFIRM. Чтение не делает HTTP requests. Симуляция проверяет policy без DNS,
   browser hooks или запуска процесса. Проверка DNS/доступности возможна только реально.
 - Разрешаются точные HTTPS origins. Нет wildcard/subdomain inheritance. Userinfo,
   небезопасные schemes, fragments, malformed authority, локальные/private/link-local/
@@ -190,8 +239,9 @@ Attachment signature сейчас связывает metadata, а не выпо�
   Ни аудио, ни расшифровка не пишутся в логи/SQLite. Временный текст доступен в UI до
   закрытия/отмены; сырые ошибки native библиотек не выводятся. Гарантия безопасного стирания
   RAM, системных swap/crash dumps или поведения скомпрометированной ОС не заявляется.
-- Vosk загружает только явно указанный локальный model_path. Облачного STT/TTS нет;
-  адаптер с local_only=False отклоняется. Будущий cloud audio требует отдельного раскрытия
+- Vosk загружает только явно указанный локальный model_path. В этом локальном voice path облачного STT/TTS нет;
+  адаптер с local_only=False отклоняется. Отдельное реализованное дополнение ElevenLabs
+  Free описано ниже и не принимает microphone audio. Будущий cloud audio требует отдельного раскрытия
   передачи и явного согласия. Опциональный OpenAI-планировщик по-прежнему требует своего
   согласия и может получать проверенный пользователем текст; аудио ему не передаётся.
 - Расшифровка — недоверенный текст. Она не запускается автоматически: пользователь
@@ -229,8 +279,8 @@ SQLite-транзакции сравнивают предыдущую верси
 
 ## Outlook-граница этапа 8
 
-`outlook.local_draft` сохраняет только RAM. `outlook.save_draft` и `outlook.send` — CONFIRM
-с полным snapshot, включая Cc/Bcc и идентичности реально загруженных attachment bytes.
+`outlook.local_draft` сохраняет только RAM. `outlook.save_draft` — SAFE, `outlook.send` — CONFIRM.
+Оба используют полный snapshot, включая Cc/Bcc и идентичности загруженных attachment bytes.
 Graph POST недоступен через browser или произвольный endpoint. Remote draft проверяется
 чтением; send `202` возвращает только accepted и delivery_verified=false. Retry отсутствует.
 Протокол OAuth, credential helper, session/recipient provenance, audit и пределы:
@@ -247,3 +297,63 @@ Windows lock и независимые browser archive hashes пока pending. 
 за пользователя. CMD policy имеет только process scope; Group Policy/SmartScreen/UAC,
 OAuth/MFA и микрофонный consent не обходятся. Data directory отделён от заменяемых слотов.
 См. [MILESTONE_9.md](MILESTONE_9.md).
+
+
+## Существующее дополнение ElevenLabs Free
+
+Отдельный UI opt-in разрешает одну пробу или один deterministic trusted summary, не
+микрофон, transcript, письмо или raw tool result. Free-only, overage/quota guards,
+фиксированные endpoints, secure helper и отсутствие retries сохраняются. Model/cloud
+и TTS disclosure отдельны от simulation tools. Настоящий Free API/звук/Windows pending;
+исторические Mac tests не доказывают их. Полный контракт: [ELEVENLABS.md](ELEVENLABS.md).
+
+## Будущие расширения — обязательные требования, не реализация
+
+Применяются к этапам 10–32 из [ROADMAP.md](ROADMAP.md). Текущий MVP и BLOCKED policy
+не меняются; CRITICAL выключен до отдельного будущего решения для конкретного семейства.
+
+| Новая граница / угроза | Требование | Gate |
+| --- | --- | --- |
+| Localization меняет смысл approval | Переводятся labels/help, не original action content/account/source. Canonical bytes/attachment identities сохраняются; actual edit/cancel invalidates token. Даты связывают instant/zone/offset. | E02/E03/E10 |
+| Discovery становится surveillance | Только explicit Find my apps, bounded OS inventory, без files/mail/history/cookies/vaults/screenshots/audio; detected не connected | E01/E11 |
+| Wizard/setup обходит engine | Будущие setup operations зарегистрированы с отдельной UI authority, не tools модели. OS consent/MFA выполняет пользователь. Любая install capability отдельно разрешается policy; CRITICAL не снижается из-за wizard | E08/E09/E11 |
+| Broad API consent / confused account | Operation allowlist поверх scopes; exact service/account/org/role/record привязка, least privilege, explicit selection, expiry/disconnect invalidate cached state и approvals | E04/E06/E09 |
+| OAuth требует confidential secret | Не встраивать shared client secret в desktop, source или model. До одобренного secure flow — setup required; отдельный backend не появляется по умолчанию | Integration gate |
+| 1Password становится vault dump | Trusted helper получает только разрешённый конкретный secret, не enumeration для модели; no values in prompts/memory/logs/results; OS store остаётся обязательным | M21/E09 |
+| Company retrieval раскрывает чужие данные | Separate personal/KB stores, ACL на ingestion и retrieval, revocation/freshness/conflicts, explicit sources, view/edit/delete/disable, ограниченная cloud передача | E12 |
+| Agents/routines multiply authority/spend | Общий engine, budgets, effect locks, audit и итог; agents не approve друг друга; no hidden external writes | E04/E05/E09 |
+| Потерянный response вызывает дубликат | Durable safe intent metadata; не обещать exactly-once между сервисами; uncertain write не повторять, только bounded permitted read reconciliation | E04/E09 |
+| Screen/OCR/visual model захватывает секреты | Явный current scope/indicator/Stop, исключение secret scenes до capture/storage/transmission, минимальная область; cloud visual отдельно раскрывается; unreadable/ambiguous target fail closed | E06/E07/E10 |
+| UI automation как обход API ограничений | Для каждого site/app отдельная авторизованная capability и risk/verification; no user-cookie import, fixed-coordinate primary, arbitrary keys/code или обход service restrictions | M22–24 |
+| Demonstration превращается в записанную власть | Reviewable/versioned workflow, observable preconditions и verifiers; no replay approvals; sensitive scene pause, trial и separate consent на каждое действие | E07 |
+| Background работает без ведома | Explicit sources/schedule/events/time zone/limits/notifications/disable; read/prepare/write authority разделены; отсутствующее покрытие видно | E05 |
+| Финансовые/админ/social/video changes скрыты в read | Пооперационные отдельные scopes/risks/approvals и поздние gates 29–32; read recording не даёт distribute; денежных переводов нет | M29–32 |
+
+Сохранённое разрешение на доступ микрофона/экрана не разрешает возобновлять запись после
+restart. Для microphone снова нужен held UI gesture; для screen/demo — новый explicit
+Start с indicator/согласованной областью. Ранее явно включённые routines могут возобновлять
+только свой принятый read/proposal schedule по текущей policy, не capture или external write.
+
+Внешние тексты всех сервисов, OCR, transcripts, KB и outputs дополнительных моделей —
+untrusted data. Они не меняют accounts/scopes/policy/provider/mode/registry и не являются
+approval. Пример/демонстрация/пользовательское уточнение также не выдают action token.
+Нужен полный snapshot перед каждым CONFIRM; one-use expiry и durable audit сохраняются.
+
+Sensitive task reports/source links не добавляются в metadata-only audit. Хранение таких
+артефактов, encryption, backup retention, corporate processing location и провайдеры
+утверждаются отдельно по [OPEN_DECISIONS.md](OPEN_DECISIONS.md). Нет универсального
+secret detector; если безопасно исключить область нельзя, capture останавливается.
+
+Общие негативные gates: [PRODUCT_ACCEPTANCE.md](PRODUCT_ACCEPTANCE.md), особенно E09.
+Ни новые документы, ни API docs, ни mock adapters не подтверждают выполнение этих гарантий.
+
+## Прямая работа с файлами (24 октября 2026)
+
+`fs.*` и `python.sandbox_eval` проходят общий PermissionEngine. Допустимые roots задаёт
+только доверенный startup; создание новых файлов без approval ограничено workspace.
+Для overwrite нужен version snapshot успешного чтения текущей задачи и exact CONFIRM.
+Нет unrestricted Python: используется bounded AST-интерпретатор с фиксированными
+примитивами, отдельный процесс и лимиты; он не предоставляет file/network/OS capabilities.
+Simulation не запускает воркер. Текст документа не создаёт полномочия и не сохраняется
+автоматически в памяти/аудите. Облачное согласие явно включает пути и прочитанный текст.
+[Полная граница, concurrency, OS-specific ограничения и Windows acceptance](FILESYSTEM_TOOLS.md).

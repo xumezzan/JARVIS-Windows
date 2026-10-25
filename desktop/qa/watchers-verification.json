@@ -1,0 +1,16 @@
+{
+  "platform": "darwin",
+  "checks": [
+    {
+      "check": "synthetic clipboard baseline/detection, real HUD without focus steal, reduced motion, reviewable composer handoff without autostart",
+      "pass": true
+    },
+    {
+      "check": "390px settings without page/internal overflow; disable clears watcher",
+      "pass": true
+    }
+  ],
+  "limitations": [
+    "Synthetic clipboard only. Windows native clipboard, Outlook OAuth/live mail, and real speakers remain unverified."
+  ]
+}

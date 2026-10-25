@@ -125,12 +125,15 @@ async def test_link_navigation_and_get_form_search(harness: Harness) -> None:
     assert harness.site.seen[-1][1] == "/find?q=Jarvis+test"
 
 
-async def test_simulation_and_no_approval_launch_nothing(harness: Harness) -> None:
+async def test_simulation_launches_nothing_and_real_open_needs_no_approval(
+    harness: Harness,
+) -> None:
     args = {"url": harness.site.origin + "/"}
     assert (await harness.call("open", args, mode=Mode.SIMULATION)).status is Status.SIMULATED
-    assert (await harness.call("open", args, approve=False)).status is Status.DENIED
     assert harness.host._thread is None
     assert not harness.site.seen
+    assert (await harness.call("open", args, approve=False)).status is Status.SUCCESS
+    assert [row[:2] for row in harness.site.seen] == [("GET", "/")]
 
 
 async def test_stale_page_is_rejected(harness: Harness) -> None:
@@ -140,6 +143,40 @@ async def test_stale_page_is_rejected(harness: Harness) -> None:
     assert (await harness.call("type", args)).status is Status.SUCCESS
     stale = await harness.call("type", args | {"text": "second"})
     assert stale.status is Status.ERROR and stale.error is ErrorCode.PAGE_CHANGED
+
+
+async def test_forged_safe_label_does_not_match_observed_button(harness: Harness) -> None:
+    page = await harness.opened()
+    button = next(item for item in page.elements if item.name == "Search")
+    # Same DOM fingerprint/request, different label: never click the underlying element.
+    forged = button.model_dump() | {"name": "Next"}
+    outcome = await harness.call(
+        "click", {"target": page.target.model_dump(), "element": forged}, approve=False
+    )
+    assert outcome.error is ErrorCode.PAGE_CHANGED
+    assert [row[1] for row in harness.site.seen] == ["/"]
+
+
+async def test_close_edited_form_requires_approval_and_rechecks_dirty_state(
+    harness: Harness,
+) -> None:
+    page = await harness.opened()
+    field = next(item for item in page.elements if item.name == "Message")
+    typed = await harness.call(
+        "type",
+        {"target": page.target.model_dump(), "element": field.model_dump(), "text": "unsaved"},
+        approve=False,
+    )
+    assert typed.status is Status.SUCCESS
+    updated = BrowserResult.model_validate_json(typed.result_json or "").page
+    assert updated is not None and updated.target.has_unsaved_changes
+    args = {"target": updated.target.model_dump()}
+    assert (await harness.call("close", args, approve=False)).status is Status.DENIED
+    forged = {"target": updated.target.model_dump() | {"has_unsaved_changes": False}}
+    outcome = await harness.call("close", forged, approve=False)
+    assert outcome.error is ErrorCode.PAGE_CHANGED
+    assert (await harness.call("read", args)).status is Status.SUCCESS
+    assert (await harness.call("close", args)).status is Status.SUCCESS
 
 
 async def test_redirect_blocked_without_following(harness: Harness) -> None:
@@ -163,8 +200,7 @@ async def test_stop_waits_for_http_and_browser_cleanup(harness: Harness) -> None
         "browser.open", {"url": harness.site.origin + "/slow"}, Mode.EXECUTE
     )
     assert isinstance(action, Action)
-    token = harness.authority.approve(action)
-    task = asyncio.create_task(harness.engine.execute(action, token))
+    task = asyncio.create_task(harness.engine.execute(action))
     for _ in range(300):
         if harness.site.seen:
             break

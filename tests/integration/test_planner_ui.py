@@ -141,13 +141,20 @@ def test_close_drains_worker_and_disposes_session(
 def test_cloud_requires_disclosure_and_model(qtbot: QtBot, tmp_path: Path) -> None:
     window = PlannerWindow(AppConfig(tmp_path))
     qtbot.addWidget(window)
+    window.show()
     try:
         window.command.setPlainText("test")
+        QTest.mouseClick(window.settings_button, Qt.MouseButton.LeftButton)
+        assert window.provider_choice.isVisible() and window.voice.model_path.isVisible()
         window.provider_choice.setCurrentIndex(1)
-        window.start()
+        window.tabs.setCurrentIndex(0)
+        assert window.cloud_consent.isVisible() and window.cloud_disclosure.isVisible()
+        assert "даже при симуляции" in window.cloud_disclosure.text()
+        assert "модель не выбрана" in window.provider_summary.text()
+        QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
         assert window.worker is None and "разрешить" in window.status.text()
         window.cloud_consent.setChecked(True)
-        window.start()
+        QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
         assert window.worker is None and "идентификатор" in window.status.text()
     finally:
         window.shutdown()
@@ -162,15 +169,10 @@ def test_observed_notepad_then_literal_typing(qtbot: QtBot, tmp_path: Path, text
     try:
         window.simulation.setChecked(False)
         window.command.setPlainText("открой блокнот и напиши " + text)
-        window.start()
-        qtbot.waitUntil(lambda: window.approval_dialog is not None)
-        dialog = window.approval_dialog
-        assert dialog is not None and probe.text == ""
-        preview = dialog.preview.toPlainText()
-        assert "selected_tabs" in preview and text.strip("«»") in preview
         with qtbot.waitSignal(window.task_finished) as result:
-            click_approval(window, qtbot)
+            window.start()
         assert result.args == ["finished"] and probe.text == text.strip("«»")
+        assert window.approval_dialog is None
         assert "windows.type_text: SUCCESS" in window.output.toPlainText()
     finally:
         window.shutdown()
@@ -221,7 +223,7 @@ def test_real_browser_observation_drives_next_registered_step(qtbot: QtBot, tmp_
         window.command.setPlainText("Read the controlled local page")
         with qtbot.waitSignal(window.task_finished, timeout=15000) as result:
             window.start()
-            click_approval(window, qtbot)
+        assert window.approval_dialog is None
         assert result.args == ["finished"]
         assert "browser.read: SUCCESS" in window.output.toPlainText()
         assert "Browser fixture" in window.output.toPlainText()

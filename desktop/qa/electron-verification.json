@@ -1,0 +1,48 @@
+[
+  {
+    "check": "secure renderer configuration",
+    "preferences": {
+      "contextIsolation": true,
+      "nodeIntegration": false,
+      "sandbox": true
+    },
+    "size": [
+      1536,
+      1024
+    ]
+  },
+  {
+    "check": "narrow preload bridge",
+    "keys": [
+      "close",
+      "isMaximized",
+      "maximize",
+      "minimize"
+    ],
+    "require": "undefined"
+  },
+  {
+    "check": "window sizing",
+    "size": [
+      1536,
+      1024
+    ],
+    "min": [
+      1024,
+      720
+    ],
+    "title": "Jarvis — дизайн интерфейса"
+  },
+  {
+    "check": "custom maximize and restore controls",
+    "pass": true
+  },
+  {
+    "check": "custom minimize control",
+    "pass": true
+  },
+  {
+    "check": "custom close control",
+    "pass": true
+  }
+]

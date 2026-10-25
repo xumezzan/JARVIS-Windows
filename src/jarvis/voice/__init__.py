@@ -1,1 +1,1 @@
-"""Future explicit push-to-talk and replaceable STT/TTS adapters."""
+"""Local push-to-talk, persistent recognition and explicitly authorized speech adapters."""

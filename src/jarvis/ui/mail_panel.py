@@ -127,7 +127,7 @@ class MailPanel(QWidget):
             ("Список писем", "outlook.list"),
             ("Прочитать выбранное письмо", "outlook.read"),
             ("Сохранить локальный черновик", "outlook.local_draft"),
-            ("Сохранить черновик в Outlook — подтверждение", "outlook.save_draft"),
+            ("Сохранить черновик в Outlook", "outlook.save_draft"),
             ("Отправить письмо — подтверждение", "outlook.send"),
         ):
             self.operation.addItem(label, value)

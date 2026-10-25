@@ -1,5 +1,11 @@
 # Этап 4 — Browser Automation
 
+Дополнение от 2026-10-24: прежний режим сохранён как Strict Sandbox; opt-in Live Browser
+добавляет JS/cookies/HTTPS-редиректы и CDP. Ограничения исторического отчёта ниже относятся
+к Strict. Актуальная граница и запуск: [BROWSER_MODES.md](BROWSER_MODES.md).
+
+> Risk policy updated on 2026-10-24: see [PERMISSION_POLICY.md](PERMISSION_POLICY.md). Historical approval requirements below are superseded by that table.
+
 Дата: 2026-09-15. Реализован локально на macOS arm64 / CPython 3.12.7.
 **Windows 11 не проверена. Публичный поисковый сценарий DuckDuckGo не принят:
 сайт ответил HTTP 403.** Это не мешает локальным проверкам браузерного адаптера,

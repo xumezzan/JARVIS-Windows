@@ -83,7 +83,7 @@ async def mail(tmp_path: Path) -> Any:
     "tool,risk",
     [
         ("outlook.send", Risk.CONFIRM),
-        ("outlook.save_draft", Risk.CONFIRM),
+        ("outlook.save_draft", Risk.SAFE),
         ("outlook.local_draft", Risk.SAFE),
     ],
 )
@@ -167,7 +167,7 @@ async def test_attachment_bytes_and_remote_readback(mail: MailHarness) -> None:
     assert isinstance(message, dict)
     message["attachments"] = [attachment.model_dump()]
     action = mail.prepare("outlook.save_draft", args)
-    result = await mail.engine.execute(action, mail.authority.approve(action))
+    result = await mail.engine.execute(action)
     assert result.status is Status.SUCCESS
     assert json.loads(result.result_json or "{}")["state"] == "remote_draft"
     assert ("GET", "/me/messages/fixture-message/attachments") in mail.graph.calls
@@ -178,7 +178,7 @@ async def test_attachment_bytes_and_remote_readback(mail: MailHarness) -> None:
 async def test_remote_readback_mismatch_is_failure(mail: MailHarness) -> None:
     mail.graph.change_draft = True
     action = mail.prepare("outlook.save_draft")
-    outcome = await mail.engine.execute(action, mail.authority.approve(action))
+    outcome = await mail.engine.execute(action)
     assert outcome.status is Status.ERROR and outcome.may_have_effects
     assert len(mail.graph.writes) == 1
 

@@ -1,6 +1,5 @@
-"""Desktop demo shell with separate permission and bounded text-planner windows."""
+"""Minimal task launcher with distinct history, tools and settings pages."""
 
-from datetime import datetime
 from uuid import UUID, uuid4
 
 from PySide6.QtCore import QEvent, QObject, QSize, Qt, Signal, Slot
@@ -9,7 +8,6 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -17,6 +15,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -25,9 +24,8 @@ from jarvis.browser.host import BrowserHost
 from jarvis.config import AppConfig
 from jarvis.observability.events import EVENT_TEXT, ShellEvent
 from jarvis.observability.logging import ShellLog
-from jarvis.security.browser_policy import NetworkPolicy
 from jarvis.ui.activity_log import ActivityLog
-from jarvis.ui.components import IconButton, MonthCalendar, Panel
+from jarvis.ui.components import MonthCalendar
 from jarvis.ui.dashboard import OrbWidget, line_icon
 from jarvis.ui.demo_worker import DemoOutcome, DemoWorker
 from jarvis.ui.permission_workbench import PermissionWorkbench
@@ -60,8 +58,8 @@ class MainWindow(QMainWindow):
         self._cancel_requested = False
         self._closing = False
         self._closed = False
-        self.setWindowTitle("JARVIS • Desktop Preview")
-        self.resize(1480, 940)
+        self.setWindowTitle("Jarvis")
+        self.resize(1200, 820)
         self.setMinimumSize(860, 640)
         load_fonts()
         self.setStyleSheet(STYLESHEET)
@@ -70,258 +68,306 @@ class MainWindow(QMainWindow):
         self._record(ShellEvent.STARTED)
         self.command_input.setFocus()
         self._submit_shortcut = QShortcut(QKeySequence("Ctrl+Return"), self)
-        self._submit_shortcut.activated.connect(self.submit)
+        self._submit_shortcut.activated.connect(self._submit_current_page)
         self._stop_shortcut = QShortcut(QKeySequence("Escape"), self)
         self._stop_shortcut.activated.connect(self.stop)
 
     def _build_ui(self) -> None:
         central = QWidget()
         central.setObjectName("dashboard")
-        central.setMinimumSize(0, 840)
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        self.scroll_area.setWidget(central)
-        self.setCentralWidget(self.scroll_area)
-        root = QVBoxLayout(central)
-        root.setContentsMargins(20, 16, 20, 20)
-        root.setSpacing(24)
+        self.setCentralWidget(central)
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        self.sidebar = QFrame()
+        self.sidebar.setObjectName("sidebar")
+        side = QVBoxLayout(self.sidebar)
+        side.setContentsMargins(16, 28, 16, 24)
+        side.setSpacing(8)
+        self.wordmark = label("Jarvis", "wordmark")
+        side.addWidget(self.wordmark)
+        side.addSpacing(36)
+        self.navigation = QButtonGroup(self)
+        self.navigation.setExclusive(True)
+        self.nav_buttons: dict[str, QPushButton] = {}
+        for key, title, icon in (
+            ("assistant", "Ассистент", "chat"),
+            ("history", "История", "clock"),
+            ("tools", "Инструменты", "apps"),
+            ("settings", "Настройки", "settings"),
+        ):
+            button = QPushButton(title)
+            button.setObjectName("nav")
+            button.setAccessibleName(title)
+            button.setToolTip(title)
+            button.setIcon(line_icon(icon))
+            button.setIconSize(QSize(20, 20))
+            button.setCheckable(True)
+            button.setMinimumHeight(44)
+            button.toggled.connect(
+                lambda checked, target=key: self._navigate(target) if checked else None
+            )
+            self.navigation.addButton(button)
+            self.nav_buttons[key] = button
+            if key == "settings":
+                side.addStretch()
+            side.addWidget(button)
+        self.sidebar_hint = label("На этом устройстве", "sectionHint")
+        side.addSpacing(12)
+        side.addWidget(self.sidebar_hint)
+        root.addWidget(self.sidebar)
+
+        workspace = QVBoxLayout()
+        workspace.setContentsMargins(0, 0, 0, 0)
+        workspace.setSpacing(0)
+        root.addLayout(workspace, 1)
         header = QHBoxLayout()
-        mark = label("", "brandMark")
-        mark.setPixmap(line_icon("orb", "#8dc2ff", 24).pixmap(24, 24))
-        header.addWidget(mark)
-        header.addWidget(label("Jarvis", "wordmark"))
+        header.setContentsMargins(32, 20, 32, 16)
+        self.page_title = label("Ассистент", "pageTitle")
+        header.addWidget(self.page_title)
         header.addStretch()
-        self.motion_button = QPushButton("Анимация")
-        self.motion_button.setObjectName("motion")
-        self.motion_button.setCheckable(True)
-        self.motion_button.setChecked(True)
-        self.motion_button.setAccessibleName("Анимация сферы")
-        header.addWidget(self.motion_button)
+        self.notice_label = label("", "state")
+        self.notice_label.setAccessibleName("Ошибка открытия рабочего окна")
+        self.notice_label.hide()
+        header.addWidget(self.notice_label)
+        self.stop_button = QPushButton("Остановить демо · Esc")
+        self.stop_button.setObjectName("stop")
+        self.stop_button.setEnabled(False)
+        self.stop_button.hide()
+        self.stop_button.clicked.connect(self.stop)
+        header.addWidget(self.stop_button)
+        workspace.addLayout(header)
+        self.page_stack = QStackedWidget()
+        workspace.addWidget(self.page_stack, 1)
+        self.pages: dict[str, QWidget] = {}
+        self.page_scrolls: dict[str, QScrollArea] = {}
+
+        assistant = self._page("assistant", 680)
+        assistant.addStretch(2)
+        self.orb = OrbWidget()
+        self.orb.setMinimumSize(0, 0)
+        self.orb.setFixedSize(160, 160)
+        assistant.addWidget(self.orb, 0, Qt.AlignmentFlag.AlignHCenter)
+        assistant_title = label("Что нужно сделать?", "heroTitle")
+        assistant_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        assistant.addWidget(assistant_title)
+        self.state_label = label("Текстом или голосом", "state")
+        self.state_label.setAccessibleName("Способ ввода команды")
+        self.state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        assistant.addWidget(self.state_label)
+        assistant.addSpacing(20)
+        self.command_frame = QFrame()
+        self.command_frame.setObjectName("commandBar")
+        composer = QVBoxLayout(self.command_frame)
+        composer.setContentsMargins(20, 16, 16, 16)
+        composer.setSpacing(12)
+        command_label = label("Ваша команда", "sectionHint")
+        composer.addWidget(command_label)
+        self.command_input = QPlainTextEdit()
+        self.command_input.setObjectName("commandInput")
+        self.command_input.setAccessibleName("Текстовая команда")
+        self.command_input.setPlaceholderText("Например, проверь систему дважды")
+        self.command_input.setFixedHeight(80)
+        self.command_input.installEventFilter(self)
+        command_label.setBuddy(self.command_input)
+        composer.addWidget(self.command_input)
+        actions = QHBoxLayout()
+        self.microphone_button = QPushButton("Голосовой ввод")
+        self.microphone_button.setObjectName("quiet")
+        self.microphone_button.setIcon(line_icon("mic"))
+        self.microphone_button.setAccessibleName("Открыть голосовой ввод в планировщике")
+        self.microphone_button.setToolTip("Запись начнётся только по удержанию кнопки в ассистенте")
+        self.microphone_button.clicked.connect(self.open_planner)
+        actions.addWidget(self.microphone_button)
+        actions.addStretch()
+        self.planner_button = QPushButton("Продолжить")
+        self.planner_button.setObjectName("primary")
+        self.planner_button.setToolTip("Открыть команду для проверки · Ctrl+Enter")
+        self.planner_button.clicked.connect(self.open_planner)
+        actions.addWidget(self.planner_button)
+        composer.addLayout(actions)
+        assistant.addWidget(self.command_frame)
+        hint = label("Проверьте команду и режим перед запуском. Ctrl+Enter — продолжить.", "muted")
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        assistant.addWidget(hint)
+        assistant.addStretch(3)
+
+        history = self._page("history")
+        history.addWidget(label("История сеанса", "title"))
+        history.addWidget(label("События оболочки с момента открытия приложения.", "muted"))
+        history.addSpacing(16)
+        self.activity = ActivityLog(self.config.activity_limit)
+        self.activity.setObjectName("activity")
+        self.activity.setMinimumHeight(320)
+        history.addWidget(self.activity, 1)
+        self._demo_completed = 0
+        self.summary_label = label("Завершено демонстраций: 0", "sectionHint")
+        history.addWidget(self.summary_label)
+
+        tools = self._page("tools")
+        tools.addWidget(label("Инструменты", "title"))
+        tools.addWidget(
+            label("Откройте нужное рабочее окно. Действия требуют проверки разрешений.", "muted")
+        )
+        tools.addSpacing(20)
+        self.permissions_button = QPushButton("Браузер и приложения")
+        self.permissions_button.setObjectName("toolEntry")
+        self.permissions_button.setIcon(line_icon("apps"))
+        self.permissions_button.clicked.connect(self.open_permissions)
+        tools.addWidget(self.permissions_button)
+        tools.addWidget(
+            label("Наблюдение окон, Блокнот, VS Code и временный браузерный сеанс.", "muted")
+        )
+        tools.addSpacing(24)
+        self.demo_toggle = QPushButton("Демонстрация интерфейса")
+        self.demo_toggle.setObjectName("disclosure")
+        self.demo_toggle.setCheckable(True)
+        tools.addWidget(self.demo_toggle)
+        tools.addWidget(
+            label("Проверка ввода, отмены и результата без выполнения команд.", "muted")
+        )
+        self.demo_panel = QWidget()
+        demo = QVBoxLayout(self.demo_panel)
+        demo.setContentsMargins(0, 12, 0, 0)
+        demo.setSpacing(12)
+        self.demo_input = QPlainTextEdit()
+        self.demo_input.setAccessibleName("Команда для демонстрации")
+        self.demo_input.setPlaceholderText("Введите любой текст для проверки интерфейса")
+        self.demo_input.setFixedHeight(80)
+        demo.addWidget(self.demo_input)
+        demo_controls = QHBoxLayout()
+        self.demo_mode = QComboBox()
+        self.demo_mode.addItems(["Обычная демонстрация", "Проверить ошибку"])
+        self.demo_mode.setAccessibleName("Сценарий демонстрации")
+        demo_controls.addWidget(self.demo_mode)
+        demo_controls.addStretch()
+        self.submit_button = QPushButton("Запустить демо")
+        self.submit_button.clicked.connect(self.submit)
+        demo_controls.addWidget(self.submit_button)
+        demo.addLayout(demo_controls)
+        self.validation_label = label("Демонстрация не выполняет введённую команду.", "muted")
+        demo.addWidget(self.validation_label)
+        self.demo_state_label = label("", "state")
+        self.demo_state_label.setAccessibleName("Состояние демонстрации")
+        demo.addWidget(self.demo_state_label)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 1)
+        self.progress.setValue(0)
+        self.progress.setTextVisible(False)
+        demo.addWidget(self.progress)
+        self.transcript = QPlainTextEdit()
+        self.transcript.setObjectName("transcript")
+        self.transcript.setReadOnly(True)
+        self.transcript.setAccessibleName("Принятый текст команды")
+        self.transcript.setPlaceholderText("Текст демонстрации появится здесь")
+        self.transcript.setFixedHeight(62)
+        demo.addWidget(self.transcript)
+        self.action_label = label("Результат появится после запуска.", "muted")
+        self.action_label.setAccessibleName("Результат задачи")
+        demo.addWidget(self.action_label)
+        tools.addWidget(self.demo_panel)
+        self.demo_panel.hide()
+        self.demo_toggle.toggled.connect(self.demo_panel.setVisible)
+        tools.addSpacing(24)
+        calendar_toggle = QPushButton("Локальный календарь")
+        calendar_toggle.setObjectName("disclosure")
+        calendar_toggle.setCheckable(True)
+        tools.addWidget(calendar_toggle)
+        self.calendar_card = QWidget()
+        calendar = QVBoxLayout(self.calendar_card)
+        calendar.setContentsMargins(0, 12, 0, 0)
+        calendar.addWidget(MonthCalendar())
+        calendar.addWidget(label("Текущий месяц. Сервисы календаря не подключены.", "muted"))
+        tools.addWidget(self.calendar_card)
+        self.calendar_card.hide()
+        calendar_toggle.toggled.connect(self.calendar_card.setVisible)
+        tools.addStretch()
+
+        settings = self._page("settings")
+        settings.addWidget(label("Настройки", "title"))
+        settings.addWidget(label("Оформление приложения и параметры ассистента.", "muted"))
+        settings.addSpacing(24)
+        settings.addWidget(label("Оформление", "cardTitle"))
         self.theme_picker = QComboBox()
         self.theme_picker.setObjectName("themePicker")
         self.theme_picker.setAccessibleName("Цветовая тема")
         self.theme_picker.addItems(list(PALETTES))
         self.theme_picker.currentTextChanged.connect(self._apply_theme)
-        header.addWidget(self.theme_picker)
-        root.addLayout(header)
-        columns = QHBoxLayout()
-        columns.setSpacing(20)
-        root.addLayout(columns, 1)
-
-        sidebar = QFrame()
-        self.sidebar = sidebar
-        sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(160)
-        side = QVBoxLayout(sidebar)
-        side.setContentsMargins(8, 12, 8, 12)
-        side.setSpacing(8)
-        self.navigation = QButtonGroup(self)
-        self.navigation.setExclusive(True)
-        self.nav_buttons: dict[str, QPushButton] = {}
-        for key, title, icon_name in (
-            ("home", "Главная", "home"),
-            ("chat", "Чат", "chat"),
-            ("tasks", "Задачи", "tasks"),
-            ("calendar", "Календарь", "calendar"),
-            ("apps", "Инструменты", "apps"),
-            ("settings", "Настройки", "settings"),
-        ):
-            button = QPushButton(title)
-            button.setAccessibleName(title)
-            button.setToolTip(title)
-            button.setIcon(line_icon(icon_name))
-            button.setIconSize(QSize(21, 21))
-            button.setObjectName("nav")
-            button.setCheckable(True)
-            button.setFixedHeight(52)
-            button.clicked.connect(lambda checked=False, target=key: self._navigate(target))
-            self.navigation.addButton(button)
-            self.nav_buttons[key] = button
-            side.addWidget(button)
-        self.nav_buttons["home"].setChecked(True)
-        side.addStretch()
-        avatar = label("J", "avatar")
-        avatar.setFixedSize(40, 40)
-        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        side.addWidget(avatar)
-        self.sidebar_greeting = label("Ваше пространство", "greeting")
-        self.sidebar_hint = label("На этом устройстве", "sectionHint")
-        side.addWidget(self.sidebar_greeting)
-        side.addWidget(self.sidebar_hint)
-        columns.addWidget(sidebar)
-
-        self.dashboard_grid = QGridLayout()
-        self.dashboard_grid.setSpacing(24)
-        columns.addLayout(self.dashboard_grid, 1)
-        self.left_column = QWidget()
-        self.left_column.setObjectName("column")
-        left = QVBoxLayout(self.left_column)
-        left.setContentsMargins(0, 0, 0, 0)
-        left.setSpacing(18)
-        activity_card, activity_body = self._card("История действий", "Этот сеанс")
-        self.activity = ActivityLog(self.config.activity_limit)
-        self.activity.setObjectName("activity")
-        activity_body.addWidget(self.activity, 1)
-        activity_body.addWidget(label("История текущего сеанса", "muted"))
-        left.addWidget(activity_card, 3)
-        self.apps_card, apps_body = self._card("Инструменты")
-        apps_body.addWidget(label("Приложения под вашим контролем", "sectionHint"))
-        for title, icon in (("Браузер", "globe"), ("Блокнот", "document"), ("VS Code", "code")):
-            entry = QPushButton(title)
-            entry.setObjectName("toolEntry")
-            entry.setIcon(line_icon(icon, "#8dc2ff"))
-            entry.setIconSize(QSize(22, 22))
-            entry.setMinimumHeight(52)
-            entry.setToolTip(f"{title}: открыть окно инструментов и разрешений")
-            entry.clicked.connect(self.open_permissions)
-            apps_body.addWidget(entry)
-        apps_body.addWidget(label("Действия проходят проверку разрешений", "sectionHint"))
-        left.addWidget(self.apps_card, 2)
-
-        self.center_column = QWidget()
-        self.center_column.setObjectName("column")
-        center = QVBoxLayout(self.center_column)
-        center.setContentsMargins(0, 6, 0, 0)
-        center.setSpacing(10)
-        hero_title = label("Jarvis", "heroTitle")
-        hero_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        center.addWidget(hero_title)
-        self.state_label = label("", "state")
-        self.state_label.setAccessibleName("Состояние задачи")
-        self.state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        center.addWidget(self.state_label)
-        self.orb = OrbWidget()
+        self._setting_row(
+            settings, "Цветовая тема", "Палитра всех окон приложения", self.theme_picker
+        )
+        self.motion_button = QPushButton("Включена")
+        self.motion_button.setObjectName("motion")
+        self.motion_button.setCheckable(True)
+        self.motion_button.setChecked(True)
+        self.motion_button.setAccessibleName("Анимация сферы")
         self.motion_button.toggled.connect(self.orb.set_motion_enabled)
-        center.addWidget(self.orb, 1)
-        voice_controls = QHBoxLayout()
-        voice_controls.setSpacing(22)
-        voice_controls.addStretch()
-        keyboard = IconButton("keyboard", "Ввести команду с клавиатуры")
-        keyboard.clicked.connect(lambda: self._navigate("chat"))
-        voice_controls.addWidget(keyboard)
-        self.microphone_button = QPushButton()
-        self.microphone_button.setObjectName("microphone")
-        self.microphone_button.setIcon(line_icon("mic", "#81bfff", 32))
-        self.microphone_button.setIconSize(QSize(30, 30))
-        self.microphone_button.setFixedSize(72, 72)
-        self.microphone_button.setAccessibleName("Открыть голосовой ввод в планировщике")
-        self.microphone_button.setToolTip(
-            "Открыть голосовой ввод. Запись начнётся по удержанию кнопки."
+        self.motion_button.toggled.connect(
+            lambda enabled: self.motion_button.setText("Включена" if enabled else "Выключена")
         )
-        self.microphone_button.clicked.connect(self.open_planner)
-        voice_controls.addWidget(self.microphone_button)
-        self.stop_button = IconButton("close", "Остановить демонстрацию (Esc)")
-        self.stop_button.setEnabled(False)
-        self.stop_button.clicked.connect(self.stop)
-        voice_controls.addWidget(self.stop_button)
-        voice_controls.addStretch()
-        center.addLayout(voice_controls)
-        voice_hint = label("Голос в планировщике · запись только по удержанию", "muted")
-        voice_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        center.addWidget(voice_hint)
-        center.addSpacing(14)
-        self.demo_mode = QComboBox()
-        self.demo_mode.addItems(["Обычная демонстрация", "Проверить ошибку"])
-        self.demo_mode.setAccessibleName("Сценарий демонстрации")
-        self.demo_mode.setMaximumWidth(230)
-        center.addWidget(self.demo_mode, 0, Qt.AlignmentFlag.AlignHCenter)
-        command_label = label("Ваша команда", "sectionHint")
-        center.addWidget(command_label)
-        command_frame = QFrame()
-        self.command_frame = command_frame
-        command_frame.setObjectName("commandBar")
-        command_layout = QHBoxLayout(command_frame)
-        command_layout.setContentsMargins(14, 8, 10, 8)
-        command_symbol = label("")
-        command_symbol.setPixmap(line_icon("command", "#8dc2ff", 20).pixmap(20, 20))
-        command_layout.addWidget(command_symbol)
-        self.command_input = QPlainTextEdit()
-        self.command_input.setObjectName("commandInput")
-        self.command_input.installEventFilter(self)
-        command_label.setBuddy(self.command_input)
-        self.command_input.setAccessibleName("Текстовая команда")
-        self.command_input.setPlaceholderText("Что нужно сделать?")
-        self.command_input.setFixedHeight(58)
-        command_layout.addWidget(self.command_input, 1)
-        self.submit_button = QPushButton()
-        self.submit_button.setObjectName("send")
-        self.submit_button.setIcon(line_icon("arrow", "#e4eeff", 28))
-        self.submit_button.setIconSize(QSize(26, 26))
-        self.submit_button.setFixedSize(42, 42)
-        self.submit_button.setAccessibleName("Запустить демо")
-        self.submit_button.setToolTip("Запустить демо · Ctrl+Enter")
-        self.submit_button.clicked.connect(self.submit)
-        command_layout.addWidget(self.submit_button)
-        center.addWidget(command_frame)
-        self.validation_label = label("Текстовый ввод — демо · Ctrl+Enter для запуска", "inputHint")
-        self.validation_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        center.addWidget(self.validation_label)
-
-        self.right_column = QWidget()
-        self.right_column.setObjectName("column")
-        right = QVBoxLayout(self.right_column)
-        right.setContentsMargins(0, 0, 0, 0)
-        right.setSpacing(18)
-        self.calendar_card, calendar_body = self._card("Сегодня", f"{datetime.now():%d.%m.%Y}")
-        calendar_body.addWidget(MonthCalendar())
-        calendar_body.addWidget(label("Календарь не подключён", "sectionHint"))
-        right.addWidget(self.calendar_card, 3)
-
-        self.task_card, task_body = self._card("Текущая задача")
-        self._demo_completed = 0
-        summary_row = QHBoxLayout()
-        summary_icon = label("")
-        summary_icon.setPixmap(line_icon("check", "#70e2c7", 26).pixmap(26, 26))
-        summary_row.addWidget(summary_icon)
-        self.summary_label = label("Завершено демонстраций: 0")
-        summary_row.addWidget(self.summary_label, 1)
-        task_body.addLayout(summary_row)
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 1)
-        self.progress.setValue(0)
-        self.progress.setTextVisible(False)
-        task_body.addWidget(self.progress)
-
-        self.transcript = QPlainTextEdit()
-        self.transcript.setObjectName("transcript")
-        self.transcript.setReadOnly(True)
-        self.transcript.setAccessibleName("Принятый текст команды")
-        self.transcript.setPlaceholderText("Начните с одной команды")
-        self.transcript.setFixedHeight(62)
-        task_body.addWidget(self.transcript)
-        self.action_label = label("Её текст и результат появятся здесь.", "muted")
-        self.action_label.setAccessibleName("Результат задачи")
-        task_body.addWidget(self.action_label)
-        task_body.addStretch()
-
-        right.addWidget(self.task_card, 3)
-
-        suggestion, suggestion_body = self._card("От команды к действию")
-        suggestion.setObjectName("suggestion")
-        suggestion_body.addWidget(
-            label(
-                "Откройте инструменты, чтобы управлять приложениями и проверять разрешения.",
-                "muted",
-            )
+        self._setting_row(settings, "Анимация", "Мягкое движение сферы", self.motion_button)
+        settings.addWidget(label("Оформление действует до закрытия приложения.", "sectionHint"))
+        settings.addSpacing(28)
+        settings.addWidget(label("Ассистент", "cardTitle"))
+        self.planner_links: list[QPushButton] = []
+        for title, description, caption, tab in (
+            ("Модель и голос", "Провайдер, локальная модель речи и озвучивание", "Открыть", 3),
+            ("Память", "Просмотр и изменение явно сохранённых меток", "Открыть", 1),
+            ("Почта Outlook", "Подключение учётной записи и работа с письмами", "Открыть", 2),
+        ):
+            button = QPushButton(caption)
+            button.setAccessibleName(title)
+            self.planner_links.append(button)
+            button.clicked.connect(lambda checked=False, index=tab: self._open_planner_tab(index))
+            self._setting_row(settings, title, description, button)
+        settings.addWidget(
+            label("Режим выполнения и согласия проверяются перед запуском задачи.", "sectionHint")
         )
-        self.permissions_button = QPushButton("Открыть инструменты")
-        self.permissions_button.setObjectName("secondary")
-        self.permissions_button.setIcon(line_icon("shield", "#e4eeff"))
-        self.permissions_button.clicked.connect(self.open_permissions)
-        suggestion_body.addWidget(self.permissions_button)
-        self.planner_button = QPushButton("Открыть планировщик")
-        self.planner_button.setObjectName("primary")
-        self.planner_button.clicked.connect(self.open_planner)
-        suggestion_body.addWidget(self.planner_button)
-        right.addWidget(suggestion, 2)
+        settings.addStretch()
         self._compact_layout: bool | None = None
         self._arrange_dashboard()
+        self._navigate("assistant")
+
+    def _page(self, key: str, width: int = 760) -> QVBoxLayout:
+        scroll = QScrollArea()
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidgetResizable(True)
+        outer = QWidget()
+        outer.setObjectName("page")
+        row = QHBoxLayout(outer)
+        row.setContentsMargins(32, 24, 32, 32)
+        content = QWidget()
+        content.setObjectName("column")
+        content.setMaximumWidth(width)
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        row.addStretch()
+        row.addWidget(content, 1)
+        row.addStretch()
+        scroll.setWidget(outer)
+        self.pages[key] = content
+        self.page_scrolls[key] = scroll
+        self.page_stack.addWidget(scroll)
+        return layout
 
     @staticmethod
-    def _card(title: str, caption: str = "") -> tuple[QFrame, QVBoxLayout]:
-        card = Panel(title, caption)
-        return card, card.body
+    def _setting_row(layout: QVBoxLayout, title: str, description: str, control: QWidget) -> None:
+        row = QFrame()
+        row.setObjectName("settingRow")
+        body = QHBoxLayout(row)
+        body.setContentsMargins(0, 16, 0, 16)
+        body.setSpacing(24)
+        text = QVBoxLayout()
+        text.setSpacing(4)
+        title_label = label(title)
+        title_label.setBuddy(control)
+        text.addWidget(title_label)
+        text.addWidget(label(description, "muted"))
+        body.addLayout(text, 1)
+        control.setMinimumWidth(130)
+        body.addWidget(control)
+        layout.addWidget(row)
 
     @Slot(str)
     def _apply_theme(self, theme: str) -> None:
@@ -332,37 +378,13 @@ class MainWindow(QMainWindow):
                 dialog.setStyleSheet(stylesheet)
 
     def _arrange_dashboard(self) -> None:
-        compact = self.width() < 1300
-        if compact == self._compact_layout:
-            return
+        compact = self.width() < 1000
         self._compact_layout = compact
-        for column in (self.left_column, self.center_column, self.right_column):
-            self.dashboard_grid.removeWidget(column)
-        for index in range(3):
-            self.dashboard_grid.setColumnStretch(index, 0)
-        self.sidebar.setFixedWidth(64 if compact else 160)
+        self.sidebar.setFixedWidth(76 if compact else 200)
         for button in self.nav_buttons.values():
             button.setText("" if compact else button.accessibleName())
-        self.sidebar_greeting.setVisible(not compact)
+        self.wordmark.setText("J" if compact else "Jarvis")
         self.sidebar_hint.setVisible(not compact)
-        if compact:
-            self.center_column.setMinimumHeight(590)
-            self.orb.setMinimumHeight(240)
-            self.orb.setMaximumHeight(280)
-            self.dashboard_grid.addWidget(self.center_column, 0, 0, 1, 2)
-            self.dashboard_grid.addWidget(self.left_column, 1, 0)
-            self.dashboard_grid.addWidget(self.right_column, 1, 1)
-            self.dashboard_grid.setColumnStretch(0, 1)
-            self.dashboard_grid.setColumnStretch(1, 1)
-        else:
-            self.center_column.setMinimumHeight(0)
-            self.orb.setMinimumHeight(330)
-            self.orb.setMaximumHeight(16777215)
-            for index, (column, stretch) in enumerate(
-                ((self.left_column, 30), (self.center_column, 40), (self.right_column, 34))
-            ):
-                self.dashboard_grid.addWidget(column, 0, index)
-                self.dashboard_grid.setColumnStretch(index, stretch)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -381,23 +403,28 @@ class MainWindow(QMainWindow):
 
     def _navigate(self, target: str) -> None:
         self.nav_buttons[target].setChecked(True)
-        if target == "settings":
-            self.open_permissions()
-            return
-        destinations = {
-            "home": self.orb,
-            "chat": self.command_input,
-            "tasks": self.task_card,
-            "calendar": self.calendar_card,
-            "apps": self.apps_card,
-        }
-        widget = destinations[target]
-        self.scroll_area.ensureWidgetVisible(widget)
-        if target == "chat":
+        self.page_stack.setCurrentWidget(self.page_scrolls[target])
+        self.page_title.setText(self.nav_buttons[target].accessibleName())
+        self.scroll_area = self.page_scrolls[target]
+        if target == "assistant":
             self.command_input.setFocus()
         else:
-            widget.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-            widget.setFocus()
+            self.page_title.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            self.page_title.setFocus()
+
+    def _submit_current_page(self) -> None:
+        if self.page_stack.currentWidget() is self.page_scrolls["assistant"]:
+            self.open_planner()
+        elif (
+            self.page_stack.currentWidget() is self.page_scrolls["tools"]
+            and self.demo_panel.isVisible()
+        ):
+            self.submit()
+
+    def _open_planner_tab(self, index: int) -> None:
+        self.open_planner()
+        if self.planner_window is not None:
+            self.planner_window.tabs.setCurrentIndex(index)
 
     def _record(self, event: ShellEvent) -> None:
         self.log.record(event, self._request_id)
@@ -408,18 +435,24 @@ class MainWindow(QMainWindow):
 
     def _set_state(self, state: UiState) -> None:
         self.state = state
-        self.state_label.setText(STATE_LABELS[state])
-        self.orb.set_state(state)
-        self.state_label.setProperty("status", state.value)
-        self.state_label.style().unpolish(self.state_label)
-        self.state_label.style().polish(self.state_label)
+        self.demo_state_label.setText(STATE_LABELS[state])
+        self.demo_state_label.setProperty("status", state.value)
+        self.demo_state_label.style().unpolish(self.demo_state_label)
+        self.demo_state_label.style().polish(self.demo_state_label)
         self.state_changed.emit(state.value)
 
     def _set_busy(self, busy: bool) -> None:
+        self.demo_input.setReadOnly(busy)
         self.command_input.setReadOnly(busy)
+        self.planner_button.setEnabled(not busy)
+        self.microphone_button.setEnabled(not busy)
+        self.permissions_button.setEnabled(not busy)
+        for link in self.planner_links:
+            link.setEnabled(not busy)
         self.submit_button.setEnabled(not busy)
         self.demo_mode.setEnabled(not busy)
         self.stop_button.setEnabled(busy)
+        self.stop_button.setVisible(busy)
         self.progress.setRange(0, 0 if busy else 1)
         if not busy:
             self.progress.setValue(0)
@@ -428,7 +461,7 @@ class MainWindow(QMainWindow):
     def submit(self) -> None:
         if self.worker is not None or self._closing:
             return
-        command = self.command_input.toPlainText().strip()
+        command = self.demo_input.toPlainText().strip()
         if not command or len(command) > 4000:
             self.validation_label.setText("Введите команду длиной от 1 до 4 000 символов.")
             return
@@ -493,7 +526,8 @@ class MainWindow(QMainWindow):
         self.action_label.setText(EVENT_TEXT[event])
         self._record(event)
         self._request_id = None
-        self.command_input.setFocus()
+        if self.page_stack.currentWidget() is self.page_scrolls["tools"]:
+            self.demo_input.setFocus()
         self.task_finished.emit(outcome.value)
         if self._closing:
             self.close()
@@ -526,17 +560,23 @@ class MainWindow(QMainWindow):
     def open_permissions(self) -> None:
         if self.worker is not None or self._closing:
             return
+        self.notice_label.clear()
+        self.notice_label.hide()
         if self.permission_workbench is None:
             try:
                 self.permission_workbench = PermissionWorkbench(
                     self.config.data_dir,
                     self,
-                    browser_host=BrowserHost(NetworkPolicy(self.config.browser_origins)),
+                    browser_host=BrowserHost(
+                        self.config.browser_policy,
+                        cdp_endpoint=self.config.browser_cdp_endpoint,
+                    ),
                 )
             except Exception:
-                self.action_label.setText(
-                    "Не удалось открыть журнал инструментов. Проверьте каталог данных."
+                self.notice_label.setText(
+                    "Не удалось открыть инструменты. Проверьте каталог данных."
                 )
+                self.notice_label.show()
                 self._set_state(UiState.ERROR)
                 return
             self.permission_workbench.finished.connect(self._permissions_closed)
@@ -554,13 +594,16 @@ class MainWindow(QMainWindow):
     def open_planner(self) -> None:
         if self.worker is not None or self._closing:
             return
+        self.notice_label.clear()
+        self.notice_label.hide()
         if self.planner_window is None:
             try:
                 self.planner_window = PlannerWindow(self.config, self)
             except Exception:
-                self.action_label.setText(
-                    "Не удалось открыть планировщик. Проверьте журнал и зависимости."
+                self.notice_label.setText(
+                    "Не удалось открыть ассистента. Проверьте журнал и зависимости."
                 )
+                self.notice_label.show()
                 return
             self.planner_window.command.setPlainText(self.command_input.toPlainText())
             self.planner_window.finished.connect(self._planner_closed)

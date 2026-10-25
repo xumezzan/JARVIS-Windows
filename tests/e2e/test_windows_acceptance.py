@@ -28,7 +28,10 @@ def test_notepad_open_focus_literal_text_and_readback(qtbot: QtBot, tmp_path: Pa
         window.simulation.setChecked(False)
         run_tool(qtbot, window, "windows.get_open_windows")
         assert window.status_label.text().startswith("SUCCESS")
-        if window.target_choice.count():
+        if any(
+            window.target_choice.itemData(index).app == "notepad"
+            for index in range(window.target_choice.count())
+        ):
             pytest.skip("Save and close existing Notepad windows manually before this test.")
         run_tool(qtbot, window, "windows.open_app")
         assert window.status_label.text().startswith("SUCCESS")
@@ -40,18 +43,26 @@ def test_notepad_open_focus_literal_text_and_readback(qtbot: QtBot, tmp_path: Pa
         assert window.status_label.text().startswith("SUCCESS")
         window.tool_choice.setCurrentIndex(window.tool_choice.findData("windows.type_text"))
         window.body.setPlainText("Jarvis test successful")
-        QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
-        dialog = window.approval_dialog
-        assert dialog is not None and dialog.token is None and window.worker is None
         with qtbot.waitSignal(window.task_finished, timeout=35000):
-            QTest.mouseClick(dialog.approve_button, Qt.MouseButton.LeftButton)
+            QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
+            assert window.approval_dialog is None
         assert "SUCCESS" in window.status_label.text()
         assert "прочитан обратно" in window.status_label.text()
-        # Refresh observes nonempty; a second preparation must not overwrite it.
+        # Re-observe nonempty content; the exact fresh editor can also be filled without approval.
         run_tool(qtbot, window, "windows.get_open_windows")
+        notepad_index = next(
+            index
+            for index in range(window.target_choice.count())
+            if window.target_choice.itemData(index).handle == target.handle
+        )
+        window.target_choice.setCurrentIndex(notepad_index)
         assert not window.target_choice.currentData().empty
-        run_tool(qtbot, window, "windows.type_text")
-        assert window.status_label.text().startswith("INVALID")
+        window.tool_choice.setCurrentIndex(window.tool_choice.findData("windows.type_text"))
+        window.body.setPlainText("Jarvis second verified input")
+        with qtbot.waitSignal(window.task_finished, timeout=35000):
+            QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
+            assert window.approval_dialog is None
+        assert "SUCCESS" in window.status_label.text()
     finally:
         window.shutdown()
         window.close()

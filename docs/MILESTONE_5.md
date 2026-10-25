@@ -10,7 +10,7 @@ round-trip и native Windows-приёмка ещё не проверены.** В
   CONFIRM шага, Stop/закрытие, фактические результаты. Существующий dashboard и демо сохранены.
 - Заменяемый `Provider`, strict `Proposal` и последовательный `Runner`. Каждый инструмент,
   включая чтение, проходит `PermissionEngine`. У модели нет API выполнения/выдачи approval.
-- До 8 действий, 3 уточнений, 30 секунд на провайдера, 180 секунд на всю задачу. Ошибка
+- До 30 действий, 3 уточнений, 30 секунд на провайдера, 300 секунд на всю задачу. Ошибка
   останавливает цепочку без повтора выданных эффектов; возможные эффекты отражаются в итоге.
 - Наблюдённые Windows/browser targets обязательны. Точный target/element копируется из
   SUCCESS результата текущей задачи, а adapter повторно проверяет актуальность перед действием.
@@ -21,6 +21,10 @@ round-trip и native Windows-приёмка ещё не проверены.** В
 - OpenAI Responses adapter через aiohttp: fixed HTTPS endpoint, strict function schemas,
   один call за шаг, отдельный structured control output, `store=false`, bounded request/response,
   без hosted tools, cookies, env proxies, redirects, сохранённых conversations и retries.
+- Дополнение 2026-10-24: текущий JPEG из последнего успешного `windows.screenshot`
+  передаётся как `input_image`; изображения исключены из JSON-истории.
+  `memory.scratchpad_write` сохраняет промежуточный текст в RAM текущего Runner.
+  Контракты, ограничения и актуальная проверка: [PLANNER_MULTIMODAL.md](PLANNER_MULTIMODAL.md).
 - OS key store через явный platform backend и killable helper с приватным pipe. CLI setup
   использует скрытый терминальный ввод. Ключ не читается из OPENAI_API_KEY/файлов и не входит
   в command/observations, audit или shell log. Ключ в этом этапе не запрашивался и не читался.

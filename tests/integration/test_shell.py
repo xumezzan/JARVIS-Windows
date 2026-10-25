@@ -29,7 +29,9 @@ def window(qtbot: QtBot, tmp_path: Path) -> Iterator[MainWindow]:
 
 
 def start(qtbot: QtBot, window: MainWindow, text: str = "Проверь интерфейс") -> None:
-    window.command_input.setPlainText(text)
+    window._navigate("tools")
+    window.demo_toggle.setChecked(True)
+    window.demo_input.setPlainText(text)
     QTest.mouseClick(window.submit_button, Qt.MouseButton.LeftButton)
 
 
@@ -42,21 +44,58 @@ def test_startup_and_unavailable_capabilities(window: MainWindow) -> None:
     assert not window.stop_button.isEnabled()
 
 
-def test_small_window_scrolls_instead_of_clipping(qtbot: QtBot, window: MainWindow) -> None:
-    window.resize(860, 640)
-    qtbot.waitUntil(lambda: window.scroll_area.verticalScrollBar().maximum() > 0)
-    content = window.scroll_area.widget()
-    assert content is not None
-    assert content.height() >= 800
-    qtbot.waitUntil(lambda: window.scroll_area.horizontalScrollBar().maximum() == 0)
-    assert window.dashboard_grid.getItemPosition(
-        window.dashboard_grid.indexOf(window.center_column)
-    ) == (0, 0, 1, 2)
-    window.resize(1480, 940)
-    qtbot.waitUntil(lambda: not window._compact_layout)
-    assert window.dashboard_grid.getItemPosition(
-        window.dashboard_grid.indexOf(window.center_column)
-    ) == (0, 1, 1, 1)
+def test_pages_fit_small_and_large_windows(qtbot: QtBot, window: MainWindow) -> None:
+    for width, height in ((860, 640), (1480, 940)):
+        window.resize(width, height)
+        for target in window.pages:
+            window._navigate(target)
+            qtbot.waitUntil(lambda: window.scroll_area.horizontalScrollBar().maximum() == 0)
+            assert window.pages[target].isVisible()
+            assert window.nav_buttons[target].accessibleName()
+        assert window._compact_layout == (width < 1000)
+    window._navigate("assistant")
+    assert window.command_input.isVisible()
+    assert window.planner_button.isVisible()
+
+
+def test_navigation_opens_pages_without_starting_services(window: MainWindow) -> None:
+    window.command_input.setPlainText("Черновик моей команды")
+    for target in window.pages:
+        QTest.mouseClick(window.nav_buttons[target], Qt.MouseButton.LeftButton)
+        assert window.page_stack.currentWidget() is window.page_scrolls[target]
+        assert window.nav_buttons[target].isChecked()
+        assert window.permission_workbench is None
+        assert window.planner_window is None
+        assert window.worker is None
+        assert sum(page.isVisible() for page in window.pages.values()) == 1
+    window.nav_buttons["assistant"].setChecked(True)
+    assert window.page_stack.currentWidget() is window.page_scrolls["assistant"]
+    assert window.command_input.toPlainText() == "Черновик моей команды"
+
+
+def test_demo_completion_preserves_settings_page(qtbot: QtBot, window: MainWindow) -> None:
+    window.command_input.setPlainText("Отдельная настоящая команда")
+    with qtbot.waitSignal(window.task_finished, timeout=3000):
+        start(qtbot, window, "Только демонстрация")
+        worker = window.worker
+        window._navigate("settings")
+        assert window.worker is worker
+        assert window.stop_button.isVisible()
+    assert window.page_stack.currentWidget() is window.page_scrolls["settings"]
+    assert window.theme_picker.isVisible()
+    assert window.command_input.toPlainText() == "Отдельная настоящая команда"
+    assert window.transcript.toPlainText() == "Только демонстрация"
+
+
+def test_primary_action_reviews_command_without_execution(window: MainWindow) -> None:
+    window.command_input.setPlainText("проверь систему дважды")
+    window._submit_current_page()
+    planner = window.planner_window
+    assert planner is not None
+    assert planner.command.toPlainText() == "проверь систему дважды"
+    assert planner.worker is None
+    assert planner.voice.worker is None
+    assert planner.simulation.isChecked()
 
 
 def test_text_success_and_ui_responsiveness(qtbot: QtBot, window: MainWindow) -> None:
@@ -193,12 +232,16 @@ def test_theme_and_motion_controls_preserve_task(window: MainWindow, qtbot: QtBo
     assert window.planner_window.styleSheet() == window.styleSheet()
     window.planner_window.close()
     assert window.command_input.toPlainText() == "Сохранить мою команду"
+    window._navigate("settings")
     QTest.mouseClick(window.motion_button, Qt.MouseButton.LeftButton)
+    window._navigate("assistant")
     assert not window.orb._timer.isActive()
     phase = window.orb._phase
     qtbot.wait(100)
     assert window.orb._phase == phase
+    window._navigate("settings")
     QTest.mouseClick(window.motion_button, Qt.MouseButton.LeftButton)
+    window._navigate("assistant")
     assert window.orb._timer.isActive()
     window.hide()
     assert not window.orb._timer.isActive()

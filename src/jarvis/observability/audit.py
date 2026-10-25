@@ -44,6 +44,16 @@ class ErrorCode(StrEnum):
     BROWSER_TIMEOUT = "browser_timeout"
     BROWSER_FAILURE = "browser_failure"
     BROWSER_CLEANUP = "browser_cleanup"
+    FILE_DENIED = "file_denied"
+    FILE_MISSING = "file_missing"
+    FILE_CHANGED = "file_changed"
+    FILE_EXISTS = "file_exists"
+    FILE_LIMIT = "file_limit"
+    FILE_UNSUPPORTED = "file_unsupported"
+    FILE_FAILURE = "file_failure"
+    COMPUTATION_REJECTED = "computation_rejected"
+    COMPUTATION_LIMIT = "computation_limit"
+    WORKER_TIMEOUT = "worker_timeout"
 
 
 @dataclass(frozen=True)

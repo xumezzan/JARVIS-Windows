@@ -1,14 +1,18 @@
 """Immutable messages across provider, runner and UI boundaries."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Literal, Protocol
 
 from pydantic import Field, model_validator
 
+from jarvis.memory.conversation import TaskMemoryContext
 from jarvis.memory.models import MemoryContext
 from jarvis.permissions.engine import Outcome
 from jarvis.permissions.policies import Mode
 from jarvis.tools.base import ToolModel
+from jarvis.tools.scratchpad import ScratchpadWrite
 
 
 class Proposal(ToolModel):
@@ -17,8 +21,12 @@ class Proposal(ToolModel):
     arguments: str = Field(default="{}", max_length=65536, repr=False)
     question: str = Field(default="", max_length=1000, repr=False)
 
+    spoken_summary: str = Field(default="", max_length=300, repr=False)
+
     @model_validator(mode="after")
     def distinct_modes(self) -> "Proposal":
+        if self.kind != "finish" and self.spoken_summary:
+            raise ValueError("Speech is only available on finish.")
         if self.kind == "call":
             if not self.tool or self.question:
                 raise ValueError("Invalid call proposal.")
@@ -43,6 +51,12 @@ class PlannerInput:
     mode: Mode
     catalog_json: str = field(repr=False)
     memory: MemoryContext = field(default_factory=MemoryContext, repr=False)
+    screenshot_b64: str | None = field(default=None, repr=False)
+    scratchpad: Mapping[str, str] = field(default_factory=dict, repr=False)
+    task_memory: TaskMemoryContext = field(default_factory=TaskMemoryContext, repr=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "scratchpad", MappingProxyType(dict(self.scratchpad)))
 
 
 class ProviderError(Exception):
@@ -68,14 +82,14 @@ class Provider(Protocol):
 
 @dataclass(frozen=True)
 class Limits:
-    max_steps: int = 8
+    max_steps: int = 30
     max_questions: int = 3
     provider_seconds: float = 30
-    total_seconds: float = 180
+    total_seconds: float = 300
 
     def __post_init__(self) -> None:
         if not (
-            1 <= self.max_steps <= 16
+            1 <= self.max_steps <= 30
             and 0 <= self.max_questions <= 3
             and 0 < self.provider_seconds <= 60
             and 0 < self.total_seconds <= 300
@@ -91,6 +105,12 @@ class PlanResult:
     status: PlanStatus
     steps: tuple[Step, ...] = field(default=(), repr=False)
     error: str = ""
+    spoken_summary: str = field(default="", repr=False)
+    scratchpad: tuple[ScratchpadWrite, ...] = field(default=(), repr=False)
+
+    def __post_init__(self) -> None:
+        if len(self.spoken_summary) > 300:
+            raise ValueError("Speech summary limit.")
 
     @property
     def summary(self) -> str:
