@@ -122,7 +122,7 @@ def test_reject_nonlabel_content(value: str) -> None:
         {"approval": True},
         {"expires": NOW},
         {"expires": NOW + PROFILE_TTL + 1},
-        {"kind": "application", "value": "powershell"},
+        {"kind": "application", "value": "C:\\Windows\\system32\\cmd.exe"},
         {"updated": str(NOW)},
     ],
 )

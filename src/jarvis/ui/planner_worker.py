@@ -20,6 +20,7 @@ from jarvis.permissions.approvals import Action, ApprovalToken
 from jarvis.permissions.engine import PermissionEngine
 from jarvis.permissions.policies import Mode
 from jarvis.tools.registry import ToolRegistry
+from jarvis.workspace.models import WorkspaceProfile
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ class PlannerWorker(QThread):
         learner: Learner | None = None,
         journal: Journal | None = None,
         resumed: tuple[Step, ...] = (),
+        workspace: WorkspaceProfile | None = None,
     ) -> None:
         super().__init__()
         self.command = command
@@ -60,6 +62,7 @@ class PlannerWorker(QThread):
             self._clarify,
             limits=limits,
             memory=memory,
+            workspace=workspace,
             knowledge=knowledge,
             derived=derived,
             journal=journal,

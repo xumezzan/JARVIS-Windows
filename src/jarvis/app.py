@@ -9,6 +9,7 @@ from importlib.metadata import version
 from pathlib import Path
 
 from jarvis.config import load_config
+from jarvis.workspace.store import WorkspaceFailure
 
 
 def _printable() -> None:
@@ -55,7 +56,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         config = load_config()
     except ValueError as error:
-        print(f"Jarvis configuration error: {error}", file=sys.stderr)
+        if isinstance(error, WorkspaceFailure) and error.code == "storage":
+            # Workspace is read before the log opens. Preserve the existing finite startup
+            # diagnostic when the data directory is inaccessible or is a regular file.
+            print(
+                "Jarvis cannot create its local log or read its workspace profile. "
+                "Check JARVIS_DATA_DIR permissions.",
+                file=sys.stderr,
+            )
+        else:
+            print(f"Jarvis configuration error: {error}", file=sys.stderr)
         return 2
 
     if args.compact:

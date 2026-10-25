@@ -426,7 +426,10 @@ class DesktopService:
         provider = self.override_provider
         if self.settings.provider == "openai":
             if not cloud_consent:
-                self.notice = "Проверьте текст и разрешите передачу команды и наблюдений в OpenAI."
+                self.notice = (
+                    "Проверьте текст и разрешите передачу команды, наблюдений "
+                    "и профиля рабочего пространства в OpenAI."
+                )
                 self.publish()
                 return False
             provider = provider or OpenAIProvider(self.settings.model)
@@ -454,6 +457,7 @@ class DesktopService:
             self._clarify,
             limits=self.limits,
             memory=memory,
+            workspace=self.config.workspace_profile,
             notify=self._event,
         )
         include_history = self.settings.task_memory_enabled and (

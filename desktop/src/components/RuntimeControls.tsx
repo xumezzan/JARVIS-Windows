@@ -198,7 +198,8 @@ export function VoiceSettingsPanel({
           <p>
             Ключ хранится в системном хранилище. Для ввода: python -m
             jarvis.security.credentials set. Команда, наблюдения, скриншоты и
-            scratchpad отправляются в OpenAI после согласия на одну задачу. API
+            scratchpad, профиль пользователя, приложения и playbooks отправляются
+            в OpenAI после согласия на одну задачу. API
             оплачивается отдельно; store=false не исключает хранение у
             провайдера.
           </p>

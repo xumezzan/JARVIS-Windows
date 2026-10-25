@@ -4,7 +4,7 @@ import json
 import os
 import sys
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from jarvis.core.planner.identifiers import valid_model
@@ -17,6 +17,8 @@ from jarvis.security.browser_policy import (
 )
 from jarvis.security.filesystem_policy import FilePolicy as DocumentFilePolicy
 from jarvis.tools.base import ToolError
+from jarvis.workspace.models import WorkspaceProfile
+from jarvis.workspace.store import WorkspaceStore
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,7 @@ class AppConfig:
     browser_mode: BrowserMode = BrowserMode.STRICT
     browser_cdp_endpoint: str = ""
     filesystem_roots: tuple[Path, ...] = ()
+    workspace_profile: WorkspaceProfile = field(default_factory=WorkspaceProfile, repr=False)
 
     @property
     def filesystem_policy(self) -> DocumentFilePolicy:
@@ -42,9 +45,14 @@ class AppConfig:
 
     @property
     def browser_policy(self) -> NetworkPolicy:
-        return NetworkPolicy(self.browser_origins, mode=self.browser_mode)
+        return NetworkPolicy.from_workspace(
+            self.workspace_profile, additional_origins=self.browser_origins, mode=self.browser_mode
+        )
 
     def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "workspace_profile", WorkspaceProfile.model_validate(self.workspace_profile)
+        )
         if len(self.filesystem_roots) > 8 or any(
             not path.is_absolute()
             or path == Path(path.anchor)
@@ -87,6 +95,7 @@ def load_config(environ: Mapping[str, str] | None = None) -> AppConfig:
     else:
         base = Path(env.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
     directory = Path(env.get("JARVIS_DATA_DIR", str(base / "Jarvis"))).expanduser()
+    workspace = WorkspaceStore(directory).load()
 
     def integer(key: str, default: int) -> int:
         try:
@@ -95,7 +104,10 @@ def load_config(environ: Mapping[str, str] | None = None) -> AppConfig:
             raise ValueError(f"{key} must be an integer.") from None
 
     try:
-        browser_mode = BrowserMode(env.get("JARVIS_BROWSER_MODE", "strict"))
+        default_browser_mode = (
+            "live" if workspace.browser_mode == "authenticated_workspace" else "strict"
+        )
+        browser_mode = BrowserMode(env.get("JARVIS_BROWSER_MODE", default_browser_mode))
     except ValueError:
         raise ValueError("Invalid browser mode.") from None
 
@@ -110,6 +122,7 @@ def load_config(environ: Mapping[str, str] | None = None) -> AppConfig:
         raise ValueError("Invalid filesystem project roots.") from None
     return AppConfig(
         data_dir=directory,
+        workspace_profile=workspace,
         demo_duration_ms=integer("JARVIS_DEMO_DURATION_MS", 2400),
         task_timeout_ms=integer("JARVIS_TASK_TIMEOUT_MS", 10000),
         activity_limit=integer("JARVIS_ACTIVITY_LIMIT", 200),

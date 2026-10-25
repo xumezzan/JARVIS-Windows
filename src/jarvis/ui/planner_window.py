@@ -185,7 +185,8 @@ class PlannerWindow(QDialog):
             )
         )
         self.cloud_consent = QCheckBox(
-            "Разрешаю отправить команду, уточнения и результаты инструментов в DeepSeek, "
+            "Разрешаю отправить команду, уточнения, результаты инструментов и профиль "
+            "рабочего пространства в DeepSeek, "
             "а для сложных задач — в OpenAI"
         )
         cloud.addWidget(self.cloud_consent)
@@ -418,6 +419,7 @@ class PlannerWindow(QDialog):
             self.bench.learner,
             journal,
             steps,
+            workspace=self.config.workspace_profile,
         )
         self.worker.progress_event.connect(self._event)
         self.worker.prompt.connect(self._prompt)

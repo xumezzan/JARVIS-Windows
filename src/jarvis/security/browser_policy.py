@@ -5,10 +5,13 @@ import ipaddress
 import socket
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 from jarvis.tools.base import ToolError
+
+if TYPE_CHECKING:
+    from jarvis.workspace.models import WorkspaceProfile
 
 DEFAULT_ORIGINS = (
     "https://example.com",
@@ -133,6 +136,28 @@ class NetworkPolicy:
     blocked_domains: tuple[str, ...] = PASSWORD_MANAGERS
     read_only_domains: tuple[str, ...] = field(default=DEFAULT_READ_ONLY)
     mode: BrowserMode = BrowserMode.STRICT
+
+    @classmethod
+    def from_workspace(
+        cls,
+        profile: "WorkspaceProfile",
+        *,
+        additional_origins: tuple[str, ...] = (),
+        mode: BrowserMode | None = None,
+    ) -> "NetworkPolicy":
+        """Trusted startup only. App metadata never lowers site tiers or tool risks."""
+        origins = dict.fromkeys(
+            (
+                *additional_origins,
+                *(item for app in profile.apps if app.enabled for item in app.allowed_origins),
+            )
+        )
+        selected = (
+            BrowserMode.LIVE
+            if profile.browser_mode == "authenticated_workspace"
+            else BrowserMode.STRICT
+        )
+        return cls(allowed_origins=tuple(origins), mode=mode if mode is not None else selected)
 
     def __post_init__(self) -> None:
         if not isinstance(self.mode, BrowserMode):
