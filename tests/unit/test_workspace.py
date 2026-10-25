@@ -75,6 +75,7 @@ def test_empty_profile_and_atomic_round_trip(tmp_path: Path) -> None:
         (b"x" * (MAX_PROFILE_BYTES + 1), "limit"),
         (b'{"apps":[{"enabled":"true"}]}', "invalid"),
     ],
+    ids=["invalid-json", "unknown-field", "oversized", "wrong-type"],
 )
 def test_invalid_or_oversized_storage_is_not_overwritten(
     tmp_path: Path, raw: bytes, code: str
