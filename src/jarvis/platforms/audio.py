@@ -175,7 +175,7 @@ def capture(
             if ready is not None:
                 ready()
             else:
-                print('{"ready":true}', flush=True)
+                emit('{"ready":true}')
             if listen and not speech.wait(WAIT_BLOCKS / 10) and not stop.is_set():
                 stop.set()
                 raise VoiceError("silence")
@@ -483,28 +483,28 @@ def recognition_host() -> int:
     model = None
     recording: tuple[str, Event, Event, Thread] | None = None
 
-    def emit(result: dict[str, object]) -> None:
-        print(json.dumps(result, ensure_ascii=True), flush=True)
+    def reply(result: dict[str, object]) -> None:
+        emit(json.dumps(result, ensure_ascii=True))
 
     def record(
         capture_id: str, released: Event, finished: Event, enabled: bool, wake: bool
     ) -> None:
         try:
             result = (
-                wait_for_wake(model, released, lambda: emit({"ready": True}))
+                wait_for_wake(model, released, lambda: reply({"ready": True}))
                 if wake
                 else capture(
                     model=model,
                     released=released,
                     auto_stop_on_silence=enabled,
-                    ready=lambda: emit({"ready": True}),
+                    ready=lambda: reply({"ready": True}),
                 )
             )
         except Exception as exc:
             result = {"error": exc.code if isinstance(exc, VoiceError) else "voice_failed"}
         # Mark the slot finished before emitting the response which permits the next call.
         finished.set()
-        emit(result)
+        reply(result)
 
     try:
         for index in range(10000):
@@ -551,7 +551,7 @@ def recognition_host() -> int:
                     raise VoiceError("voice_failed")
             except Exception as exc:
                 result = {"error": exc.code if isinstance(exc, VoiceError) else "voice_failed"}
-            emit(result)
+            reply(result)
         return 0
     finally:
         if recording is not None:
@@ -586,10 +586,10 @@ def main() -> int:
             result = speak(request)
         else:
             raise VoiceError("voice_failed")
-        print(json.dumps(result, ensure_ascii=True), flush=True)
+        emit(json.dumps(result, ensure_ascii=True))
         return 0
     except Exception as exc:
-        print(json.dumps({"error": exc.code if isinstance(exc, VoiceError) else "voice_failed"}))
+        emit(json.dumps({"error": exc.code if isinstance(exc, VoiceError) else "voice_failed"}))
         return 1
 
 

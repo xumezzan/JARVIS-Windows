@@ -94,15 +94,23 @@ class AudioHost:
         try:
             if released is not None:
                 release_task = asyncio.create_task(release())
-            raw = await process.stdout.readuntil(b"\n")
-            if request.get("operation") in {"record", "wake"} and raw == b'{"ready": true}\n':
-                if ready is not None:
-                    ready()
-                raw = await process.stdout.readuntil(b"\n")
             limit = MAX_AUDIO_BYTES * 2 + 16384 if request.get("operation") == "record" else 32768
+            raw = await process.stdout.readuntil(b"\n")
             if len(raw) > limit:
                 raise VoiceError("recognition")
             data = json.loads(raw)
+            if (
+                request.get("operation") in {"record", "wake"}
+                and isinstance(data, dict)
+                and set(data) == {"ready"}
+                and data["ready"] is True
+            ):
+                if ready is not None:
+                    ready()
+                raw = await process.stdout.readuntil(b"\n")
+                if len(raw) > limit:
+                    raise VoiceError("recognition")
+                data = json.loads(raw)
         finally:
             if release_task is not None:
                 release_task.cancel()

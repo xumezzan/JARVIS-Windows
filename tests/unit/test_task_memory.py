@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 from threading import Event
@@ -113,7 +114,7 @@ def test_corrupt_database_and_cancellation_fail_finitely(tmp_path: Path) -> None
     cancelled.set()
     with pytest.raises(MemoryFailure, match="cancelled"):
         store.forget(cancelled=cancelled)
-    with sqlite3.connect(store.path) as db:
+    with closing(sqlite3.connect(store.path)) as db, db:
         db.execute("UPDATE recent_tasks SET payload='{}'")
     with pytest.raises(MemoryFailure, match="invalid"):
         store.load()

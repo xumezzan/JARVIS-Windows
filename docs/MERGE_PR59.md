@@ -61,6 +61,29 @@
 (PowerShell отсутствует на этом Mac). Эти portable updater cases исполняются Windows CI.
 Результат GitHub Windows CI проверяется для опубликованного head PR отдельно.
 
+## Ошибки, найденные первым Windows CI
+
+[Прогон для 17f40c3](https://github.com/xumezzan/JARVIS-Windows/actions/runs/40174550389)
+на Windows Server 2025 / Python 3.13.16 завершился с 8 failed, 1690 passed,
+7 skipped и одной teardown error. Проверки не отключались и warnings не подавлялись.
+
+- AudioHost сравнивал ready-строку побайтово, а recognition host писал через `print`.
+  Windows CRLF превращал ready в ошибочный финальный ответ. Все helper-ответы теперь
+  используют бинарный `platforms.protocol.emit`, а AudioHost проверяет ограниченный
+  JSON-объект ready с любым допустимым пробелом и LF/CRLF. Добавлены четыре регрессии.
+- Поиск принимал `DirEntry.stat().st_nlink` за действительный счётчик ссылок.
+  [Документация Python](https://docs.python.org/3.13/library/os.html#os.DirEntry.stat)
+  указывает, что на Windows это поле кеша равно нулю. При нуле поиск открывает файл
+  с запретом reparse traversal и проверяет метаданные handle через `regular(fd)`.
+  Требование единственной ссылки сохранено; новая регрессия проверяет одновременно
+  видимость обычного файла и отказ для hard link при таком кеше.
+- Test task memory использовал connection context manager SQLite, который завершает
+  транзакцию, но не закрывает соединение. Добавлен `closing`; Python 3.13 ResourceWarning
+  исправляется закрытием ресурса, а не фильтром предупреждений.
+
+После исправлений 169 целевых тестов на macOS прошли за 7.02 s; Ruff, форматирование,
+mypy и `git diff --check` также успешны. Полный Windows CI запускается повторно.
+
 `scripts/probe_multimodal_budget.py` измеряет реальное UTF-8 представление transport.
 Компактная Qt- и Electron-поверхности сохраняют прежний предел регрессии 180 000 байт
 для максимального SoM и изображения 48 KiB. Полный Qt-каталог с connectors проверяется

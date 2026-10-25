@@ -95,6 +95,40 @@ def test_search_name_extension_glob_and_hidden_pruning(policy: FilePolicy) -> No
         assert not result.truncated
 
 
+def test_search_checks_real_link_count_when_directory_cache_reports_zero(
+    policy: FilePolicy, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from collections.abc import Iterator
+    from contextlib import contextmanager
+
+    root = policy.path("Desktop")
+    (root / "safe.txt").write_text("fixture")
+    outside = tmp_path / "outside.txt"
+    outside.write_text("private fixture")
+    os.link(outside, root / "linked.txt")
+    real_scandir = os.scandir
+
+    class CachedEntry:
+        def __init__(self, entry: os.DirEntry[str]) -> None:
+            self.entry = entry
+            self.name = entry.name
+
+        def stat(self, *, follow_symlinks: bool = False) -> os.stat_result:
+            values = list(self.entry.stat(follow_symlinks=follow_symlinks))
+            values[3] = 0  # Windows DirEntry.stat() omits st_nlink.
+            return os.stat_result(values)
+
+    @contextmanager
+    def cached_scandir(path: int | Path) -> Iterator[Iterator[CachedEntry]]:
+        with real_scandir(path) as entries:
+            yield (CachedEntry(entry) for entry in entries)
+
+    monkeypatch.setattr(os, "scandir", cached_scandir)
+    result = search(policy, Search(query=".txt", directory="Desktop"))
+    assert [Path(item.path).name for item in result.files] == ["safe.txt"]
+    assert not result.truncated
+
+
 def test_symlinks_and_hardlinks_do_not_escape_roots(policy: FilePolicy, tmp_path: Path) -> None:
     outside = tmp_path / "outside.txt"
     outside.write_text("private fixture")

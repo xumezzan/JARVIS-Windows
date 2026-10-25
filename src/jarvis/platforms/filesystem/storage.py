@@ -278,7 +278,18 @@ def search(policy: FilePolicy, args: Search) -> SearchResult:
                             if any(char in query for char in "*?[")
                             else query in name
                         )
-                        if stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and matched:
+                        if stat.S_ISREG(info.st_mode) and matched:
+                            # Windows DirEntry.stat caches zero for link count and identity.
+                            # Reopen without following reparses and validate the real handle;
+                            # never relax the one-link requirement to accept that zero.
+                            if info.st_nlink == 0:
+                                fd = parent.open(entry.name)
+                                try:
+                                    info = regular(fd)
+                                finally:
+                                    os.close(fd)
+                            if info.st_nlink != 1:
+                                continue
                             item = FileEntry(
                                 path=str(candidate),
                                 size=info.st_size,

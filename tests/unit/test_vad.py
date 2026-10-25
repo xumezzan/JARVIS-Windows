@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from threading import Event, Thread
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -18,6 +18,30 @@ from jarvis.voice.vad import FRAME_BYTES, EnergyEndpoint, rms_energy
 
 LOUD = struct.pack("<h", 1500) * 1600
 QUIET = bytes(FRAME_BYTES)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ending", [b"\n", b"\r\n"])
+@pytest.mark.parametrize("handshake", [b'{"ready":true}', b'{"ready": true}'])
+async def test_audio_host_ready_is_a_json_message_across_platform_line_endings(
+    tmp_path: Path, ending: bytes, handshake: bytes
+) -> None:
+    reader = asyncio.StreamReader()
+    reader.feed_data(handshake + ending + b'{"pcm":"AAAA"}' + ending)
+    reader.feed_eof()
+
+    class Writer:
+        def write(self, value: bytes) -> None:
+            assert value.endswith(b"\n")
+
+        async def drain(self) -> None:
+            return None
+
+    host = AudioHost(tmp_path)
+    host._process = cast(asyncio.subprocess.Process, SimpleNamespace(stdin=Writer(), stdout=reader))
+    ready: list[bool] = []
+    result = await host._message({"operation": "record"}, ready=lambda: ready.append(True))
+    assert ready == [True] and result == {"pcm": "AAAA"}
 
 
 def test_rms_signed_pcm_and_no_endpoint_before_sustained_speech() -> None:
