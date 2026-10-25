@@ -1,0 +1,77 @@
+[
+  {
+    "check": "clean session is real backend state; no seeded data or test tools",
+    "pass": true
+  },
+  {
+    "check": "isolated renderer, fixed window and no exposed approval API",
+    "size": [
+      1536,
+      1024
+    ],
+    "contextIsolation": true,
+    "nodeIntegration": false,
+    "sandbox": true
+  },
+  {
+    "check": "actual Electron→private pipe→Python Runner→PermissionEngine→OS tool→verified result",
+    "system": "Darwin",
+    "cpu_count": 8,
+    "status": "SUCCESS"
+  },
+  {
+    "check": "simulation is engine policy, not an invented outcome",
+    "pass": true
+  },
+  {
+    "check": "clarification appears in React; Electron Stop cancels headless runner",
+    "pass": true
+  },
+  {
+    "check": "synthetic clicks do not record; gesture channels stay inside isolated preload",
+    "pass": true
+  },
+  {
+    "check": "voice settings change headless state without starting microphone",
+    "pass": true
+  },
+  {
+    "check": "compact actual Electron renderer has no horizontal overflow; session note is contained",
+    "width": 1280,
+    "scroll": 1280
+  },
+  {
+    "check": "mobile actual Electron renderer has no horizontal overflow; session note is contained",
+    "width": 390,
+    "scroll": 390
+  },
+  {
+    "check": "4000-character command start and end reachable",
+    "width": 1536,
+    "firstVisible": true,
+    "lastVisible": true,
+    "length": 4000
+  },
+  {
+    "check": "4000-character command start and end reachable",
+    "width": 1280,
+    "firstVisible": true,
+    "lastVisible": true,
+    "length": 4000
+  },
+  {
+    "check": "4000-character command start and end reachable",
+    "width": 390,
+    "firstVisible": true,
+    "lastVisible": true,
+    "length": 4000
+  },
+  {
+    "check": "renderer errors",
+    "errors": []
+  },
+  {
+    "check": "native custom window controls and owned runtime shutdown",
+    "pass": true
+  }
+]

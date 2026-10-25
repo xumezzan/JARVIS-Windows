@@ -84,7 +84,7 @@ async def mail(tmp_path: Path) -> Any:
     [
         ("outlook.send", Risk.CONFIRM),
         # A draft reaches nobody, so it runs unattended; sending still asks.
-        ("outlook.save_draft", Risk.ROUTINE),
+        ("outlook.save_draft", Risk.SAFE),
         ("outlook.local_draft", Risk.SAFE),
     ],
 )
@@ -260,7 +260,15 @@ async def test_a_listing_says_which_letters_are_still_unread(mail: MailHarness) 
     rows = json.loads(json.loads(result.result_json)["data"])
     assert rows[0]["isRead"] is False
     # Still exactly the fields that were asked for, and nothing Graph added on its own.
-    assert set(rows[0]) == {"id", "subject", "from", "receivedDateTime", "isDraft", "isRead"}
+    assert set(rows[0]) == {
+        "id",
+        "subject",
+        "from",
+        "receivedDateTime",
+        "isDraft",
+        "isRead",
+        "importance",
+    }
 
 
 @pytest.mark.parametrize(

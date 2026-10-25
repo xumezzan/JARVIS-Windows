@@ -70,7 +70,7 @@ async def test_type_runs_unattended_once_and_verifies_readback(audit: AuditLog) 
     engine, store = engine_for(probe, audit)
     args = {"target": target().model_dump(), "text": "Жарвис {ENTER}\nliteral"}
     action = prepared(engine, "type_text", args)
-    assert action.risk is Risk.ROUTINE
+    assert action.risk is Risk.SAFE
     # A level that needs no approval can also never be given one.
     with pytest.raises(ValueError):
         store.take_authority(audit.approved).approve(action)

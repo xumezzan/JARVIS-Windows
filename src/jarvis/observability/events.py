@@ -13,9 +13,23 @@ class ShellEvent(StrEnum):
     CANCELLED = "command_cancelled"
     TIMED_OUT = "command_timed_out"
     CLOSED = "shell_closed"
+    DEMO_SUBMITTED = "demo_submitted"
+    DEMO_EXECUTING = "demo_executing"
+    DEMO_SUCCEEDED = "demo_succeeded"
+    DEMO_FAILED = "demo_failed"
+    DEMO_CANCEL_REQUESTED = "demo_cancel_requested"
+    DEMO_CANCELLED = "demo_cancelled"
+    DEMO_TIMED_OUT = "demo_timed_out"
 
 
 EVENT_TEXT: dict[ShellEvent, str] = {
+    ShellEvent.DEMO_SUBMITTED: "Демонстрация принята. Команда не исполняется.",
+    ShellEvent.DEMO_EXECUTING: "Выполняется демонстрация интерфейса без действий в ОС.",
+    ShellEvent.DEMO_SUCCEEDED: "Демонстрация завершена. Команда не исполнялась.",
+    ShellEvent.DEMO_FAILED: "Ошибка демонстрации. Команда не исполнялась.",
+    ShellEvent.DEMO_CANCEL_REQUESTED: "Запрошена остановка демонстрации.",
+    ShellEvent.DEMO_CANCELLED: "Демонстрация отменена. Действия не выполнялись.",
+    ShellEvent.DEMO_TIMED_OUT: "Истекло время ожидания демонстрации.",
     ShellEvent.STARTED: "Оболочка запущена. Команды выполняются через движок разрешений.",
     ShellEvent.SUBMITTED: "Команда принята. Планирование первого шага…",
     ShellEvent.EXECUTING: "Инструмент выполняется.",

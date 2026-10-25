@@ -36,3 +36,14 @@ def test_browser_origins_are_explicit_nonsecret_settings() -> None:
         with pytest.raises(ValueError) as error:
             load_config({"JARVIS_BROWSER_ORIGINS": value})
         assert "SECRET" not in str(error.value)
+
+
+def test_filesystem_project_roots_are_explicit_local_startup_settings(tmp_path: Path) -> None:
+    import json
+
+    config = load_config({"JARVIS_FS_PROJECT_ROOTS": json.dumps([str(tmp_path)])})
+    assert config.filesystem_roots == (tmp_path,)
+    assert config.filesystem_policy.path("project1/report.csv") == tmp_path / "report.csv"
+    for value in ("null", "{}", "[1]", '["relative"]', '["/"]', '["//server/share"]'):
+        with pytest.raises(ValueError, match="filesystem"):
+            load_config({"JARVIS_FS_PROJECT_ROOTS": value})

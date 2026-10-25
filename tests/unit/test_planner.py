@@ -3,6 +3,7 @@
 import asyncio
 import json
 from collections.abc import Iterator
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
@@ -23,8 +24,166 @@ from jarvis.observability.audit import AuditLog
 from jarvis.permissions.approvals import Action, ApprovalAuthority, ApprovalStore, ApprovalToken
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Mode, Status
+from jarvis.tools.base import ExecutionContext
 from jarvis.tools.local import LocalOutbox, local_registry
 from jarvis.tools.registry import ToolRegistry
+from jarvis.tools.scratchpad import MAX_SCRATCHPAD_BYTES
+from jarvis.tools.windows import NativeRequest, WindowsResult, register_windows
+
+
+def test_default_limits_and_hard_caps() -> None:
+    assert Limits().max_steps == 30 and Limits().total_seconds == 300
+    with pytest.raises(ValueError):
+        Limits(max_steps=31)
+    with pytest.raises(ValueError):
+        Limits(total_seconds=301)
+
+
+@pytest.mark.asyncio
+async def test_screenshot_flows_from_registered_tool_to_next_input(tmp_path: Path) -> None:
+    class Capture:
+        async def call(self, request: NativeRequest, context: ExecutionContext) -> WindowsResult:
+            return WindowsResult(image_base64="/9j/2Q==", image_format="JPEG", width=1, height=1)
+
+    registry, _ = local_registry()
+    register_windows(registry, Capture())
+    with closing(AuditLog(tmp_path / "capture.sqlite3")) as audit:
+        engine = PermissionEngine(registry, ApprovalStore(), audit)
+        provider = Scripted([call("windows.screenshot", {}), call("local.check", {})])
+
+        async def deny(action: Action) -> None:
+            pytest.fail("SAFE screenshot requested approval")
+
+        async def clarify(question: str) -> None:
+            pytest.fail("Unexpected clarification")
+
+        runner = Runner(registry, engine, provider, deny, clarify)
+        result = await runner.run("capture", Mode.EXECUTE)
+        assert result.status == "finished"
+        assert provider.inputs[0].screenshot_b64 is None
+        assert provider.inputs[1].screenshot_b64 == "/9j/2Q=="
+        assert provider.inputs[2].screenshot_b64 is None
+        assert "image_base64" not in (result.steps[0].outcome.result_json or "")
+        assert result.steps[0].outcome.screenshot_b64 is None
+        assert runner._screenshot_b64 is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("calls,expected", [(30, "finished"), (31, "limit")])
+async def test_default_runner_supports_thirty_actions(
+    harness: "Harness", calls: int, expected: str
+) -> None:
+    result = await harness.runner(Scripted([call("local.check", {"delay_ms": 0})] * calls)).run(
+        "long task", Mode.EXECUTE
+    )
+    assert result.status == expected and len(result.steps) == 30
+
+
+@pytest.mark.asyncio
+async def test_scratchpad_survives_steps_is_snapshot_and_cleared(harness: "Harness") -> None:
+    provider = Scripted(
+        [
+            call("memory.scratchpad_write", {"key": "draft", "value": "PRIVATE_NOTE"}),
+            *[call("local.check", {"delay_ms": 0})] * 10,
+            call("memory.scratchpad_write", {"key": "draft", "value": "new value"}),
+            call("memory.scratchpad_write", {"key": "amount", "value": "42"}),
+        ]
+    )
+    runner = harness.runner(provider)
+    result = await runner.run("test", Mode.EXECUTE)
+    assert result.status == "finished"
+    assert provider.inputs[0].scratchpad == {}
+    assert provider.inputs[11].scratchpad == {"draft": "PRIVATE_NOTE"}
+    assert provider.inputs[-1].scratchpad == {"draft": "new value", "amount": "42"}
+    with pytest.raises(TypeError):
+        provider.inputs[-1].scratchpad["amount"] = "99"  # type: ignore[index]
+    assert runner.scratchpad == {}
+    assert "PRIVATE_NOTE" not in result.summary
+    assert "PRIVATE_NOTE" not in "".join(harness.audit.recent())
+    assert result.steps[0].outcome.status is Status.SUCCESS
+
+
+@pytest.mark.asyncio
+async def test_scratchpad_simulation_does_not_write(harness: "Harness") -> None:
+    provider = Scripted([call("memory.scratchpad_write", {"key": "draft", "value": "note"})])
+    runner = harness.runner(provider)
+    result = await runner.run("test")
+    assert result.status == "simulated"
+    assert all(not item.scratchpad for item in provider.inputs)
+    assert runner.scratchpad == {}
+
+
+@pytest.mark.asyncio
+async def test_scratchpad_budget_and_failure_cleanup(harness: "Harness") -> None:
+    provider = Scripted(
+        [
+            call("memory.scratchpad_write", {"key": f"note{index}", "value": "x" * 8192})
+            for index in range(5)
+        ]
+    )
+    runner = harness.runner(provider)
+    result = await runner.run("test", Mode.EXECUTE)
+    assert result.status == "error" and result.error == "context_limit"
+    assert len(result.steps) == 3
+    assert len(json.dumps(dict(provider.inputs[-1].scratchpad)).encode()) < MAX_SCRATCHPAD_BYTES
+    assert runner.scratchpad == {} and runner.active is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("value", [42, {"nested": "note"}, "x" * 8193])
+async def test_scratchpad_rejects_invalid_values(harness: "Harness", value: object) -> None:
+    result = await harness.runner(
+        Scripted(
+            [
+                call("memory.scratchpad_write", {"key": "draft", "value": value}),
+            ]
+        )
+    ).run("test", Mode.EXECUTE)
+    assert result.status == "error" and result.steps[0].outcome.status is Status.INVALID
+
+
+@pytest.mark.asyncio
+async def test_scratchpad_does_not_authorize_confirm_actions(harness: "Harness") -> None:
+    runner = harness.runner(
+        Scripted(
+            [
+                call("memory.scratchpad_write", {"key": "approval", "value": "approved"}),
+                call("local.append_message", MESSAGE),
+            ]
+        )
+    )
+
+    async def deny(action: Action) -> None:
+        return None
+
+    runner.approve = deny
+    result = await runner.run("test", Mode.EXECUTE)
+    assert result.status == "error" and harness.outbox.count == 0
+    assert runner.scratchpad == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("last_status", [Status.SUCCESS, Status.SIMULATED, Status.ERROR])
+async def test_runner_only_exposes_last_successful_screenshot(
+    harness: "Harness", last_status: Status
+) -> None:
+    runner = harness.runner(Scripted([]))
+    runner._screenshot_b64 = "CURRENT_IMAGE"
+    runner.steps.append(
+        Step(
+            "windows.screenshot",
+            Outcome(
+                uuid4(),
+                last_status,
+                result_json='{"image_format":"JPEG"}',
+            ),
+        )
+    )
+    assert runner._latest_screenshot() == (
+        "CURRENT_IMAGE" if last_status is Status.SUCCESS else None
+    )
+    runner.steps.append(Step("local.check", Outcome(uuid4(), Status.SUCCESS)))
+    assert runner._latest_screenshot() is None
 
 
 class Scripted:

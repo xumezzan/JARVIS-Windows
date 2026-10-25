@@ -41,7 +41,7 @@ jobs:
         run: python -m playwright install chromium
 
       - name: Tests
-        run: python -m pytest -q
+        run: python -m pytest -q --durations=20
 
       - name: Lint
         run: python -m ruff check .

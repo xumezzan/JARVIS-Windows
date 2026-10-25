@@ -9,12 +9,15 @@ import asyncio
 import json
 import tempfile
 from pathlib import Path
+from typing import Literal, NoReturn
 
 from keyring.backend import KeyringBackend
 
 from jarvis.core.planner.contracts import Limits
 from jarvis.core.planner.offline import OfflineProvider
 from jarvis.core.planner.runner import Runner
+from jarvis.mail.models import Account, MailResult, Message
+from jarvis.mail.session import MailSession
 from jarvis.memory.models import PROFILE_TTL, Entry
 from jarvis.memory.store import MemoryStore
 from jarvis.observability.audit import AuditKind, AuditLog, ErrorCode
@@ -22,7 +25,10 @@ from jarvis.permissions.approvals import Action, ApprovalStore, ApprovalToken
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Mode, Risk, Status
 from jarvis.tools.base import ExecutionContext, ToolSpec
+from jarvis.tools.browser import BrowserCommand, register_browser
 from jarvis.tools.local import CheckInput, CheckResult, local_registry
+from jarvis.tools.outlook import register_outlook
+from jarvis.tools.registry import ToolRegistry
 
 
 def _require(condition: bool) -> None:
@@ -244,6 +250,216 @@ def check_memory() -> None:
             _require(store.clear() == () and reopened.read() == ())
     except Exception:
         raise RuntimeError("offline_memory_failed") from None
+
+
+class _NoBrowserEffects:
+    called = False
+
+    async def call(self, command: BrowserCommand, context: ExecutionContext) -> NoReturn:
+        self.called = True
+        raise RuntimeError("offline_check_failed")
+
+
+async def _browser_policy(path: Path) -> None:
+    registry = ToolRegistry()
+    backend = _NoBrowserEffects()
+    register_browser(registry, backend)
+    audit = AuditLog(path)
+    engine = PermissionEngine(registry, ApprovalStore(), audit)
+    target = {
+        "tab_id": "0" * 32,
+        "document_id": "1" * 32,
+        "url": "https://example.com/",
+        "origin": "https://example.com",
+        "fingerprint": "2" * 64,
+    }
+    try:
+        valid_inputs: tuple[tuple[str, object], ...] = (
+            ("browser.get_tabs", {}),
+            ("browser.read", {"target": target}),
+            ("browser.open", {"url": "https://example.com/"}),
+        )
+        for name, parameters in valid_inputs:
+            action = _action(engine.prepare(name, parameters, Mode.SIMULATION))
+            _require(action.risk is Risk.SAFE)
+            simulated = await engine.execute(action)
+            _require(
+                simulated.status is Status.SIMULATED
+                and simulated.error is ErrorCode.NONE
+                and not simulated.may_have_effects
+            )
+
+        sending = _action(
+            engine.prepare(
+                "browser.click",
+                {
+                    "target": target,
+                    "element": {
+                        "role": "button",
+                        "name": "Send",
+                        "fingerprint": "3" * 64,
+                        "request": {"url": "https://example.com/submit"},
+                    },
+                },
+                Mode.SIMULATION,
+            )
+        )
+        _require(sending.risk is Risk.CONFIRM)
+        denied = await engine.execute(sending)
+        _require(
+            denied.status is Status.DENIED
+            and denied.error is ErrorCode.APPROVAL
+            and not denied.may_have_effects
+        )
+
+        invalid_inputs: tuple[tuple[str, object], ...] = (
+            ("browser.open", {"url": "http://127.0.0.1/"}),
+            ("browser.open", {"url": "file:///installer-fixture"}),
+            ("browser.read", {"target": target, "selector": "body"}),
+            (
+                "browser.click",
+                {
+                    "target": target,
+                    "element": {
+                        "role": "button",
+                        "name": "Diagnostic submit",
+                        "fingerprint": "3" * 64,
+                        "request": {
+                            "url": "https://example.com/submit",
+                            "method": "POST",
+                            "body": "fixture=value",
+                        },
+                    },
+                },
+            ),
+        )
+        for name, parameters in invalid_inputs:
+            rejected = engine.prepare(name, parameters, Mode.SIMULATION)
+            _require(
+                isinstance(rejected, Outcome)
+                and rejected.status is Status.INVALID
+                and rejected.error is ErrorCode.INVALID_REQUEST
+                and not rejected.may_have_effects
+            )
+        _require(not backend.called)
+    finally:
+        engine.cancel_all()
+        audit.close()
+
+
+def check_browser_policy() -> None:
+    """Exercise pure browser policy and SAFE simulation without a browser or network."""
+    try:
+        with tempfile.TemporaryDirectory(prefix="jarvis-browser-policy-check-") as directory:
+            asyncio.run(_browser_policy(Path(directory) / "audit.sqlite3"))
+    except Exception:
+        raise RuntimeError("offline_browser_policy_failed") from None
+
+
+class _NoMailCredentials:
+    called = False
+
+    async def call(
+        self,
+        operation: Literal["connect", "silent", "consent", "disconnect"],
+        client_id: str,
+        home_id: str = "",
+        surface: str = "",
+    ) -> NoReturn:
+        self.called = True
+        raise RuntimeError("offline_check_failed")
+
+
+class _NoMailTransport:
+    called = False
+
+    async def request(
+        self,
+        token: str,
+        method: str,
+        path: str,
+        payload: dict[str, object] | None = None,
+        params: dict[str, str] | None = None,
+    ) -> NoReturn:
+        self.called = True
+        raise RuntimeError("offline_check_failed")
+
+
+def _empty_mail_session(session: MailSession) -> bool:
+    return session.account is None and session.drafts() == ()
+
+
+async def _outlook_local(path: Path) -> None:
+    credentials = _NoMailCredentials()
+    transport = _NoMailTransport()
+    session = MailSession(credentials=credentials, graph=transport)
+    # Synthetic identity exists only in this disposable session; no connect or token lookup.
+    account = Account(
+        user_id="installer-fixture", address="installer@example.invalid", session="0" * 32
+    )
+    session.account = account
+    message = Message(
+        to=["recipient@example.invalid"], subject="Installer diagnostic", body="Synthetic draft"
+    )
+    registry = ToolRegistry()
+    register_outlook(registry, session)
+    audit = AuditLog(path)
+    engine = PermissionEngine(registry, ApprovalStore(), audit)
+    parameters = {"account": account.model_dump(), "message": message.model_dump()}
+    try:
+        action = _action(engine.prepare("outlook.local_draft", parameters, Mode.EXECUTE))
+        _require(action.risk is Risk.SAFE)
+        outcome = await engine.execute(action)
+        _require(outcome.status is Status.SUCCESS and outcome.error is ErrorCode.NONE)
+        result = MailResult.model_validate_json(outcome.result_json or "null")
+        _require(
+            result.state == "local_draft"
+            and result.account == account
+            and not result.delivery_verified
+            and result.data == message.model_dump_json()
+            and session.drafts() == ((result.message_id, message),)
+            and session.draft_matches(result.message_id, message)
+        )
+        changed_account = _action(
+            engine.prepare(
+                "outlook.local_draft",
+                parameters | {"account": account.model_dump() | {"session": "1" * 32}},
+                Mode.EXECUTE,
+            )
+        )
+        mismatch = await engine.execute(changed_account)
+        _require(
+            mismatch.status is Status.DENIED
+            and mismatch.error is ErrorCode.PRECONDITION
+            and not mismatch.may_have_effects
+            and session.drafts() == ((result.message_id, message),)
+        )
+        remote_draft = _action(engine.prepare("outlook.save_draft", parameters, Mode.SIMULATION))
+        _require(remote_draft.risk is Risk.SAFE)
+        _require((await engine.execute(remote_draft)).status is Status.SIMULATED)
+        remote = _action(engine.prepare("outlook.send", parameters, Mode.EXECUTE))
+        _require(remote.risk is Risk.CONFIRM)
+        denied = await engine.execute(remote)
+        _require(
+            denied.status is Status.DENIED
+            and denied.error is ErrorCode.APPROVAL
+            and not denied.may_have_effects
+        )
+        session.detach()
+        _require(_empty_mail_session(session) and not credentials.called and not transport.called)
+    finally:
+        session.detach()
+        engine.cancel_all()
+        audit.close()
+
+
+def check_outlook_local() -> None:
+    """Exercise a synthetic RAM draft through real mail tools; never connect to Outlook."""
+    try:
+        with tempfile.TemporaryDirectory(prefix="jarvis-outlook-local-check-") as directory:
+            asyncio.run(_outlook_local(Path(directory) / "audit.sqlite3"))
+    except Exception:
+        raise RuntimeError("offline_outlook_local_failed") from None
 
 
 def check_credentials_backend() -> None:

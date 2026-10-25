@@ -1,0 +1,55 @@
+{
+  "errors": [],
+  "viewport": [
+    1536,
+    1024
+  ],
+  "scroll": [
+    1536,
+    1024
+  ],
+  "elements": [
+    {
+      "selector": "sidebar",
+      "box": [
+        0,
+        0,
+        180,
+        1024
+      ],
+      "color": "rgb(241, 244, 252)",
+      "background": "rgba(0, 0, 0, 0)",
+      "radius": "0px",
+      "padding": "24px 10px",
+      "border": "rgb(241, 244, 252)"
+    },
+    {
+      "selector": "titlebar",
+      "box": [
+        180,
+        0,
+        1356,
+        52
+      ],
+      "color": "rgb(241, 244, 252)",
+      "background": "rgba(0, 0, 0, 0)",
+      "radius": "0px",
+      "padding": "0px",
+      "border": "rgb(241, 244, 252)"
+    },
+    {
+      "selector": "dashboard",
+      "box": [
+        180,
+        52,
+        1356,
+        972
+      ],
+      "color": "rgb(241, 244, 252)",
+      "background": "rgba(0, 0, 0, 0)",
+      "radius": "0px",
+      "padding": "20px 20px 24px",
+      "border": "rgb(241, 244, 252)"
+    }
+  ]
+}

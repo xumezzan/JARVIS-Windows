@@ -80,7 +80,8 @@ class PermissionWorkbench(QDialog):
         outer.addWidget(scroll)
         layout = QVBoxLayout(content)
         intro = QLabel(
-            "Windows: открытие приложений, выбор окна и подтверждаемый ввод в пустой Блокнот. "
+            "Windows: открытие приложений, выбор окна "
+            "и подтверждаемая замена текста в наблюдавшемся редакторе. "
             "Браузер: чтение разрешённых страниц и поиск с подтверждением переходов."
             + (
                 " На этой ОС доступна только симуляция Windows-инструментов."
@@ -102,7 +103,7 @@ class PermissionWorkbench(QDialog):
             ("Windows — список окон", "windows.get_open_windows"),
             ("Windows — открыть приложение", "windows.open_app"),
             ("Windows — фокус на окно", "windows.focus_app"),
-            ("Windows — текст в пустой Блокнот (CONFIRM)", "windows.type_text"),
+            ("Windows — текст в выбранный редактор (SAFE)", "windows.type_text"),
         ):
             self.tool_choice.addItem(title, tool)
         for title, operation in (
@@ -152,7 +153,9 @@ class PermissionWorkbench(QDialog):
         self.attachments_label.setWordWrap(True)
         form.addRow("Вложения", self.attachments_label)
         layout.addLayout(form)
-        self.browser_controls = BrowserControls()
+        self.browser_controls = BrowserControls(
+            self.browser_host.policy.mode, attached=bool(self.browser_host.cdp_endpoint)
+        )
         layout.addWidget(self.browser_controls)
         controls = QHBoxLayout()
         self.run_button = QPushButton("Подготовить и запустить")
@@ -403,7 +406,11 @@ class PermissionWorkbench(QDialog):
                 reasons = {
                     "network_denied": "Адрес, редирект или запрос не разрешён политикой.",
                     "page_changed": "Страница изменилась. Обновите вкладки и прочитайте её заново.",
-                    "browser_unavailable": "Установите Chromium для Playwright.",
+                    "browser_unavailable": (
+                        "Chrome CDP недоступен. Проверьте порт отладки и отдельный профиль."
+                        if self.browser_host.cdp_endpoint
+                        else "Установите Chromium для Playwright."
+                    ),
                     "browser_timeout": "Истекло время ожидания браузера.",
                     "browser_cleanup": "Не удалось полностью завершить работу браузера.",
                     "browser_failure": "Действие браузера не подтверждено наблюдением.",

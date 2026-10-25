@@ -79,6 +79,17 @@ def test_accept_without_button_does_not_send(window: PlannerWindow, qtbot: QtBot
     assert not graph.writes
 
 
+def test_save_draft_has_no_approval_dialog(window: PlannerWindow, qtbot: QtBot) -> None:
+    graph = compose(window)
+    panel = window.mail
+    panel.operation.setCurrentIndex(panel.operation.findData("outlook.save_draft"))
+    QTest.mouseClick(panel.run_button, Qt.MouseButton.LeftButton)
+    assert panel.dialog is None
+    qtbot.waitUntil(lambda: not panel.busy)
+    assert len(graph.writes) == 1
+    assert "Черновик сохранён в Outlook и проверен чтением" in panel.output.toPlainText()
+
+
 def test_stop_and_close_invalidate_preview(window: PlannerWindow, qtbot: QtBot) -> None:
     graph = compose(window)
     panel = window.mail

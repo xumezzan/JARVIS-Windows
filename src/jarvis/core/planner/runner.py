@@ -4,8 +4,11 @@ import asyncio
 import json
 import re
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from threading import Event
 from uuid import uuid4
+
+from pydantic import ValidationError
 
 from jarvis.core.context.learning import Learner
 from jarvis.core.planner.contracts import (
@@ -23,12 +26,15 @@ from jarvis.core.workflow.models import Phase, step_key
 from jarvis.core.workflow.store import WorkflowFailure
 from jarvis.knowledge.harvest import Harvester
 from jarvis.knowledge.models import KnowledgeContext
+from jarvis.memory.conversation import TaskMemoryContext
 from jarvis.memory.derived import DerivedContext
 from jarvis.memory.models import MemoryContext
 from jarvis.permissions.approvals import Action, ApprovalToken
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Mode, Risk, Status
 from jarvis.tools.registry import ToolRegistry
+from jarvis.tools.scratchpad import MAX_SCRATCHPAD_BYTES, MAX_SCRATCHPAD_KEYS, ScratchpadWrite
+from jarvis.tools.windows import ClickElement, WindowsResult, WindowTarget
 
 MICROSOFT = ("outlook.", "calendar.")
 
@@ -47,6 +53,7 @@ class Runner:
         *,
         limits: Limits | None = None,
         memory: MemoryContext | None = None,
+        task_memory: TaskMemoryContext | None = None,
         knowledge: KnowledgeContext | None = None,
         derived: DerivedContext | None = None,
         journal: Journal | None = None,
@@ -56,6 +63,9 @@ class Runner:
         notify: Callable[[str, object], None] = lambda kind, value: None,
     ) -> None:
         self.memory = MemoryContext.model_validate(memory or MemoryContext())
+        self.task_memory = TaskMemoryContext.model_validate(task_memory or TaskMemoryContext())
+        self.scratchpad: dict[str, str] = {}
+        self._screenshot_b64: str | None = None
         self.knowledge = KnowledgeContext.model_validate(knowledge or KnowledgeContext())
         self.derived = DerivedContext.model_validate(derived or DerivedContext())
         self.registry = registry
@@ -132,6 +142,9 @@ class Runner:
                 self.engine.cancel(self.active)
                 self.active = None
             self.memory = MemoryContext()
+            self.task_memory = TaskMemoryContext()
+            self.scratchpad.clear()
+            self._screenshot_b64 = None
             self.knowledge = KnowledgeContext()
             self.derived = DerivedContext()
             job.cancel()
@@ -227,8 +240,11 @@ class Runner:
                         mode,
                         catalog,
                         self.memory,
-                        self.knowledge,
-                        self.derived,
+                        knowledge=self.knowledge,
+                        derived=self.derived,
+                        screenshot_b64=self._latest_screenshot(),
+                        scratchpad=self.scratchpad,
+                        task_memory=self.task_memory,
                     )
                 )
             proposal = Proposal.model_validate(raw, strict=True)
@@ -242,6 +258,13 @@ class Runner:
                     if mode is Mode.SIMULATION
                     else "finished",
                     tuple(self.steps),
+                    spoken_summary=proposal.spoken_summary,
+                    scratchpad=tuple(
+                        ScratchpadWrite(key=key, value=value)
+                        for key, value in self.scratchpad.items()
+                    )
+                    if mode is Mode.EXECUTE
+                    else (),
                 )
             if proposal.kind == "clarify":
                 if len(answers) >= self.limits.max_questions:
@@ -286,6 +309,25 @@ class Runner:
                         return PlanResult("error", tuple(self.steps), "invalid_answer")
                     answers.append(Answer(question, answer))
                     continue
+            if proposal.tool == "windows.click_element" and isinstance(args, dict):
+                try:
+                    click = ClickElement.model_validate(args)
+                except ValidationError:
+                    pass  # Let prepare() reject and audit the original invalid arguments.
+                else:
+                    if click.mark_id is not None:
+                        observed = self._click_observation(click.target)
+                        matches = (
+                            [e for e in observed.elements if e.mark_id == click.mark_id]
+                            if observed is not None
+                            else []
+                        )
+                        if len(matches) != 1:
+                            return PlanResult("error", tuple(self.steps), "unobserved_target")
+                        # Resolve before prepare: policy/approval bind the full exact element.
+                        args = click.model_copy(
+                            update={"element": matches[0], "mark_id": None}
+                        ).model_dump(mode="json")
             action = self.engine.prepare(proposal.tool, args, mode)
             if isinstance(action, Outcome):
                 self.steps.append(
@@ -296,6 +338,15 @@ class Runner:
                 )
                 return PlanResult("error", tuple(self.steps), action.error.value)
             self.active = action
+            if action.tool == "memory.scratchpad_write":
+                note = ScratchpadWrite.model_validate_json(action.payload)
+                candidate = self.scratchpad | {note.key: note.value}
+                if (
+                    len(candidate) > MAX_SCRATCHPAD_KEYS
+                    or len(json.dumps(candidate, ensure_ascii=False).encode())
+                    > MAX_SCRATCHPAD_BYTES
+                ):
+                    raise ProviderError("context_limit")
             if not self._observed_target(action):
                 self.engine.cancel(action)
                 self.active = None
@@ -325,8 +376,17 @@ class Runner:
             self.notify("executing", action.tool)
             outcome = await self.engine.execute(action, token)
             self.active = None
+            self._screenshot_b64 = (
+                outcome.screenshot_b64
+                if action.tool == "windows.screenshot" and outcome.status is Status.SUCCESS
+                else None
+            )
+            outcome = replace(outcome, screenshot_b64=None)
             step = Step(action.tool, outcome, action.payload)
             self.steps.append(step)
+            if action.tool == "memory.scratchpad_write" and outcome.status is Status.SUCCESS:
+                note = ScratchpadWrite.model_validate_json(outcome.result_json or "{}")
+                self.scratchpad[note.key] = note.value
             self.notify("tool", step)
             if self.harvester is not None and outcome.status is Status.SUCCESS:
                 # Noting what was seen must never decide whether the task continues.
@@ -348,8 +408,65 @@ class Runner:
                     outcome.error.value,
                 )
 
+    def _latest_screenshot(self) -> str | None:
+        if not self.steps:
+            return None
+        step = self.steps[-1]
+        if step.tool != "windows.screenshot" or step.outcome.status is not Status.SUCCESS:
+            return None
+        return self._screenshot_b64
+
+    def _click_observation(self, target: WindowTarget) -> WindowsResult | None:
+        mutations = {
+            "windows.open_app",
+            "windows.focus_app",
+            "windows.click_element",
+            "windows.type_text",
+            "windows.send_hotkey",
+        }
+        for step in reversed(self.steps):
+            # Even an uncertain/failed effect invalidates older UIA grounding.
+            if step.tool in mutations:
+                return None
+            if step.outcome.status is not Status.SUCCESS or step.tool not in {
+                "windows.inspect_active_window",
+                "windows.screenshot",
+            }:
+                continue
+            observed = WindowsResult.model_validate_json(step.outcome.result_json or "{}")
+            if observed.target != target:
+                # A newer active-window observation of another window expires the marks.
+                if observed.target is not None:
+                    return None
+                continue
+            if step.tool == "windows.screenshot" and not observed.elements:
+                continue  # Legacy image-only screenshot must not hide the last UIA snapshot.
+            return observed
+        return None
+
     def _observed_target(self, action: Action) -> bool:
         args = json.loads(action.payload)
+        if action.tool == "windows.click_element":
+            click = ClickElement.model_validate_json(action.payload)
+            click_observed = self._click_observation(click.target)
+            if click_observed is None or click.mark_id is not None:
+                return False
+            if click.element is not None:
+                return click.element in click_observed.elements
+            return (
+                click.window_rectangle is not None
+                and click.window_rectangle == click_observed.window_rectangle
+            )
+        if action.tool == "fs.write_file" and args.get("expected_version") is not None:
+            return any(
+                step.tool == "fs.read_document"
+                and step.outcome.status is Status.SUCCESS
+                and (observed := json.loads(step.outcome.result_json or "{}"))
+                and observed.get("path") == args.get("path")
+                and observed.get("version") == args.get("expected_version")
+                and observed.get("truncated") is False
+                for step in reversed(self.steps)
+            )
         # Mail and calendar are one account, so either surface may supply the observation.
         if action.tool.startswith(MICROSOFT) and action.tool != "outlook.account":
             observations = [
@@ -383,6 +500,29 @@ class Runner:
                     if value.get("event_id")
                 )
             return True
+        if action.tool == "windows.focus_app" and args.get("target") is None:
+            for step in reversed(self.steps):
+                if step.outcome.status is not Status.SUCCESS or not step.tool.startswith(
+                    "windows."
+                ):
+                    continue
+                result = json.loads(step.outcome.result_json or "{}")
+                targets = [result.get("target"), *result.get("windows", [])]
+                matches = [
+                    target
+                    for target in targets
+                    if isinstance(target, dict)
+                    and (
+                        (args.get("handle") is not None and target.get("handle") == args["handle"])
+                        or (
+                            args.get("title") is not None
+                            and args["title"].casefold() in target.get("title", "").casefold()
+                        )
+                    )
+                ]
+                if len(matches) == 1:
+                    return True
+            return False
         if "target" not in args or not action.tool.startswith(("browser.", "windows.")):
             return True
         for step in reversed(self.steps):
@@ -395,6 +535,17 @@ class Runner:
                 windows = [result.get("target"), *result.get("windows", [])]
                 if args["target"] not in windows:
                     continue
+                if action.tool == "windows.send_hotkey" and args.get("hotkey") == "Ctrl+V":
+                    for observed in reversed(self.steps):
+                        if (
+                            observed.tool in ("windows.clipboard_get", "windows.clipboard_set")
+                            and observed.outcome.status is Status.SUCCESS
+                        ):
+                            clipboard = json.loads(observed.outcome.result_json or "{}")
+                            return args.get("clipboard_sha256") is not None and args[
+                                "clipboard_sha256"
+                            ] == clipboard.get("clipboard_sha256")
+                    return False
                 if action.tool == "windows.calculator_number":
                     if args.get("calculator") == result.get("calculator"):
                         return True

@@ -11,6 +11,7 @@ from pydantic import Field
 from jarvis.permissions.policies import Risk
 from jarvis.tools.base import ExecutionContext, ToolModel, ToolSpec, canonical
 from jarvis.tools.registry import ToolRegistry
+from jarvis.tools.scratchpad import register_scratchpad
 
 
 class CheckInput(ToolModel):
@@ -98,6 +99,7 @@ async def message_preconditions(args: MessageInput, context: ExecutionContext) -
 
 def local_registry() -> tuple[ToolRegistry, LocalOutbox]:
     registry = ToolRegistry()
+    register_scratchpad(registry)
     outbox = LocalOutbox()
     for name, risk in (
         ("local.check", Risk.SAFE),

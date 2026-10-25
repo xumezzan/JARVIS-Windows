@@ -48,9 +48,7 @@ def register_outlook(registry: ToolRegistry, session: MailSession) -> None:
             "/me/mailFolders/" + args.folder + "/messages",
             params={
                 "$top": str(args.limit),
-                # `isRead` is the difference between "letters from this person" and the
-                # thing the owner actually asks for: what they have not read yet.
-                "$select": "id,subject,from,receivedDateTime,isDraft,isRead",
+                "$select": "id,subject,from,receivedDateTime,isDraft,importance,isRead",
                 "$orderby": "receivedDateTime desc",
             },
         )
@@ -60,7 +58,15 @@ def register_outlook(registry: ToolRegistry, session: MailSession) -> None:
         safe = [
             {
                 key: row.get(key)
-                for key in ("id", "subject", "from", "receivedDateTime", "isDraft", "isRead")
+                for key in (
+                    "id",
+                    "subject",
+                    "from",
+                    "receivedDateTime",
+                    "isDraft",
+                    "importance",
+                    "isRead",
+                )
             }
             for row in values
             if isinstance(row, dict)
@@ -137,10 +143,8 @@ def register_outlook(registry: ToolRegistry, session: MailSession) -> None:
     registry.register(
         ToolSpec(
             "outlook.save_draft",
-            "Передать полный черновик в Outlook; письмо не отправляется.",
-            # A draft reaches nobody: it waits in the mailbox and can be edited or thrown
-            # away. Sending it is a separate action and stays CONFIRM.
-            Risk.ROUTINE,
+            "Сохранить полный черновик в Outlook без отправки получателям.",
+            Risk.SAFE,
             SaveInput,
             MailResult,
             check,

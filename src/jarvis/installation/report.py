@@ -25,6 +25,8 @@ class Check:
 DEPENDENCY_CHECKS = {
     "import_qt": "PySide6.QtWidgets",
     "import_pydantic": "pydantic",
+    "import_pypdf": "pypdf",
+    "import_docx": "docx",
     "import_aiohttp": "aiohttp",
     "import_certifi": "certifi",
     "import_keyring": "keyring",
@@ -112,6 +114,24 @@ CHECKS = (
         True,
         "Проверена только синтетическая память во временной базе; ваши записи не открывались.",
         "Проверьте возможность создания временных файлов; сохраните отчёт для исправления.",
+    ),
+    Check(
+        "browser_policy",
+        "Браузер: политика адресов и безопасная симуляция",
+        "offline_functional",
+        True,
+        "Проверены схемы, запрет приватного URL/POST и SAFE-симуляция без backend; "
+        "Chromium, сеть и публичный поиск этим не проверены.",
+        "Сохраните отчёт для исправления политики браузера; реальные страницы не открывались.",
+    ),
+    Check(
+        "outlook_local",
+        "Outlook: синтетический черновик только в памяти",
+        "offline_functional",
+        True,
+        "Проверены RAM-черновик через PermissionEngine, привязка сессии, чтение и очистка; "
+        "remote-запись без approval запрещена. OAuth и Graph не вызывались.",
+        "Сохраните отчёт для исправления локальных черновиков; живой Outlook не проверен.",
     ),
     Check(
         "credentials_backend",

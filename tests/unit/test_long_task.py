@@ -131,7 +131,7 @@ async def test_long_bounds_are_refused_without_the_journal_that_carries_them(
 
 
 def test_the_short_bounds_stay_available_without_a_journal() -> None:
-    assert not Limits().durable and Limits().max_steps == 8
+    assert not Limits().durable and Limits().max_steps == 30
     with pytest.raises(ValueError):
         Limits(max_steps=64)
     with pytest.raises(ValueError):

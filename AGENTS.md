@@ -1,5 +1,22 @@
 # Jarvis engineering instructions
 
+## PR #59 integration
+
+The current main product and its connectors/workflow journal remain the default Qt entry
+point. `python -m jarvis --compact` preserves the compact Qt surface; `desktop/` owns the
+Electron surface. Shared runtime additions are described in `docs/MERGE_PR59.md`.
+Keep both `files.*` and the versioned `fs.*`/`python.sandbox_eval` contracts; do not mix
+their version or root schemas. New filesystem workers and scratchpads stay behind
+PermissionEngine. Historical task memory and screenshots never become approvals.
+Windows typing and Outlook remote draft saving are SAFE under the owner's 2026-10-24
+policy; sensitive/unknown clicks, Enter, Alt+F4 and approved versioned overwrites remain
+CONFIRM. ROUTINE remains available to the existing connectors and workflow journal.
+Strict Browser is the default; trusted startup may select Live/CDP without bypassing
+site tiers, consent or PermissionEngine. Electron wake word remains off by default and
+uses the warmed local AudioHost only after explicit startup opt-in. Manual capture,
+silence endpointing and Qt's existing explicit listening modes retain cancellation.
+The compact demo must use demo events and may never report a real command outcome.
+
 ## Scope and source
 
 The product is a personal AI computer agent for Windows. The owner states a goal, not a

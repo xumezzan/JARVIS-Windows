@@ -143,6 +143,7 @@ class HoldButton(QPushButton):
 
 class VoicePanel(QWidget):
     transcript_ready = Signal(str)
+    auto_start_requested = Signal()
     cancel_requested = Signal()
     busy_changed = Signal(bool)
     message = Signal(str)
@@ -158,7 +159,9 @@ class VoicePanel(QWidget):
         wake: Wake | None = None,
     ) -> None:
         super().__init__()
-        self.recorder = recorder or LocalRecorder()
+        self.recorder = recorder or LocalRecorder(
+            auto_stop_on_silence=os.environ.get("JARVIS_VOICE_AUTO_STOP_ON_SILENCE", "0") == "1"
+        )
         self.recognizer = recognizer
         self.speaker = speaker or LocalSpeaker()
         self.wake = wake
@@ -183,8 +186,17 @@ class VoicePanel(QWidget):
         self.deadline.timeout.connect(self._expired)
         body = QVBoxLayout(self)
         body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(8)
+        self.settings = QWidget()
+        settings = QVBoxLayout(self.settings)
+        settings.setContentsMargins(0, 0, 0, 0)
+        settings.setSpacing(8)
+        model_label = QLabel("Модель распознавания Vosk")
+        settings.addWidget(model_label)
         row = QHBoxLayout()
         self.model_path = QLineEdit()
+        model_label.setBuddy(self.model_path)
+        self.model_path.setAccessibleName("Папка локальной модели распознавания Vosk")
         self.model_path.setMaxLength(2000)
         self.model_path.setText(os.environ.get("JARVIS_VOSK_MODEL", "") or installed_model())
         self.model_path.setPlaceholderText("Папка распакованной русской модели Vosk")
@@ -193,30 +205,50 @@ class VoicePanel(QWidget):
         self.browse.clicked.connect(self._browse)
         row.addWidget(self.model_path, 1)
         row.addWidget(self.browse)
-        body.addLayout(row)
-        self.cloud_settings = QPushButton("Настроить голос ElevenLabs Free…")
+        settings.addLayout(row)
+        self.cloud_settings = QPushButton("Голос ElevenLabs Free…")
         self.cloud_settings.setAutoDefault(False)
         self.cloud_settings.clicked.connect(self._cloud_settings)
-        body.addWidget(self.cloud_settings)
+        settings.addWidget(self.cloud_settings, 0, Qt.AlignmentFlag.AlignLeft)
+        self.speech_enabled = QCheckBox("Озвучивать итог системным голосом")
+        self.speech_enabled.toggled.connect(
+            lambda enabled: None if enabled else self._clear_cloud()
+        )
+        settings.addWidget(self.speech_enabled)
+        self.auto_start = QCheckBox("Голосовой автозапуск")
+        self.auto_start.setToolTip(
+            "При уверенности от 0,75 команда запускается сразу. "
+            "Подтверждения действий и согласие на облако запрашиваются отдельно."
+        )
+        settings.addWidget(self.auto_start)
+        self._local_recognizer: VoskRecognizer | None = None
+        self.model_path.editingFinished.connect(self._prepare_recognizer)
+        self._prepare_recognizer()
+
+        local_hint = QLabel(
+            "Распознавание работает с локальной моделью. Аудио не отправляется в облако. "
+            "Для ElevenLabs отдельно запрашивается согласие на передачу текста."
+        )
+        local_hint.setWordWrap(True)
+        local_hint.setObjectName("muted")
+        settings.addWidget(local_hint)
+        body.addWidget(self.settings)
         row = QHBoxLayout()
-        self.hold = self._button("Удерживайте для записи команды")
+        self.hold = self._button("Удерживайте для записи")
         row.addWidget(self.hold)
         self.stop_button = QPushButton("Остановить голос и задачу")
         self.stop_button.setAutoDefault(False)
         self.stop_button.clicked.connect(self.cancel_requested.emit)
         row.addWidget(self.stop_button)
-        self.speech_enabled = QCheckBox("Озвучивать итог системным голосом")
-        self.speech_enabled.toggled.connect(
-            lambda enabled: None if enabled else self._clear_cloud()
-        )
-        row.addWidget(self.speech_enabled)
+        row.addStretch()
         body.addLayout(row)
         hint = QLabel(
-            "Локальный голос: аудио не отправляется в облако. Удерживайте кнопку или пробел "
-            "на ней, затем отпустите. До 30 секунд. Проверьте текст ниже перед запуском. "
-            "Во время задачи эта кнопка слушает только «стоп» / «отмена»."
+            "Удерживайте кнопку или пробел на ней, затем отпустите. До 30 секунд. "
+            "Проверьте текст перед запуском. Во время задачи голос принимает только «стоп» "
+            "или «отмена». Аудио остаётся на устройстве."
         )
         hint.setWordWrap(True)
+        hint.setObjectName("muted")
         body.addWidget(hint)
         self.indicator = QLabel(MICROPHONE["off"])
         self.indicator.setTextFormat(Qt.TextFormat.PlainText)
@@ -229,6 +261,23 @@ class VoicePanel(QWidget):
         self.status.setAccessibleName("Состояние микрофона и речи")
         body.addWidget(self.status)
         self.message.connect(self.status.setText)
+
+    def _prepare_recognizer(self) -> None:
+        if self.recognizer is not None:
+            return
+        if self._local_recognizer is not None:
+            self._local_recognizer.shutdown()
+            self._local_recognizer = None
+        if self.model_path.text().strip() and not self.closed:
+            self._local_recognizer = VoskRecognizer(Path(self.model_path.text()))
+            self._local_recognizer.warmup()
+
+    def acknowledge(self) -> None:
+        if self.worker is None and not self.closed:
+            # Always local; do not consume one-use ElevenLabs result consent.
+            selection, self.cloud_selection = self.cloud_selection, None
+            self._launch("Принял, выполняю")
+            self.cloud_selection = selection
 
     def _cloud_settings(self) -> None:
         if self.worker is not None or self.planning or self.closed:
@@ -259,6 +308,7 @@ class VoicePanel(QWidget):
         path = QFileDialog.getExistingDirectory(self, "Выберите локальную русскую модель Vosk")
         if path:
             self.model_path.setText(path)
+            self._prepare_recognizer()
 
     def _button(self, text: str) -> HoldButton:
         button = HoldButton(text)
@@ -466,9 +516,12 @@ class VoicePanel(QWidget):
             speaker = ElevenLabsSpeaker(voice_id, account, speech)
         model = Path(self.model_path.text())
         try:
+            recognizer = self.recognizer or self._local_recognizer or VoskRecognizer(Path(""))
+            if isinstance(self.recorder, LocalRecorder) and isinstance(recognizer, VoskRecognizer):
+                self.recorder.host = recognizer.host
             worker = VoiceWorker(
                 self.recorder,
-                self.recognizer or VoskRecognizer(model),
+                recognizer,
                 speaker,
                 speech=speech,
                 listen=listen,
@@ -608,6 +661,10 @@ class VoicePanel(QWidget):
                 )
             else:
                 self.transcript_ready.emit(transcript.text)
+                if self.auto_start.isChecked() and not transcript.uncertain:
+                    self.auto_start_requested.emit()
+                    worker.deleteLater()
+                    return
                 self.message.emit(
                     "Микрофон выключен. "
                     + ("Распознавание неуверенное. " if transcript.uncertain else "")
@@ -674,8 +731,10 @@ class VoicePanel(QWidget):
     def finish_plan(self, result: PlanResult) -> None:
         self.set_planning(False)
         if self.worker is not None:
-            self.cancel()
-        elif self.speech_enabled.isChecked() and not self.was_cancelled and not self.closed:
+            self.worker.cancel()
+            self.worker.wait()
+            self._finished()
+        if self.speech_enabled.isChecked() and not self.was_cancelled and not self.closed:
             self._launch(spoken_result(result))
         else:
             self.deadline.stop()
@@ -689,3 +748,5 @@ class VoicePanel(QWidget):
         if self.worker is not None:
             self.worker.wait()
             self._finished()
+        if self._local_recognizer is not None:
+            self._local_recognizer.shutdown()

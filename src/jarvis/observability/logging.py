@@ -40,7 +40,7 @@ class ShellLog:
                         "request_id": str(request_id) if request_id else None,
                         "actor": "desktop_shell",
                         "event": event.value,
-                        "mode": "command",
+                        "mode": "demo" if event.value.startswith("demo_") else "command",
                     }
                 )
             )

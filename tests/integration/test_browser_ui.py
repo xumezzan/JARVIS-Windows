@@ -16,10 +16,15 @@ def choose(window: PermissionWorkbench, tool: str) -> None:
     window.tool_choice.setCurrentIndex(window.tool_choice.findData("browser." + tool))
 
 
-def run_tool(window: PermissionWorkbench, qtbot: QtBot) -> None:
-    """Browsing is ROUTINE: the workbench runs it without pausing for approval."""
+def run_tool(window: PermissionWorkbench, qtbot: QtBot, *, confirm: bool = False) -> None:
+    """Ordinary browsing is automatic; a submit keeps its exact visible confirmation."""
     with qtbot.waitSignal(window.task_finished, timeout=15000):
         QTest.mouseClick(window.run_button, Qt.MouseButton.LeftButton)
+        if confirm:
+            qtbot.waitUntil(lambda: window.approval_dialog is not None)
+            dialog = window.approval_dialog
+            assert dialog is not None
+            QTest.mouseClick(dialog.approve_button, Qt.MouseButton.LeftButton)
     assert window.approval_dialog is None
     assert "SUCCESS" in window.status_label.text(), window.status_label.text()
 
@@ -45,7 +50,7 @@ def test_browser_manual_preview_and_single_submit(qtbot: QtBot, tmp_path: Path) 
         elements.setCurrentIndex(elements.findText("button: Send"))
         # Nothing has been submitted before the click itself runs.
         assert not any(row[0] == "POST" for row in site.seen)
-        run_tool(window, qtbot)
+        run_tool(window, qtbot, confirm=True)
         assert len([row for row in site.seen if row[0] == "POST"]) == 1
         assert "Received" in window.browser_controls.observation.toPlainText()
     finally:

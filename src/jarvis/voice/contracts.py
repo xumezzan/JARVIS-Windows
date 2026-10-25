@@ -23,6 +23,11 @@ class VoiceError(Exception):
 
 
 ERROR_TEXT = {
+    "wake_model": (
+        "Модель Vosk не поддерживает «джарвис» или словарь активации. "
+        "Выберите совместимую локальную модель."
+    ),
+    "voice_config": "Проверьте голосовые настройки: порог RMS должен быть числом от 1 до 32768.",
     "eleven_credentials": "Сохраните API-ключ ElevenLabs в настройках голоса, не в чате.",
     "eleven_free": "Озвучивание остановлено: нужен тариф Free с отключённой оплатой сверх лимита.",
     "eleven_quota": "Бесплатный лимит закончился или слишком мал. Выберите системный голос.",
@@ -109,4 +114,6 @@ def spoken_result(result: PlanResult) -> str:
     a service answered is ever spoken. What is new is that the sentence is about the owner's
     task rather than about the planner's own statuses.
     """
+    if result.status == "finished" and result.spoken_summary.strip():
+        return result.spoken_summary.strip()
     return spoken(result)

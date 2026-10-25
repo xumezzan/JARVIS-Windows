@@ -1,8 +1,9 @@
 """Native adapter decision logic with fake UIA objects; not native Windows acceptance."""
 
-import winreg
+import sys
 from hashlib import sha256
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -273,7 +274,11 @@ def installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *names: str) -> P
     def unavailable(*args: object, **kwargs: object) -> None:
         raise OSError
 
-    monkeypatch.setattr(winreg, "OpenKey", unavailable)
+    monkeypatch.setitem(
+        sys.modules,
+        "winreg",
+        SimpleNamespace(HKEY_CURRENT_USER=0, HKEY_LOCAL_MACHINE=1, OpenKey=unavailable),
+    )
     return programs
 
 
@@ -352,6 +357,7 @@ def observed_windows(desktop: NativeDesktop, *targets: WindowTarget) -> list[Moc
         window.window_text.return_value = wanted.title
         window.element_info.runtime_id = wanted.runtime_id
         window.descendants.return_value = []
+        window.children.return_value = []
         windows[wanted.handle] = window
         process = Mock(pid=wanted.pid)
         process.exe.return_value = wanted.executable
@@ -383,6 +389,10 @@ def writable_notepad(window: Mock) -> None:
     tab = Mock()
     tab.element_info.runtime_id = [5, 6]
     tab.iface_selection_item.CurrentIsSelected = True
+    tab.element_info.control_type = "TabItem"
+    window.children.return_value = [editor, tab]
+    editor.children.return_value = []
+    tab.children.return_value = []
 
     def descendants(*, control_type: str) -> list[Mock]:
         return {"Edit": [editor], "Document": [], "TabItem": [tab]}[control_type]
@@ -410,9 +420,15 @@ def test_filter_windows_before_inspecting_editors(desktop: NativeDesktop) -> Non
     unrelated.descendants.side_effect = AssertionError("Unrelated UIA tree must not be read")
     writable_notepad(notepad)
     result = desktop.dispatch(NativeRequest(operation="list", app="notepad"))
-    assert result.windows == [target()]
+    expected = target()
+    assert expected.editor is not None
+    expected = expected.model_copy(
+        update={"editor": expected.editor.model_copy(update={"content_sha256": text_digest("")})}
+    )
+    assert result.windows == [expected]
     unrelated.descendants.assert_not_called()
-    assert notepad.descendants.call_count == 3
+    assert notepad.descendants.call_count == 2
+    notepad.children.assert_called_once()
 
 
 @pytest.mark.parametrize("already_open", [False, True])
@@ -431,9 +447,16 @@ def test_open_scans_skip_unrelated_editors_and_return_selected_notepad_field(
         desktop.desktop.windows.side_effect = [[unrelated], [unrelated], [unrelated, notepad]]
         monkeypatch.setattr("jarvis.platforms.windows.native.time.time", lambda: 1234.0)
     result = desktop.dispatch(NativeRequest(operation="open", app="notepad"))
-    assert result.target == target()
+    assert result.target is not None
+    expected = target()
+    assert expected.editor is not None
+    expected = expected.model_copy(
+        update={"editor": expected.editor.model_copy(update={"content_sha256": text_digest("")})}
+    )
+    assert result.target == expected
     unrelated.descendants.assert_not_called()
-    assert notepad.descendants.call_count == 3
+    assert notepad.descendants.call_count == 2
+    notepad.children.assert_called_once()
     desktop.desktop.window.assert_called_once_with(handle=target().handle)
     assert launch.call_count == (0 if already_open else 1)
 
@@ -451,9 +474,14 @@ def test_open_late_existing_window_is_revalidated_and_keeps_its_editor(
     ticks = iter((0.0, 7.0))
     monkeypatch.setattr("jarvis.platforms.windows.native.time.monotonic", lambda: next(ticks))
     result = desktop.dispatch(NativeRequest(operation="open", app="my notepad"))
-    assert result.target == wanted
+    assert wanted.editor is not None
+    expected = wanted.model_copy(
+        update={"editor": wanted.editor.model_copy(update={"content_sha256": text_digest("")})}
+    )
+    assert result.target == expected
     unrelated.descendants.assert_not_called()
-    assert notepad.descendants.call_count == 3
+    assert notepad.descendants.call_count == 2
+    notepad.children.assert_called_once()
     desktop.desktop.window.assert_called_once_with(handle=wanted.handle)
 
 

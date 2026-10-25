@@ -210,6 +210,7 @@ class PlannerWindow(QDialog):
         )
         self.voice = voice_panel or VoicePanel()
         self.voice.transcript_ready.connect(self.command.setPlainText)
+        self.voice.auto_start_requested.connect(self._voice_start)
         self.voice.cancel_requested.connect(self.stop)
         self.voice.busy_changed.connect(self._voice_busy)
         if embed_voice:
@@ -446,6 +447,14 @@ class PlannerWindow(QDialog):
             if not self._unfinished:
                 self.unfinished.addItem("Незавершённых задач нет")
         self.resume_button.setEnabled(bool(self._unfinished))
+
+    @Slot()
+    def _voice_start(self) -> None:
+        self.start()
+        if self.worker is not None:
+            self.voice.acknowledge()
+        else:
+            self.voice.message.emit(self.status.text())
 
     @Slot()
     def resume(self) -> None:

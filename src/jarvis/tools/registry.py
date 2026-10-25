@@ -23,6 +23,7 @@ class RegisteredTool:
     run: Callable[[str, ExecutionContext], Awaitable[ToolModel]]
     verify: Callable[[str, ToolModel, ExecutionContext], Awaitable[bool]]
     policy: Callable[[ToolModel], None]
+    classify_risk: Callable[[str], Risk]
 
     def normalize(self, arguments: object) -> str:
         # Validate Python input before JSON serialization to reject coercion and extra fields.
@@ -66,6 +67,16 @@ class ToolRegistry:
             if spec.policy is not None:
                 spec.policy(spec.parameters.model_validate(parameters, strict=True))
 
+        def classify_risk(payload: str) -> Risk:
+            risk = (
+                spec.classify_risk(spec.parameters.model_validate_json(payload))
+                if spec.classify_risk is not None
+                else spec.risk
+            )
+            if not isinstance(risk, Risk):
+                raise ValueError("Risk classifier must return a trusted Risk value.")
+            return risk
+
         self._tools[spec.name] = RegisteredTool(
             spec.name,
             spec.description,
@@ -79,6 +90,7 @@ class ToolRegistry:
             run,
             verify,
             policy,
+            classify_risk,
         )
 
     def seal(self) -> None:

@@ -48,12 +48,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--startup-report", type=Path, help="Write a PID-bound visible-window receipt for setup."
     )
+    parser.add_argument(
+        "--compact", action="store_true", help="Open the compact Qt shell preserved from PR #59."
+    )
     args = parser.parse_args(argv)
     try:
         config = load_config()
     except ValueError as error:
         print(f"Jarvis configuration error: {error}", file=sys.stderr)
         return 2
+
+    if args.compact:
+        if args.startup_report is not None:
+            parser.error("--startup-report uses the default application shell.")
+        from jarvis.ui.compact_window import run_compact
+
+        return run_compact(config, smoke_test=args.smoke_test)
 
     from PySide6.QtCore import QTimer
     from PySide6.QtGui import QIcon

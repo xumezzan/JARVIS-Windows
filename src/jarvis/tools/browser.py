@@ -3,10 +3,11 @@
 from typing import Literal, Protocol
 from urllib.parse import urlencode
 
-from pydantic import Field, model_validator
+from pydantic import Field, create_model, model_validator
 
+from jarvis.permissions.interaction import requires_confirmation
 from jarvis.permissions.policies import Risk
-from jarvis.security.browser_policy import NetworkPolicy, origin
+from jarvis.security.browser_policy import BrowserMode, NetworkPolicy, origin
 from jarvis.tools.base import ExecutionContext, ToolError, ToolModel, ToolSpec, canonical
 from jarvis.tools.registry import ToolRegistry
 
@@ -32,10 +33,11 @@ class PageTarget(ToolModel):
     origin: str = Field(min_length=1, max_length=1000)
     fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     frame: Literal["main"] = "main"
+    has_unsaved_changes: bool = False
 
 
 class ElementTarget(ToolModel):
-    role: Literal["link", "button", "textbox"]
+    role: Literal["link", "button", "textbox", "searchbox"]
     name: str = Field(min_length=1, max_length=300)
     fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     value: str = Field(default="", max_length=4000)
@@ -43,8 +45,13 @@ class ElementTarget(ToolModel):
 
 
 class BrowserArgs(ToolModel):
-    service: Literal["isolated-browser"] = "isolated-browser"
-    account: Literal["anonymous"] = "anonymous"
+    service: Literal["isolated-browser", "live-browser"] = "isolated-browser"
+    account: Literal["anonymous", "chrome-context"] = "anonymous"
+
+
+class LiveBrowserArgs(BrowserArgs):
+    service: Literal["live-browser"] = "live-browser"
+    account: Literal["chrome-context"] = "chrome-context"
 
 
 class OpenPage(BrowserArgs):
@@ -77,8 +84,10 @@ class ClickElement(ReadPage):
 
     @model_validator(mode="after")
     def actionable(self) -> "ClickElement":
-        if self.element.role not in ("link", "button") or self.element.request is None:
-            raise ValueError("Only observed links and explicit form submissions are supported.")
+        if self.element.role not in ("link", "button"):
+            raise ValueError("Only observed links and buttons are supported.")
+        if self.element.role == "link" and self.element.request is None:
+            raise ValueError("Links require an observed destination.")
         return self
 
 
@@ -88,7 +97,7 @@ class TypeElement(ReadPage):
 
     @model_validator(mode="after")
     def editable(self) -> "TypeElement":
-        if self.element.role != "textbox" or self.element.request is not None:
+        if self.element.role not in ("textbox", "searchbox") or self.element.request is not None:
             raise ValueError("Only observed plain text fields are supported.")
         if "\x00" in self.text or any(0xD800 <= ord(char) <= 0xDFFF for char in self.text):
             raise ValueError("Invalid text.")
@@ -129,6 +138,18 @@ SCHEMAS: dict[Operation, type[BrowserArgs]] = {
 }
 
 
+def browser_schemas(policy: NetworkPolicy) -> dict[Operation, type[BrowserArgs]]:
+    if policy.mode is BrowserMode.STRICT:
+        return SCHEMAS
+    return {
+        operation: create_model(
+            "Live" + parameters.__name__,
+            __base__=(LiveBrowserArgs, parameters),
+        )
+        for operation, parameters in SCHEMAS.items()
+    }
+
+
 class BrowserBackend(Protocol):
     async def call(self, command: BrowserCommand, context: ExecutionContext) -> BrowserResult: ...
 
@@ -139,6 +160,12 @@ def register_browser(
     network_policy = policy or NetworkPolicy()
 
     def validate_policy(args: BrowserArgs) -> None:
+        if (args.service, args.account) != (
+            ("isolated-browser", "anonymous")
+            if network_policy.mode is BrowserMode.STRICT
+            else ("live-browser", "chrome-context")
+        ):
+            raise ToolError("network_denied")
         if isinstance(args, (OpenPage, NavigatePage, SearchWeb)):
             network_policy.validate_request(args.url, "GET")
         if isinstance(args, ReadPage):
@@ -150,11 +177,29 @@ def register_browser(
             # route, so a site the owner may only look at accepts no text at all.
             raise ToolError("network_denied")
         if isinstance(args, ClickElement):
-            assert args.element.request is not None
             intent = args.element.request
-            network_policy.validate_request(intent.url, intent.method, intent.body)
+            if intent is not None:
+                network_policy.validate_request(intent.url, intent.method, intent.body)
+            elif network_policy.mode is BrowserMode.STRICT:
+                raise ToolError("network_denied")
 
     def register(operation: Operation, parameters: type[BrowserArgs]) -> None:
+        def classify_risk(args: BrowserArgs) -> Risk:
+            if isinstance(args, ClickElement) and (
+                args.element.request is None
+                or args.element.request.method != "GET"
+                or requires_confirmation(args.element.name)
+                or (network_policy.mode is BrowserMode.LIVE and args.element.role == "button")
+            ):
+                return Risk.CONFIRM
+            if (
+                operation == "close"
+                and isinstance(args, ReadPage)
+                and args.target.has_unsaved_changes
+            ):
+                return Risk.CONFIRM
+            return Risk.SAFE
+
         async def check(args: BrowserArgs, context: ExecutionContext) -> bool:
             await backend.call(
                 BrowserCommand(operation=operation, phase="check", parameters=canonical(args)),
@@ -174,7 +219,8 @@ def register_browser(
             if operation not in ("get_tabs", "close") and result.page is None:
                 return False
             if (
-                operation in ("open", "navigate", "search", "click")
+                network_policy.mode is BrowserMode.STRICT
+                and operation in ("open", "navigate", "search", "click")
                 and result.response_status is None
             ):
                 return False
@@ -201,11 +247,13 @@ def register_browser(
         registry.register(
             ToolSpec(
                 "browser." + operation,
-                "Изолированный браузер: " + operation,
-                # Reading changes nothing; opening, navigating and clicking happen in this
-                # application's own disposable session, under the same origin policy, and
-                # leave nothing behind when the window closes.
-                Risk.SAFE if operation in ("read", "get_tabs") else Risk.ROUTINE,
+                (
+                    "Strict Sandbox: "
+                    if network_policy.mode is BrowserMode.STRICT
+                    else "Live Browser (Chrome context): "
+                )
+                + operation,
+                Risk.CONFIRM if operation in ("click", "close") else Risk.SAFE,
                 parameters,
                 BrowserResult,
                 check,
@@ -214,8 +262,9 @@ def register_browser(
                 timeout_seconds=45,
                 cancellation="Cancel the current Playwright/HTTP operation; no rollback.",
                 policy=validate_policy,
+                classify_risk=classify_risk,
             )
         )
 
-    for operation, parameters in SCHEMAS.items():
+    for operation, parameters in browser_schemas(network_policy).items():
         register(operation, parameters)

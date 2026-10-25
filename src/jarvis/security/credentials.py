@@ -182,13 +182,16 @@ def console(stream: object, standard_input: bool) -> bool:
     reader = getattr(stream, "isatty", None)
     if reader is None or not reader():
         return False
-    if sys.platform != "win32":
+    from jarvis.platforms import is_windows
+
+    if not is_windows():
         return True
     try:
         import ctypes
+        import importlib
         from ctypes import wintypes
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32 = importlib.import_module("ctypes").WinDLL("kernel32", use_last_error=True)
         kernel32.GetStdHandle.restype = wintypes.HANDLE
         kernel32.GetStdHandle.argtypes = [wintypes.DWORD]
         kernel32.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]

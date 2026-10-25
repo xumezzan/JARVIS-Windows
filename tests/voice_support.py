@@ -10,7 +10,13 @@ from jarvis.voice.contracts import AudioClip, Transcript, VoiceError
 class VoiceFixture:
     local_only = True
 
-    def __init__(self, text: str = "проверь систему дважды", *, confidence: float = 0.99) -> None:
+    def __init__(
+        self,
+        text: str = "проверь систему дважды",
+        *,
+        confidence: float = 0.99,
+        auto_stop_on_silence: bool = False,
+    ) -> None:
         self.text = text
         self.confidence = confidence
         self.recording = Event()

@@ -1,0 +1,64 @@
+[
+  {
+    "check": "exact typography and card tokens",
+    "typography": {
+      "heading": [
+        "56px",
+        "200"
+      ],
+      "listening": [
+        "13px",
+        "5.2px"
+      ],
+      "card": [
+        "24px",
+        "20px",
+        "1px",
+        "rgba(255, 255, 255, 0.07)"
+      ],
+      "accent": "#3f7bff"
+    }
+  },
+  {
+    "check": "suggestion details opens and closes",
+    "pass": true
+  },
+  {
+    "check": "empty input, submit and Escape cancellation",
+    "pass": true
+  },
+  {
+    "check": "demo completion is explicitly labelled",
+    "pass": true
+  },
+  {
+    "check": "held voice preview releases on keyup and focus loss",
+    "pass": true
+  },
+  {
+    "check": "apps, settings, motion and theme controls",
+    "pass": true
+  },
+  {
+    "check": "desktop viewport no horizontal overflow",
+    "width": 1536,
+    "scrollWidth": 1536,
+    "scrollHeight": 1024
+  },
+  {
+    "check": "compact viewport no horizontal overflow",
+    "width": 1280,
+    "scrollWidth": 1280,
+    "scrollHeight": 900
+  },
+  {
+    "check": "mobile viewport no horizontal overflow",
+    "width": 390,
+    "scrollWidth": 390,
+    "scrollHeight": 2962
+  },
+  {
+    "check": "browser runtime and HTTP errors",
+    "errors": []
+  }
+]

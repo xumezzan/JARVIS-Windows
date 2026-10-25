@@ -45,12 +45,19 @@ class ErrorCode(StrEnum):
     BROWSER_TIMEOUT = "browser_timeout"
     BROWSER_FAILURE = "browser_failure"
     BROWSER_CLEANUP = "browser_cleanup"
-    PATH_DENIED = "path_denied"
+    FILE_DENIED = "file_denied"
     FILE_MISSING = "file_missing"
-    FILE_CONFLICT = "file_conflict"
+    FILE_CHANGED = "file_changed"
+    FILE_EXISTS = "file_exists"
+    FILE_LIMIT = "file_limit"
     FILE_UNSUPPORTED = "file_unsupported"
-    FILE_TOO_LARGE = "file_too_large"
     FILE_FAILURE = "file_failure"
+    COMPUTATION_REJECTED = "computation_rejected"
+    COMPUTATION_LIMIT = "computation_limit"
+    WORKER_TIMEOUT = "worker_timeout"
+    PATH_DENIED = "path_denied"
+    FILE_CONFLICT = "file_conflict"
+    FILE_TOO_LARGE = "file_too_large"
 
 
 @dataclass(frozen=True)

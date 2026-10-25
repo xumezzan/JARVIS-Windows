@@ -15,7 +15,7 @@ from jarvis.browser.network import PolicyResolver
 from jarvis.observability.audit import AuditLog, ErrorCode
 from jarvis.permissions.approvals import Action, ApprovalStore
 from jarvis.permissions.engine import Outcome, PermissionEngine
-from jarvis.permissions.policies import Mode, Status
+from jarvis.permissions.policies import Mode, Risk, Status
 from jarvis.security.browser_policy import (
     DEFAULT_READ_ONLY,
     PASSWORD_MANAGERS,
@@ -78,7 +78,9 @@ async def test_all_simulation_hooks_are_skipped(name: str, args: object, tmp_pat
         engine = PermissionEngine(registry, store, audit)
         action = engine.prepare("browser." + name, args, Mode.SIMULATION)
         assert isinstance(action, Action)
-        assert (await engine.execute(action)).status is Status.SIMULATED
+        authority = store.take_authority(audit.approved)
+        token = authority.approve(action) if action.risk is Risk.CONFIRM else None
+        assert (await engine.execute(action, token)).status is Status.SIMULATED
         assert not probe.calls
 
 

@@ -31,12 +31,19 @@ class ToolError(Exception):
             "browser_timeout",
             "browser_failure",
             "browser_cleanup",
-            "path_denied",
+            "file_denied",
             "file_missing",
-            "file_conflict",
+            "file_changed",
+            "file_exists",
+            "file_limit",
             "file_unsupported",
-            "file_too_large",
             "file_failure",
+            "computation_rejected",
+            "computation_limit",
+            "worker_timeout",
+            "path_denied",
+            "file_conflict",
+            "file_too_large",
         ],
     ) -> None:
         self.code = code
@@ -87,3 +94,4 @@ class ToolSpec[Params: ToolModel, Result: ToolModel]:
     cancellation: str = "Cooperative asyncio cancellation; no rollback claim."
     idempotency: str = "No automatic retry; one execution per prepared request."
     policy: Callable[[Params], None] | None = None  # Pure, synchronous; also runs in simulation.
+    classify_risk: Callable[[Params], Risk] | None = None  # Trusted code, normalized snapshot only.

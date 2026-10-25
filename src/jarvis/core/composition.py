@@ -53,9 +53,9 @@ from jarvis.permissions.engine import PermissionEngine
 from jarvis.permissions.matrix import PermissionMatrix, load_matrix
 from jarvis.platforms.files import LocalFiles
 from jarvis.platforms.windows.transport import ProcessBackend
-from jarvis.security.browser_policy import NetworkPolicy
 from jarvis.tools.browser import register_browser
 from jarvis.tools.files import register_files
+from jarvis.tools.filesystem import register_filesystem
 from jarvis.tools.local import LocalOutbox, local_registry
 from jarvis.tools.outlook import register_outlook
 from jarvis.tools.registry import ToolRegistry
@@ -134,12 +134,15 @@ def build(
             **DRIVE_MAPPERS,
         },
     )
-    host = browser_host or BrowserHost(NetworkPolicy(config.browser_origins))
+    host = browser_host or BrowserHost(
+        config.browser_policy, cdp_endpoint=config.browser_cdp_endpoint
+    )
     registry, outbox = local_registry()
     register_browser(registry, host, host.policy)
     register_windows(registry, windows_backend or ProcessBackend())
     files = FilePolicy(config.file_roots)
     register_files(registry, files, LocalFiles())
+    register_filesystem(registry, config.filesystem_policy)
     session = mail_session or MailSession()
     register_outlook(registry, session)
     calendar = CalendarConnector(session)

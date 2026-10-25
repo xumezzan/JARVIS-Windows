@@ -18,6 +18,8 @@ PROBE_CHECKS = (
     "permissions",
     "planner",
     "memory",
+    "browser_policy",
+    "outlook_local",
     "credentials_backend",
     "microphone",
     "speaker",
@@ -28,6 +30,8 @@ PACKAGES = (
     "jarvis-windows",
     "PySide6-Essentials",
     "pydantic",
+    "pypdf",
+    "python-docx",
     "playwright",
     "aiohttp",
     "certifi",
@@ -94,13 +98,22 @@ def run_check(name: str) -> dict[str, object]:
             from vosk import Model  # type: ignore[import-untyped]
 
             Model(model_path=os.environ["JARVIS_VOSK_MODEL"])
-        elif name in {"permissions", "planner", "memory", "credentials_backend"}:
+        elif name in {
+            "permissions",
+            "planner",
+            "memory",
+            "browser_policy",
+            "outlook_local",
+            "credentials_backend",
+        }:
             from jarvis.installation import offline_checks
 
             checks = {
                 "permissions": offline_checks.check_permissions,
                 "planner": offline_checks.check_planner,
                 "memory": offline_checks.check_memory,
+                "browser_policy": offline_checks.check_browser_policy,
+                "outlook_local": offline_checks.check_outlook_local,
                 "credentials_backend": offline_checks.check_credentials_backend,
             }
             checks[name]()

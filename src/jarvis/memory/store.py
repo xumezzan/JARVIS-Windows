@@ -29,7 +29,7 @@ class MemoryStore:
             self._check(cancelled)
             self.path.parent.mkdir(parents=True, exist_ok=True)
             if self.path.is_symlink() or (
-                self.path.exists() and self.path.stat().st_size > 1048576
+                self.path.exists() and self.path.stat().st_size > 4194304
             ):
                 raise MemoryFailure("storage")
             db = sqlite3.connect(self.path, timeout=1)

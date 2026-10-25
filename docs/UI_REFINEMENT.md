@@ -1,5 +1,14 @@
 # Dashboard refinement — 15 September 2026
 
+> Текущая структура интерфейса после упрощения: [UI_MINIMALISM.md](UI_MINIMALISM.md).
+
+> Historical local UI report. This is not an onboarding or integration acceptance report.
+> Current native UI is Russian; the dashboard input is a demo, the calendar has no service
+> connection, and real tasks use the separate Planner. English-default localization and
+> the seven-step wizard are proposed in [ROADMAP.md](ROADMAP.md) stages 10/12 and
+> [ONBOARDING.md](ONBOARDING.md). Developer commands below describe that historical QA;
+> clean Windows installation uses [WINDOWS_ACCEPTANCE.md](WINDOWS_ACCEPTANCE.md).
+
 ## Delivered design
 
 The user's reference sets the visual direction: a midnight workspace around one blue

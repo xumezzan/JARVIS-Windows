@@ -1,0 +1,16 @@
+{
+  "platform": "darwin",
+  "checks": [
+    {
+      "check": "opt-in visible microphone indicator; Stop suspends; synthetic resume rejected; trusted resume works",
+      "pass": true
+    },
+    {
+      "check": "wake starts endpoint recording without a hold; allowed background capture survives blur; transcript waits for review without task/cloud consent",
+      "pass": true
+    }
+  ],
+  "limitations": [
+    "Model and microphone are fixtures; real keyword recognition and Windows hardware remain unverified."
+  ]
+}

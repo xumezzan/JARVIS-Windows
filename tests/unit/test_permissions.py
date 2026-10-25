@@ -102,6 +102,55 @@ def harness(tmp_path: Path) -> Iterator[Harness]:
 
 
 @pytest.mark.asyncio
+async def test_dynamic_risk_uses_normalized_snapshot_and_safe_actions_need_no_grant(
+    tmp_path: Path,
+) -> None:
+    seen: list[Inputs] = []
+
+    def classify(args: Inputs) -> Risk:
+        seen.append(args)
+        return Risk.CONFIRM if args.value == "send" else Risk.SAFE
+
+    probe = Probe()
+    registry = ToolRegistry()
+    registry.register(replace(probe.spec(Risk.CONFIRM), classify_risk=classify))
+    audit = AuditLog(tmp_path / "audit.sqlite3")
+    try:
+        store = ApprovalStore()
+        authority = store.take_authority(audit.approved)
+        engine = PermissionEngine(registry, store, audit)
+        safe = engine.prepare("test.probe", {}, Mode.EXECUTE)
+        assert isinstance(safe, Action) and safe.risk is Risk.SAFE
+        assert seen == [Inputs()]
+        with pytest.raises(ValueError):
+            authority.approve(safe)
+        assert (await engine.execute(safe)).status is Status.SUCCESS
+        sensitive = engine.prepare("test.probe", {"value": "send"}, Mode.EXECUTE)
+        assert isinstance(sensitive, Action) and sensitive.risk is Risk.CONFIRM
+        assert (await engine.execute(sensitive)).status is Status.DENIED
+        assert probe.calls == 1
+    finally:
+        audit.close()
+
+
+def test_invalid_dynamic_risk_fails_closed(tmp_path: Path) -> None:
+    def classify(args: Inputs) -> Risk:
+        return "SAFE"  # type: ignore[return-value]
+
+    probe = Probe()
+    registry = ToolRegistry()
+    registry.register(replace(probe.spec(), classify_risk=classify))
+    audit = AuditLog(tmp_path / "audit.sqlite3")
+    try:
+        engine = PermissionEngine(registry, ApprovalStore(), audit)
+        outcome = engine.prepare("test.probe", {})
+        assert isinstance(outcome, Outcome) and outcome.status is Status.INVALID
+        assert probe.calls == probe.checks == 0
+    finally:
+        audit.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("risk", list(Risk))
 @pytest.mark.parametrize("mode", list(Mode))
 async def test_risk_policy(tmp_path: Path, risk: Risk, mode: Mode) -> None:

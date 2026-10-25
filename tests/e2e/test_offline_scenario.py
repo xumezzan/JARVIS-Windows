@@ -17,7 +17,7 @@ def test_chrome_search_recipe_reaches_no_adapter_in_simulation(
     tmp_path: Path,
     cancel: bool,
 ) -> None:
-    """Both steps are ROUTINE, so nothing pauses; simulation still touches nothing real."""
+    """The configured browser owns search; simulation never launches another Chrome."""
     probe = WindowsProbe()
     window = PlannerWindow(AppConfig(tmp_path), windows_backend=probe)
     qtbot.addWidget(window)
@@ -32,7 +32,8 @@ def test_chrome_search_recipe_reaches_no_adapter_in_simulation(
         assert window.approval_dialog is None
         assert not probe.calls and window.host._thread is None
         if not cancel:
-            assert "windows.open_app: SIMULATED" in window.output.toPlainText()
             assert "browser.search: SIMULATED" in window.output.toPlainText()
+            assert window.last_result is not None
+            assert [step.tool for step in window.last_result.steps] == ["browser.search"]
     finally:
         window.shutdown()

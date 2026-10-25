@@ -11,7 +11,10 @@ requires-python = ">=3.12"
 dependencies = [
     "PySide6-Essentials", "pydantic", "playwright", "aiohttp", "certifi", "keyring", "msal",
     "pywinauto; sys_platform == 'win32'",
-    "psutil; sys_platform == 'win32'",
+    "pypdf", "python-docx",
+    "pywin32; sys_platform == 'win32'",
+    "Pillow",
+    "psutil",
 ]
 classifiers = [
     "Development Status :: 1 - Planning",
@@ -22,7 +25,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio", "pytest-qt", "ruff", "mypy", "build"]
+dev = ["pytest", "pytest-asyncio", "pytest-qt", "ruff", "mypy", "build", "types-psutil"]
 voice = ["sounddevice", "vosk", "pyttsx3"]
 
 [project.scripts]

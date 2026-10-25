@@ -11,6 +11,7 @@ from threading import Event
 from typing import Any, Literal
 
 from jarvis.voice.contracts import MAX_AUDIO_BYTES, AudioClip, Transcript, VoiceError
+from jarvis.voice.host import AudioHost
 
 PIPE_LIMIT = MAX_AUDIO_BYTES * 2 + 16384
 READY = b'{"ready":true}'
@@ -107,17 +108,45 @@ async def exchange(
 
 
 class LocalRecorder:
+    def __init__(
+        self, *, host: AudioHost | None = None, auto_stop_on_silence: bool = False
+    ) -> None:
+        self.host = host
+        self.auto_stop_on_silence = auto_stop_on_silence
+
     async def record(
         self, released: Event, ready: Callable[[], None], listen: bool = False
     ) -> AudioClip:
         if released.is_set():
             raise asyncio.CancelledError
-        data = await exchange(
-            {"operation": "record", "listen": listen},
-            seconds=70 if listen else 35,
-            released=released,
-            ready=ready,
-        )
+        if self.auto_stop_on_silence:
+            if self.host is None:
+                raise VoiceError("model")
+            loop = asyncio.get_running_loop()
+            active = True
+
+            def deliver_ready() -> None:
+                if active:
+                    ready()
+
+            def on_ready() -> None:
+                loop.call_soon_threadsafe(deliver_ready)
+
+            try:
+                data = await self.host.call(
+                    {"operation": "record", "auto_stop_on_silence": True},
+                    released=released,
+                    ready=on_ready,
+                )
+            finally:
+                active = False
+        else:
+            data = await exchange(
+                {"operation": "record", "listen": listen},
+                seconds=70 if listen else 35,
+                released=released,
+                ready=ready,
+            )
         try:
             return AudioClip(base64.b64decode(data["pcm"], validate=True))
         except Exception:
@@ -129,15 +158,20 @@ class VoskRecognizer:
 
     def __init__(self, model: Path) -> None:
         self.model = model
+        self.host = AudioHost(model)
+
+    def warmup(self) -> None:
+        self.host.warmup()
+
+    def shutdown(self) -> None:
+        self.host.shutdown()
 
     async def transcribe(self, clip: AudioClip) -> Transcript:
-        data = await exchange(
+        data = await self.host.call(
             {
                 "operation": "transcribe",
-                "model": str(self.model),
                 "pcm": base64.b64encode(clip.pcm).decode("ascii"),
             },
-            seconds=45,
         )
         try:
             return Transcript(data["text"], float(data["confidence"]))

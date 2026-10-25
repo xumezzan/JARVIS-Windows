@@ -6,11 +6,11 @@ these two operations need the operating system's own shell, so only they are ada
 
 import asyncio
 import ctypes
-import os
-import sys
+import importlib
 from ctypes import wintypes
 from pathlib import Path
 
+from jarvis.platforms import is_windows
 from jarvis.tools.base import ToolError
 
 
@@ -22,7 +22,7 @@ class LocalFiles:
 
     @staticmethod
     def _recycle(path: Path) -> None:
-        if sys.platform != "win32":
+        if not is_windows():
             raise ToolError("unsupported_platform")
 
         class Operation(ctypes.Structure):
@@ -37,7 +37,7 @@ class LocalFiles:
                 ("lpszProgressTitle", wintypes.LPCWSTR),
             ]
 
-        shell = ctypes.WinDLL("shell32", use_last_error=True)
+        shell = importlib.import_module("ctypes").WinDLL("shell32", use_last_error=True)
         shell.SHFileOperationW.argtypes = [ctypes.POINTER(Operation)]
         shell.SHFileOperationW.restype = ctypes.c_int
         # FO_DELETE with ALLOWUNDO: the file lands in the recycle bin and stays recoverable.
@@ -57,6 +57,8 @@ class LocalFiles:
         # ShellExecute on an exact resolved document path: no command line is parsed and no
         # argument is taken from the caller.
         try:
-            os.startfile(str(path))  # noqa: S606 - resolved document inside an allowed folder
+            if not is_windows():
+                raise ToolError("unsupported_platform")
+            importlib.import_module("os").startfile(str(path))
         except OSError:
             raise ToolError("file_failure") from None

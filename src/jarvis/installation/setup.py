@@ -52,6 +52,8 @@ def clean_environment(source: Mapping[str, str]) -> dict[str, str]:
         "PROCESSOR_ARCHITEW6432",
         "JARVIS_DATA_DIR",
         "JARVIS_BROWSER_ORIGINS",
+        "JARVIS_BROWSER_MODE",
+        "JARVIS_BROWSER_CDP_ENDPOINT",
         "JARVIS_PLANNER_MODEL",
     }
     env = {key: value for key, value in source.items() if key.upper() in allowed}

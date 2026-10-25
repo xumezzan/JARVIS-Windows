@@ -8,15 +8,24 @@ from typing import cast
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from jarvis.browser.session import BrowserSession
-from jarvis.security.browser_policy import NetworkPolicy
+from jarvis.security.browser_policy import BrowserMode, NetworkPolicy, validate_cdp_endpoint
 from jarvis.tools.base import ExecutionContext, ToolError
 from jarvis.tools.browser import BrowserCommand, BrowserResult
 
 
 class BrowserHost:
-    def __init__(self, policy: NetworkPolicy | None = None, *, headless: bool = True) -> None:
+    def __init__(
+        self,
+        policy: NetworkPolicy | None = None,
+        *,
+        headless: bool | None = None,
+        cdp_endpoint: str = "",
+    ) -> None:
         self.policy = policy or NetworkPolicy()
-        self.headless = headless
+        self.headless = self.policy.mode is BrowserMode.STRICT if headless is None else headless
+        self.cdp_endpoint = validate_cdp_endpoint(cdp_endpoint) if cdp_endpoint else ""
+        if self.cdp_endpoint and self.policy.mode is not BrowserMode.LIVE:
+            raise ValueError("CDP requires Live Browser mode.")
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: Thread | None = None
         self._session: BrowserSession | None = None
@@ -40,7 +49,9 @@ class BrowserHost:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         self._loop = loop
-        self._session = BrowserSession(self.policy, headless=self.headless)
+        self._session = BrowserSession(
+            self.policy, headless=self.headless, cdp_endpoint=self.cdp_endpoint
+        )
         self._serial = asyncio.Lock()
         self._ready.set()
         try:

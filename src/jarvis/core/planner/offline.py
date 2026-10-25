@@ -128,11 +128,8 @@ class OfflineProvider:
         search = re.fullmatch(r"найди ([\s\S]+)", command, re.IGNORECASE)
         combined = re.fullmatch(r"открой chrome и найди ([\s\S]+)", command, re.IGNORECASE)
         if combined:
-            if count == 0:
-                return call("windows.open_app", {"app": "chrome"})
-            # Search remains in Jarvis's owned anonymous Chromium, under browser policy.
+            # The configured browser backend owns both visibility and search, including CDP.
             search = combined
-            count -= 1
         if opened or search:
             if count == 0:
                 if opened:
