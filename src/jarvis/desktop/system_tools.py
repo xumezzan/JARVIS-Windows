@@ -71,9 +71,8 @@ class ChromeCommandProvider:
             return Proposal(
                 kind="clarify",
                 question=(
-                    "Укажите точный публичный HTTPS-адрес сайта, например instagram.com. "
-                    "По неизвестному названию я не выбираю домен. "
-                    "Локальные адреса и запрещённые сайты не открываются."
+                    "Укажите адрес сайта, например instagram.com или http://localhost:8080. "
+                    "Поддерживаются HTTP и HTTPS; указанный адрес откроется в вашем Chrome."
                 ),
             )
         return call("windows.open_chrome_url", {"url": self.url})

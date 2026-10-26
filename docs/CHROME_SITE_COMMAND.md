@@ -6,30 +6,35 @@ A bare domain becomes a canonical HTTPS URL. This single, literal command does n
 need an OpenAI request or cloud consent. Other commands retain their existing
 planner and consent rules; historical context cannot select a URL for this recipe.
 
-`открой сайт instagram` (also `инстаграм`) resolves through the reviewed local alias
-to `https://www.instagram.com/`. Unknown website names ask for an explicit domain;
-the recipe does not append `.com` to an arbitrary brand. Tool input also accepts
-an explicit bare domain and HTTPS URLs without a trailing slash, canonicalizing
-them before creating the exact approval snapshot. URL scheme, public-address,
-blocked-site and DNS checks still apply. The native helper receives only the
-canonical URL. Denial text for external Chrome describes that operation rather
-than suggesting that the Strict Sandbox allowlist governs the owner's Chrome.
+Owner decision, 2026-10-26: opening any website in the owner's Chrome is automatic,
+without a confirmation or Jarvis sandbox restrictions. `windows.open_chrome_url`
+is SAFE. HTTP and HTTPS, localhost, private IP addresses and intranet hosts are
+supported. No allowlist, site tier, public-address requirement or DNS preflight
+is applied to this URL handoff. Chrome handles networking and its browser policies.
 
-`windows.open_chrome_url` is a separate CONFIRM capability. Its approval snapshot
-binds the canonical URL, `external-chrome` service and `current-profile` account.
-It validates the initial public HTTPS destination and existing blocked site tiers,
-preflights DNS after approval, then hands that exact URL to the installed Chrome
-executable with the fixed `--new-tab` switch and `shell=False` in the killable
-Windows helper. It never accepts an executable, profile path or extra switches.
-Existing windows are not closed or restarted, and cookies are not read or copied.
-Chrome selects its existing profile and owns the navigation after this handoff.
+`открой сайт instagram` (also `инстаграм`) resolves to
+`https://www.instagram.com/`. Other hostnames are used literally, including
+single-label intranet names; the recipe never guesses a `.com` suffix. Bare hosts
+default to HTTPS; an explicit HTTP URL stays HTTP. Unicode domain names, paths,
+queries, fragments and non-default ports are normalized before the audited action
+snapshot. Only HTTP/HTTPS web URLs are passed to Chrome, never file/script URLs,
+executables, profile paths or additional command switches. Embedded credentials
+are not accepted into the action/history.
+
+The killable Windows helper hands the canonical URL to the installed Chrome
+executable with the fixed `--new-tab` switch and `shell=False`. Existing windows
+are not closed or restarted, and cookies are not read or copied. Chrome selects
+its existing profile and owns navigation after this handoff. PermissionEngine
+still validates the snapshot, prevents replay, observes cancellation and writes
+a durable metadata-only audit. Simulation never invokes a native adapter, and a
+SAFE navigation cannot be given an approval token.
 
 This is an external-browser launch receipt, not a verified page-load or DOM
-observation. The approval dialog and factual report say so. Redirects and later
+observation. The factual report says so. Redirects and later
 requests in the owner's browser are managed by Chrome, without Jarvis request
 interception. Strict Sandbox and its allowlist remain in force for `browser.*`;
 this launch does not provide those tools access to the owner's tabs/accounts.
-Simulation, denial and stale approvals cannot launch Chrome. No remote-debugging
+No remote-debugging
 port or separate Chrome profile is required for this limited operation.
 
 Network policy rejections during tool preparation now retain `network_denied`

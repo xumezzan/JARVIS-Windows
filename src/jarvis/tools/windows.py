@@ -4,13 +4,12 @@ import json
 from collections.abc import Callable
 from hashlib import sha256
 from typing import Annotated, Literal, Protocol
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from jarvis.permissions.interaction import requires_confirmation
 from jarvis.permissions.policies import Risk
-from jarvis.security.browser_policy import BrowserMode, NetworkPolicy
 from jarvis.tools.base import ExecutionContext, ToolError, ToolModel, ToolSpec
 from jarvis.tools.registry import ToolRegistry
 
@@ -120,7 +119,7 @@ class OpenChromeUrl(ToolModel):
     @field_validator("url")
     @classmethod
     def canonical_destination(cls, value: str) -> str:
-        # Canonicalize before the immutable approval snapshot is created.
+        # Canonicalize before the immutable audited action snapshot is created.
         return normalize_chrome_url(value)
 
 
@@ -131,10 +130,49 @@ class ChromeHandoff(ToolModel):
 
 
 def chrome_url(value: str) -> str:
-    """Initial public HTTPS destination only; Chrome owns subsequent browsing."""
-    if len(value) > 2000:
-        raise ToolError("network_denied")
-    return NetworkPolicy(mode=BrowserMode.LIVE).validate(value)
+    """Web URL syntax only. The owner delegates site and network handling to Chrome."""
+    try:
+        if (
+            not value
+            or len(value) > 2000
+            or "\\" in value
+            or any(
+                ord(char) < 32 or ord(char) == 127 or 0xD800 <= ord(char) <= 0xDFFF
+                for char in value
+            )
+        ):
+            raise ValueError
+        parts = urlsplit(value)
+        if (
+            parts.scheme not in ("http", "https")
+            or not parts.hostname
+            or parts.username is not None
+            or parts.password is not None
+            or any(char.isspace() for char in parts.netloc)
+        ):
+            raise ValueError
+        host = parts.hostname.encode("idna").decode("ascii").lower()
+        port = parts.port
+        if port is not None and port <= 0:
+            raise ValueError
+        authority = f"[{host}]" if ":" in host else host
+        if port is not None and port != (443 if parts.scheme == "https" else 80):
+            authority += f":{port}"
+        safe = "/:@!$&'()*+,;=-._~%"
+        canonical = urlunsplit(
+            (
+                parts.scheme,
+                authority,
+                quote(parts.path or "/", safe=safe),
+                quote(parts.query, safe=safe + "?"),
+                quote(parts.fragment, safe=safe + "?"),
+            )
+        )
+        if len(canonical) > 2000:
+            raise ValueError
+        return canonical
+    except (ValueError, UnicodeError):
+        raise ToolError("network_denied") from None
 
 
 CHROME_SITE_ALIASES = {
@@ -144,15 +182,11 @@ CHROME_SITE_ALIASES = {
 
 
 def normalize_chrome_url(value: str) -> str:
-    """Resolve reviewed names or explicit domains; never guess an unknown brand's domain."""
+    """Resolve known aliases and use other hosts literally, including intranet names."""
     value = value.strip()
     value = CHROME_SITE_ALIASES.get(value.casefold(), value)
     candidate = value if "://" in value else "https://" + value
-    canonical = chrome_url(candidate)
-    host = urlsplit(canonical).hostname or ""
-    if "." not in host and ":" not in host:
-        raise ToolError("network_denied")
-    return canonical
+    return chrome_url(candidate)
 
 
 class FocusApp(ToolModel):
@@ -418,7 +452,6 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
         return True
 
     async def chrome_run(args: OpenChromeUrl, context: ExecutionContext) -> ChromeHandoff:
-        await NetworkPolicy(mode=BrowserMode.LIVE).validate_live_request(args.url)
         await context.checkpoint()
         receipt = await backend.call(
             NativeRequest(operation="open_chrome_url", url=args.url), context
@@ -435,11 +468,13 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
     registry.register(
         ToolSpec(
             "windows.open_chrome_url",
-            "Передать точный HTTPS-адрес обычному Chrome в новой вкладке текущего профиля. "
-            "Требует подтверждения; использует существующие аккаунты. "
+            "Открыть любой HTTP/HTTPS-сайт в обычном Chrome, в новой вкладке текущего профиля. "
+            "Без подтверждения, списка разрешённых сайтов и проверок сети Jarvis. "
+            "Поддерживает локальные адреса и intranet; использует существующие аккаунты. "
             "Не читает вкладки и не проверяет загрузку страницы. "
             "После передачи сетью и перенаправлениями управляет Chrome, не Strict Sandbox.",
-            Risk.CONFIRM,
+            # Owner's explicit policy on 2026-10-26: opening a website is automatic.
+            Risk.SAFE,
             OpenChromeUrl,
             ChromeHandoff,
             chrome_check,

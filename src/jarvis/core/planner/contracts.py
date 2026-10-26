@@ -197,9 +197,8 @@ class PlanResult:
         if self.error == "network_denied":
             if self.steps and self.steps[-1].tool == "windows.open_chrome_url":
                 rows.append(
-                    "Адрес не прошёл проверку для обычного Chrome. Укажите публичный "
-                    "HTTPS-адрес, например https://www.instagram.com/. "
-                    "Локальные адреса и запрещённые сайты не открываются."
+                    "Не удалось разобрать веб-адрес. Укажите HTTP- или HTTPS-адрес, "
+                    "например instagram.com или http://localhost:8080."
                 )
             else:
                 rows.append(

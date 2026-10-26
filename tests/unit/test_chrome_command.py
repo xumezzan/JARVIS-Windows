@@ -1,11 +1,10 @@
-"""Exact local navigation, approval binding and truthful external-browser receipts."""
+"""Owner-directed website navigation without sandbox filtering or confirmation."""
 
 import json
 import subprocess
 from contextlib import closing
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
-from uuid import uuid4
 
 import pytest
 
@@ -68,25 +67,25 @@ def test_reviewed_site_names_and_domains(command: str) -> None:
         ("https://www.instagram.com/?next=explore", "https://www.instagram.com/?next=explore"),
     ],
 )
-def test_tool_normalizes_before_binding_approval(tmp_path: Path, raw: str, expected: str) -> None:
+def test_tool_normalizes_before_audited_snapshot(tmp_path: Path, raw: str, expected: str) -> None:
     backend = Mock()
     registry = ToolRegistry()
     register_windows(registry, backend)
     with closing(AuditLog(tmp_path / "audit.sqlite3")) as audit:
         engine = PermissionEngine(registry, ApprovalStore(), audit)
         action = engine.prepare("windows.open_chrome_url", {"url": raw}, Mode.EXECUTE)
-        assert isinstance(action, Action) and action.risk is Risk.CONFIRM
+        assert isinstance(action, Action) and action.risk is Risk.SAFE
         assert json.loads(action.payload)["url"] == expected
         assert not backend.call.called
 
 
 @pytest.mark.asyncio
-async def test_unknown_site_name_asks_for_domain_without_guessing() -> None:
+async def test_intranet_hosts_are_literal_and_malformed_urls_are_clarified() -> None:
     assert chrome_destination("открой сайт unknown-brand") == "unknown-brand"
-    assert chrome_command("открой сайт unknown-brand") is None
+    assert chrome_command("открой сайт unknown-brand") == "https://unknown-brand/"
     assert chrome_destination("открой блокнот") is None
     provider = ChromeCommandProvider(None)
-    data = PlannerInput("открой сайт unknown-brand", (), (), Mode.EXECUTE, "[]")
+    data = PlannerInput("открой сайт https://", (), (), Mode.EXECUTE, "[]")
     proposal = await provider.propose(data)
     assert proposal.kind == "clarify"
     clarified = PlannerInput(
@@ -106,42 +105,53 @@ async def test_unknown_site_name_asks_for_domain_without_guessing() -> None:
         "открой сайт javascript:alert(1)",
         "открой сайт file:///C:/Windows/test.txt",
         "открой сайт https://user:password@apple.com",
-        "открой сайт https://127.0.0.1",
-        "открой сайт https://localhost",
-        "открой сайт https://host.internal",
-        "открой сайт https://1password.com",
         "открой сайт --remote-debugging-port=9222",
     ],
 )
-def test_no_implicit_commands_or_private_destinations(command: str) -> None:
+def test_only_web_navigation_commands_are_recipes(command: str) -> None:
     assert chrome_command(command) is None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("approved", [False, True])
-async def test_exact_approval_precedes_dns_and_native_handoff(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, approved: bool
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://apple.com/",
+        "http://example.com/",
+        "http://localhost:8080/",
+        "http://127.0.0.1:8080/",
+        "http://[::1]:8080/",
+        "https://host.internal/",
+        "https://1password.com/",
+        "http://intranet/",
+        "https://site-does-not-exist.invalid/",
+    ],
+)
+async def test_any_web_host_opens_without_approval_or_sandbox_network_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, url: str
 ) -> None:
     backend = Mock()
-    backend.call = AsyncMock(return_value=WindowsResult(performed=True, text="https://apple.com/"))
-    dns = AsyncMock(return_value="https://apple.com/")
+    backend.call = AsyncMock(return_value=WindowsResult(performed=True, text=url))
+    dns = AsyncMock(side_effect=AssertionError("Jarvis must delegate DNS to Chrome"))
     monkeypatch.setattr(NetworkPolicy, "validate_live_request", dns)
+    policy = Mock(side_effect=AssertionError("No sandbox policy for external Chrome"))
+    monkeypatch.setattr(NetworkPolicy, "validate", policy)
     registry, store = ToolRegistry(), ApprovalStore()
     register_windows(registry, backend)
     with closing(AuditLog(tmp_path / "audit.sqlite3")) as audit:
         engine = PermissionEngine(registry, store, audit)
-        action = engine.prepare(
-            "windows.open_chrome_url", {"url": "https://apple.com/"}, Mode.EXECUTE
-        )
-        assert isinstance(action, Action) and action.risk is Risk.CONFIRM
+        action = engine.prepare("windows.open_chrome_url", {"url": url}, Mode.EXECUTE)
+        assert isinstance(action, Action) and action.risk is Risk.SAFE
         assert not backend.call.called and not dns.called
-        token = store.take_authority(audit.approved).approve(action) if approved else None
-        outcome = await engine.execute(action, token)
-        assert outcome.status is (Status.SUCCESS if approved else Status.DENIED)
-        assert dns.call_count == int(approved)
-        assert backend.call.call_count == 2 * int(approved)
-        assert (await engine.execute(action, token)).status is Status.INVALID
-        assert "apple.com" not in "".join(audit.recent())
+        with pytest.raises(ValueError):
+            store.take_authority(audit.approved).approve(action)
+        outcome = await engine.execute(action)
+        assert outcome.status is Status.SUCCESS
+        assert not dns.called and not policy.called
+        assert backend.call.call_count == 2
+        assert json.loads(outcome.result_json or "{}")["url"] == url
+        assert (await engine.execute(action)).status is Status.INVALID
+        assert url not in "".join(audit.recent())
 
 
 @pytest.mark.asyncio
@@ -153,8 +163,7 @@ async def test_chrome_simulation_has_no_dns_or_process_effects(tmp_path: Path) -
         engine = PermissionEngine(registry, store, audit)
         action = engine.prepare("windows.open_chrome_url", {"url": "https://apple.com/"})
         assert isinstance(action, Action)
-        token = store.take_authority(audit.approved).approve(action)
-        assert (await engine.execute(action, token)).status is Status.SIMULATED
+        assert (await engine.execute(action)).status is Status.SIMULATED
         assert not backend.call.called
 
 
@@ -183,6 +192,7 @@ def test_native_launch_uses_fixed_executable_and_new_tab_only(
     [
         ("открой сайт apple.com", "https://apple.com/"),
         ("открой сайт instagram", "https://www.instagram.com/"),
+        ("открой сайт http://localhost:8080", "http://localhost:8080/"),
     ],
 )
 async def test_desktop_literal_url_works_without_cloud_or_changing_browser_policy(
@@ -200,34 +210,13 @@ async def test_desktop_literal_url_works_without_cloud_or_changing_browser_polic
     monkeypatch.setattr(NetworkPolicy, "validate_live_request", AsyncMock())
     events: list[dict[str, object]] = []
     service = DesktopService(AppConfig(tmp_path), events.append)
+    approve = AsyncMock(side_effect=AssertionError("Website navigation must not ask approval"))
+    monkeypatch.setattr(service, "_approve", approve)
     try:
         service.settings = service.settings.model_copy(update={"provider": "openai"})
         assert service.start(command, Mode.EXECUTE)
         import asyncio
 
-        async with asyncio.timeout(service.limits.total_seconds):
-            while service.prompt is None:
-                await asyncio.sleep(0.005)
-        prompt = service.prompt
-        assert prompt is not None and isinstance(prompt.value, Action)
-        assert json.loads(prompt.value.payload)["url"] == expected_url
-        assert not calls
-        wire = prompt.wire()
-        from jarvis.desktop.protocol import Request
-
-        await service.handle(
-            Request.model_validate(
-                {
-                    "id": uuid4(),
-                    "operation": "respond",
-                    "reply": {
-                        "prompt_id": prompt.id,
-                        "signature": wire["signature"],
-                        "approved": True,
-                    },
-                }
-            )
-        )
         worker = service.worker
         assert worker is not None
         await asyncio.wait_for(asyncio.shield(worker), service.limits.total_seconds)
@@ -235,18 +224,20 @@ async def test_desktop_literal_url_works_without_cloud_or_changing_browser_polic
         assert "загрузка страницы не проверена" in service.last_speech
         assert "загрузка страницы не проверена" in service.task.summary
         assert [item.operation for item in calls] == ["check_chrome", "open_chrome_url"]
+        assert calls[-1].url == expected_url
+        assert service.prompt is None and not approve.called
         assert service.config.browser_mode.value == "strict"
         assert not service.start("прочитай apple.com", Mode.EXECUTE)
     finally:
         await service.shutdown()
 
 
-def test_network_policy_denial_keeps_finite_reason_not_invalid_request(tmp_path: Path) -> None:
+def test_non_web_address_is_rejected_before_the_native_adapter(tmp_path: Path) -> None:
     registry = ToolRegistry()
     register_windows(registry, Mock())
     with closing(AuditLog(tmp_path / "audit.sqlite3")) as audit:
         engine = PermissionEngine(registry, ApprovalStore(), audit)
-        outcome = engine.prepare("windows.open_chrome_url", {"url": "https://127.0.0.1/"})
+        outcome = engine.prepare("windows.open_chrome_url", {"url": "file:///C:/test.txt"})
         assert isinstance(outcome, Outcome)
         assert outcome.status is Status.DENIED and outcome.error is ErrorCode.NETWORK_DENIED
         assert "network_denied" in "".join(audit.recent())
