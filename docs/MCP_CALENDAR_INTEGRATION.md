@@ -168,9 +168,11 @@ Runner и canonical observations остаются полными. Проверк
 96 labels и точные target metadata, сохраняя существующий SoM fixture budget 180000.
 
 Локальная проверка 2026-10-26: Ruff, format-check, mypy, pytest
-(1834 passed, 23 skipped), GUI smoke, wheel/sdist build, pip check и 11 Electron
-tests прошли с кодом 0. После последнего изменения stdio cleanup отдельно
-прошли 42 MCP/Calendar tests. Обычный python -m jarvis запущен с временным data_dir;
+(1835 passed, 23 skipped), GUI smoke, wheel/sdist build, pip check и 11 Electron
+tests прошли с кодом 0. Последнее уточнение read-back отдельно проверено всеми
+16 Calendar tests: минимальный 201 принимается по ID, а полный объект проверяется
+только GET; повреждённый список участников не считается подтверждением.
+Обычный python -m jarvis запущен с временным data_dir;
 проверены главный экран и Workspace MCP, затем приложение закрыто штатно с кодом 0.
 Сервисы/ключи/микрофон не подключались.
 

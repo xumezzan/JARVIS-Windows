@@ -54,6 +54,7 @@ class CalendarGraph(FakeGraph):
         self.next_link = False
         self.params: dict[str, str] = {}
         self.session: MailSession | None = None
+        self.minimal_post = False
 
     async def request(
         self,
@@ -77,7 +78,7 @@ class CalendarGraph(FakeGraph):
             }
             if self.uncertain:
                 raise RuntimeError("synthetic uncertain effect")
-            return 201, deepcopy(self.event)
+            return 201, {"id": self.event["id"]} if self.minimal_post else deepcopy(self.event)
         if path == "/me/calendarView":
             self.params = dict(params or {})
             result: dict[str, object] = {"value": [deepcopy(self.event)] if self.event else []}
@@ -92,6 +93,8 @@ class CalendarGraph(FakeGraph):
             stored["start"]["dateTime"] = "2026-10-26T12:00:00"
         elif self.tamper == "attendees":
             stored["attendees"][0]["emailAddress"]["address"] = "other@example.test"
+        elif self.tamper == "malformed-attendee":
+            stored["attendees"].append(None)
         elif self.tamper == "location":
             stored["location"]["displayName"] = "Other room"
         elif self.tamper == "account":
@@ -156,8 +159,12 @@ def test_calendar_scope_and_graph_routes_are_narrow() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ram_draft_then_one_confirmed_creation_and_full_readback(bench: Any) -> None:
+@pytest.mark.parametrize("minimal_post", [False, True])
+async def test_ram_draft_then_one_confirmed_creation_and_full_readback(
+    bench: Any, minimal_post: bool
+) -> None:
     session, graph, engine, authority, _ = bench
+    graph.minimal_post = minimal_post
     before = list(graph.calls)
     args = await draft(engine, session)
     assert graph.calls == before, "Local draft must not request a token or call Graph."
@@ -182,7 +189,8 @@ async def test_ram_draft_then_one_confirmed_creation_and_full_readback(bench: An
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "changed", ["body", "time", "attendees", "location", "account", "transaction"]
+    "changed",
+    ["body", "time", "attendees", "malformed-attendee", "location", "account", "transaction"],
 )
 async def test_readback_must_match_every_approved_field(bench: Any, changed: str) -> None:
     session, graph, engine, authority, _ = bench

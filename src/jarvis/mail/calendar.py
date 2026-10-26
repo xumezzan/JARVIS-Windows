@@ -6,7 +6,7 @@ from urllib.parse import quote
 from pydantic import Field
 
 from jarvis.connectors.microsoft.calendar import SELECT, event_of, instant, payload_of
-from jarvis.connectors.microsoft.models import AccountInput, Draft, Event, RangeInput
+from jarvis.connectors.microsoft.models import AccountInput, Draft, Event, EventInput, RangeInput
 from jarvis.mail.credentials import MailFailure
 from jarvis.mail.models import Account
 from jarvis.mail.session import MailSession
@@ -93,8 +93,8 @@ class CalendarSession:
         key = data.get("id")
         if status != 201 or not isinstance(key, str) or key in (".", ".."):
             raise MailFailure("mail_response")
-        created = event_of(data)  # Validate the ID before building the fixed /me route.
-        if created.id != key or not self.session.matches(args.account):
+        created_id = EventInput(account=args.account, event_id=key).event_id
+        if not self.session.matches(args.account):
             raise MailFailure("mail_account_changed")
         await context.checkpoint()
         # Re-verify the account before read-back too; never report an old account's event.
@@ -102,7 +102,7 @@ class CalendarSession:
         read_status, stored = await self.session.graph.request(
             token,
             "GET",
-            "/me/events/" + quote(created.id, safe=""),
+            "/me/events/" + quote(created_id, safe=""),
             params={"$select": SELECT + ",body,transactionId"},
         )
         await context.checkpoint()
@@ -124,7 +124,7 @@ class CalendarSession:
         if (
             read_status != 200
             or not self.session.matches(args.account)
-            or observed.id != created.id
+            or observed.id != created_id
             or observed.subject != args.event.subject
             or instant(stored.get("start")) != args.event.start
             or instant(stored.get("end")) != args.event.end
@@ -136,6 +136,8 @@ class CalendarSession:
             or not isinstance(location, dict)
             or location.get("displayName") != args.event.location
             or addresses is None
+            or not isinstance(attendees, list)
+            or len(attendees) != len(args.event.attendees)
             or len(addresses) != len(args.event.attendees)
             or any(not isinstance(value, str) for value in addresses)
             or sorted(str(value).casefold() for value in addresses)
