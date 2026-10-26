@@ -59,7 +59,13 @@ class AppConfig:
 
     @property
     def file_policy(self) -> FilePolicy:
-        return FilePolicy(self.file_roots, denied_roots=(str(self.data_dir / "browser_profile"),))
+        return FilePolicy(
+            self.file_roots,
+            denied_roots=(
+                str(self.data_dir / "browser_profile"),
+                str(self.data_dir / "workspace_profile.json"),
+            ),
+        )
 
     def __post_init__(self) -> None:
         object.__setattr__(

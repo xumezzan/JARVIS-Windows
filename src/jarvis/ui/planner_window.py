@@ -54,6 +54,8 @@ from jarvis.ui.preferences import HomePreferences
 from jarvis.ui.routine_panel import RoutinePanel
 from jarvis.ui.theme import PALETTES
 from jarvis.ui.voice_panel import VoicePanel
+from jarvis.ui.workspace_mcp_panel import WorkspaceMcpPanel
+from jarvis.workspace.store import WorkspaceStore
 
 
 def note(text: str) -> QLabel:
@@ -145,6 +147,8 @@ class PlannerWindow(QDialog):
         mcp_scroll.setWidgetResizable(True)
         mcp_scroll.setWidget(self.mcp)
         self.tabs.addTab(mcp_scroll, "Серверы MCP")
+        self.workspace_mcp = WorkspaceMcpPanel(WorkspaceStore(config.data_dir))
+        self.tabs.addTab(self.workspace_mcp, "Workspace MCP")
         self.connections = ConnectionsPanel(session=self.mail_session, audit=self.audit)
         connections_scroll = QScrollArea()
         connections_scroll.setWidgetResizable(True)
@@ -699,6 +703,7 @@ class PlannerWindow(QDialog):
         self.memory.shutdown()
         self.mail.shutdown()
         self.mcp.shutdown()
+        self.workspace_mcp.shutdown()
         self.connections.shutdown()
         self.routines.shutdown()
         if self.briefing_worker is not None:

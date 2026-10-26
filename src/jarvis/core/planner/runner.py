@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from dataclasses import replace
 from threading import Event
 from uuid import uuid4
@@ -296,10 +297,25 @@ class Runner:
             if len(self.steps) >= self.limits.max_steps:
                 return PlanResult("limit", tuple(self.steps))
             args = json.loads(proposal.arguments)
-            if proposal.tool in ("outlook.local_draft", "outlook.save_draft", "outlook.send"):
-                message = args.get("message", {}) if isinstance(args, dict) else {}
+            calendar_invite = proposal.tool in (
+                "calendar.create_draft_event",
+                "calendar.create_event",
+            )
+            if (
+                proposal.tool in ("outlook.local_draft", "outlook.save_draft", "outlook.send")
+                or calendar_invite
+            ):
+                message = (
+                    args.get("event" if calendar_invite else "message", {})
+                    if isinstance(args, dict)
+                    else {}
+                )
                 recipients = (
-                    [value for field in ("to", "cc", "bcc") for value in message.get(field, [])]
+                    list(message.get("attendees", []))
+                    if calendar_invite and isinstance(message, dict)
+                    else [
+                        value for field in ("to", "cc", "bcc") for value in message.get(field, [])
+                    ]
                     if isinstance(message, dict)
                     else []
                 )
@@ -309,15 +325,21 @@ class Runner:
                         "\n".join([command, *(item.answer for item in answers)]),
                     )
                 )
-                if not recipients or any(
+                if (not recipients and not calendar_invite) or any(
                     not isinstance(r, str) or r not in supplied for r in recipients
                 ):
                     if len(answers) >= self.limits.max_questions:
                         return PlanResult("limit", tuple(self.steps))
                     question = (
-                        "Укажите точные email для Кому, Копия и Скрытая копия. "
-                        "Адрес из письма, памяти или предложения модели не определяет получателя. "
-                        "Ответ уточняет данные и не подтверждает отправку."
+                        "Укажите точные email участников встречи. "
+                        "Уточнение не подтверждает приглашение."
+                        if calendar_invite
+                        else (
+                            "Укажите точные email для Кому, Копия и Скрытая копия. "
+                            "Адрес из письма, памяти или предложения модели "
+                            "не определяет получателя. "
+                            "Ответ уточняет данные и не подтверждает отправку."
+                        )
                     )
                     answer = await self._ask(question)
                     if answer is None:
@@ -375,6 +397,15 @@ class Runner:
                                     "mark_id": None,
                                 }
                             ).model_dump(mode="json")
+            registered = self.registry.get(proposal.tool)
+            if registered is not None:
+                with suppress(ValueError, TypeError):  # prepare() owns INVALID and its audit.
+                    # Function calls arrive as JSON: an array is the valid wire form
+                    # of a tuple. Decode with the registered strict JSON schema before
+                    # the engine's independent strict Python validation and policy.
+                    args = registered.parameters.model_validate_json(
+                        json.dumps(args, ensure_ascii=False, allow_nan=False), strict=True
+                    ).model_dump()
             action = self.engine.prepare(proposal.tool, args, mode)
             if isinstance(action, Outcome):
                 self.steps.append(
@@ -538,6 +569,14 @@ class Runner:
             ]
             if not any(value.get("account") == args.get("account") for value in observations):
                 return False
+            if action.tool == "calendar.create_event":
+                return any(
+                    value.get("state") == "local_draft"
+                    and value.get("draft_id") == args.get("draft_id")
+                    and value.get("event") == args.get("event")
+                    and value.get("account") == args.get("account")
+                    for value in observations
+                )
             if action.tool == "outlook.read":
                 return any(
                     row.get("id") == args.get("message_id")
@@ -549,16 +588,25 @@ class Runner:
             if action.tool in ("calendar.get", "calendar.update", "calendar.cancel"):
                 # A meeting is addressable only after this task has seen it listed, read
                 # or created; an identifier the model supplies on its own is refused.
+                calendar_observations = [
+                    json.loads(step.outcome.result_json or "{}")
+                    for step in self.steps
+                    if step.tool.startswith("calendar.") and step.outcome.status is Status.SUCCESS
+                ]
                 listed = any(
                     row.get("id") == args.get("event_id")
-                    for value in observations
+                    for value in calendar_observations
                     if value.get("state") == "listed"
-                    for row in json.loads(value.get("data", "[]"))
+                    for row in (
+                        value["events"]
+                        if isinstance(value.get("events"), list)
+                        else json.loads(value.get("data", "[]"))
+                    )
                     if isinstance(row, dict)
                 )
                 return listed or any(
                     value.get("event_id") == args.get("event_id")
-                    for value in observations
+                    for value in calendar_observations
                     if value.get("event_id")
                 )
             return True

@@ -24,13 +24,16 @@ from jarvis.core.planner.contracts import Limits, Provider, Step
 from jarvis.core.planner.offline import OfflineProvider
 from jarvis.core.planner.openai_provider import OpenAIProvider
 from jarvis.mail.session import MailSession
+from jarvis.mcp.bridge import register_workspace_mcp
 from jarvis.memory.store import MemoryFailure, MemoryStore
 from jarvis.observability.audit import AuditLog
 from jarvis.permissions.approvals import Action, ApprovalStore
 from jarvis.permissions.engine import PermissionEngine
+from jarvis.permissions.matrix import load_matrix
 from jarvis.permissions.policies import Mode
 from jarvis.platforms.windows.transport import ProcessBackend
 from jarvis.tools.browser import register_browser
+from jarvis.tools.calendar import register_calendar
 from jarvis.tools.filesystem import register_filesystem
 from jarvis.tools.local import LocalOutbox, local_registry
 from jarvis.tools.outlook import register_outlook
@@ -82,6 +85,9 @@ class PlannerWindow(QDialog):
         register_filesystem(self.registry, config.filesystem_policy)
         self.mail_session = mail_session or MailSession()
         register_outlook(self.registry, self.mail_session)
+        matrix = load_matrix(config.data_dir / "permissions.json")
+        register_calendar(self.registry, self.mail_session, matrix)
+        register_workspace_mcp(self.registry, config.workspace_profile.mcp_servers, matrix)
         self.audit = AuditLog(config.data_dir / "audit.sqlite3")
         store = ApprovalStore()
         self.engine = PermissionEngine(self.registry, store, self.audit)

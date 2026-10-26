@@ -17,6 +17,9 @@ ROUTES = (
     Route("GET", r"/me/mailFolders/(?:inbox|sentitems|drafts)/messages"),
     Route("POST", r"/me/messages"),
     Route("POST", r"/me/sendMail"),
+    Route("GET", r"/me/calendarView"),
+    Route("POST", r"/me/events"),
+    Route("GET", r"/me/events/[A-Za-z0-9%_.=+-]+"),
 )
 
 # Every other transport category becomes mail_network: a mail user cannot act on the
@@ -45,7 +48,10 @@ class GraphTransport:
         self.transport = ServiceTransport(
             "https://graph.microsoft.com/v1.0",
             ROUTES,
-            headers={"Prefer": 'outlook.body-content-type="text", IdType="ImmutableId"'},
+            headers={
+                "Prefer": 'outlook.body-content-type="text", outlook.timezone="UTC", '
+                'IdType="ImmutableId"'
+            },
             timeout_seconds=12,
             max_response_bytes=262144,
             success_statuses=(200, 201, 202),
