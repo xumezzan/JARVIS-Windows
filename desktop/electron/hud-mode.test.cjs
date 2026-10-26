@@ -40,6 +40,17 @@ function setup() {
 }
 const active = {task: {id: "task", state: "working", phase: "executing"}, prompt: null};
 
+test("an inline cloud-data question restores the full window before transmission", () => {
+  const {window, hud} = setup();
+  const before = window.getBounds();
+  hud.update(active);
+  assert.equal(hud.mode, "hud");
+  hud.update({...active, cloud_review: {id: "review"}});
+  assert.equal(hud.mode, "normal");
+  assert.deepEqual(window.getBounds(), before);
+  assert.equal(window.focused, true);
+});
+
 test("HUD is exactly 360x120, top right in workArea, and restores every terminal outcome", () => {
   for (const state of ["finished", "error", "cancelled", "timeout", "limit", "simulated", "no_action"]) {
     const {window, hud, modes} = setup();

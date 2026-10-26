@@ -149,6 +149,7 @@ for (const [channel, operation, field] of [
   ["memory", "memory", "memory"],
   ["eleven", "eleven", "eleven"],
   ["workspace", "workspace", "workspace"],
+  ["cloud-review", "cloud_review", "cloud_review"],
 ]) {
   ipcMain.handle(`jarvis-app:${channel}`, (event, ...args) => {
     verifiedWindow(event, args, 1);

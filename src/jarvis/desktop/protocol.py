@@ -34,6 +34,12 @@ class Reply(ToolModel):
     answer: str = Field(default="", max_length=4000, repr=False)
 
 
+class CloudReviewReply(ToolModel):
+    id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    allow_current: bool = False
+    allow_history: bool = False
+
+
 class MemoryEdit(ToolModel):
     operation: Literal[
         "read",
@@ -137,6 +143,7 @@ class Request(ToolModel):
         "watcher_action",
         "workspace",
         "workspace_browser",
+        "cloud_review",
     ]
     sample_id: str = Field(default="", pattern=r"^(?:[a-f0-9]{32})?$")
     clipboard_text: str = Field(default="", max_length=16000, repr=False)
@@ -157,6 +164,7 @@ class Request(ToolModel):
     mail: MailCommand | None = None
     eleven: ElevenCommand | None = None
     workspace: WorkspaceCommand | None = None
+    cloud_review: CloudReviewReply | None = None
     target_id: str = Field(default="", pattern=r"^(?:[a-f0-9]{32})?$")
 
     @model_validator(mode="after")
@@ -196,6 +204,7 @@ class Request(ToolModel):
             ("mail", self.mail),
             ("eleven", self.eleven),
             ("workspace", self.workspace),
+            ("cloud_review", self.cloud_review),
         ):
             if (self.operation == operation) != (value is not None):
                 raise ValueError("Payload outside its operation.")

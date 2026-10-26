@@ -22,6 +22,7 @@ from jarvis.core.planner.contracts import Limits, Provider, Step
 from jarvis.core.planner.openai_provider import OpenAIProvider
 from jarvis.core.planner.runner import Runner
 from jarvis.core.report import written
+from jarvis.desktop.cloud_consent import CloudReview, ReviewedCloudProvider, review_reasons
 from jarvis.desktop.protocol import MAX_REQUEST, MAX_RESPONSE, Request, Settings
 from jarvis.desktop.settings import UiSettings, UiSettingsStore
 from jarvis.desktop.system_tools import (
@@ -132,6 +133,7 @@ class DesktopService:
         self.started_count = self.completed_count = 0
         self.history: deque[dict[str, object]] = deque(maxlen=20)
         self.notice = ""
+        self.cloud_review: CloudReview | None = None
         self.workspace_state: dict[str, object] | None = None
         self.closing = False
         self.ui_store = UiSettingsStore(config.data_dir)
@@ -225,7 +227,7 @@ class DesktopService:
     def snapshot(self) -> dict[str, object]:
         return {
             "ready": not self.closing,
-            "can_run": not self.busy and self.voice.task is None,
+            "can_run": not self.busy and self.voice.task is None and self.cloud_review is None,
             "platform": sys.platform,
             "provider": self.settings.provider,
             "model": self.settings.model,
@@ -248,6 +250,7 @@ class DesktopService:
             "notice": self.notice,
             "watcher": self.watchers.snapshot(),
             "prompt": self.prompt.wire() if self.prompt else None,
+            "cloud_review": self.cloud_review.wire() if self.cloud_review else None,
             "memory_entries": self.entries,
             "recent_tasks": [item.model_dump(mode="json") for item in self.conversation.read()],
             "playbooks": [
@@ -276,7 +279,10 @@ class DesktopService:
         if not self.closing:
             self.write({"event": "state", "state": self.snapshot()})
             self.voice.reconcile_wake(
-                not self.busy and self.prompt is None and not self._wake_blocked
+                not self.busy
+                and self.prompt is None
+                and self.cloud_review is None
+                and not self._wake_blocked
             )
 
     def transcript(self, text: str) -> None:
@@ -473,6 +479,120 @@ class DesktopService:
     def _voice_start(self, command: str, mode: Mode) -> bool:
         return self.start(command, mode)
 
+    def _clear_cloud_review(self) -> None:
+        pending, self.cloud_review = self.cloud_review, None
+        if pending is not None and pending.future is not None and not pending.future.done():
+            pending.future.cancel()
+
+    def _prepare_cloud_request(self, raw: Request) -> tuple[Request, bool] | None:
+        self._clear_cloud_review()
+        local = self.override_provider is None and chrome_destination(raw.command) is not None
+        if self.settings.provider != "openai" or local:
+            return raw, False
+        reasons = review_reasons(raw.command)
+        if raw.cloud_consent and not reasons:
+            # Compatibility for an explicit one-task grant from existing trusted clients.
+            return raw, True
+        if self.ui_settings.routine_cloud_consent and not reasons:
+            return raw.model_copy(
+                update={
+                    "cloud_consent": True,
+                    "conversation_consent": True,
+                    "memory_consent": True,
+                }
+            ), False
+        self.cloud_review = CloudReview(
+            uuid4().hex,
+            raw,
+            reasons or ("Разрешение на обработку задачи в OpenAI",),
+            time() + 300,
+            self.settings.model_dump_json(),
+            self.settings.task_memory_enabled,
+        )
+        self.notice = ""
+        self.publish()
+        return None
+
+    async def _launch_request(self, raw: Request, *, reviewed: bool = False) -> bool:
+        if self.busy or self.voice.task is not None:
+            raise ValueError("busy")
+        if reviewed:
+            authorized = raw
+        else:
+            prepared = self._prepare_cloud_request(raw)
+            if prepared is None:
+                return False
+            authorized, reviewed = prepared
+        return self.start(
+            authorized.command,
+            Mode(authorized.mode),
+            cloud_consent=authorized.cloud_consent,
+            memory=await self._memory_context(authorized),
+            conversation_consent=authorized.conversation_consent,
+            _authorized=True,
+            _reviewed=reviewed,
+            _request=authorized,
+        )
+
+    async def _respond_cloud_review(self, raw: Request) -> None:
+        reply, pending = raw.cloud_review, self.cloud_review
+        if (
+            reply is None
+            or pending is None
+            or reply.id != pending.id
+            or time() >= pending.expires_at
+        ):
+            self._clear_cloud_review()
+            raise ValueError("cloud_review_expired")
+        if pending.settings_snapshot != self.settings.model_dump_json():
+            self._clear_cloud_review()
+            raise ValueError("cloud_review_changed")
+        self.cloud_review = None  # Consume before starting any work or resolving a waiter.
+        if not reply.allow_current:
+            if pending.future is not None and not pending.future.done():
+                pending.future.cancel()
+            self.cancel()
+            self.notice = "Передача задачи в OpenAI отменена."
+            return
+        self.notice = ""
+        if pending.future is not None:
+            if pending.future.done():
+                raise ValueError("cloud_review_expired")
+            pending.future.set_result(reply.allow_history)
+        else:
+            await self._launch_request(
+                pending.request.model_copy(
+                    update={
+                        "cloud_consent": True,
+                        "memory_consent": True,
+                        "conversation_consent": reply.allow_history,
+                    }
+                ),
+                reviewed=True,
+            )
+
+    async def _review_more_cloud_context(self, raw: Request) -> bool:
+        future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        pending = CloudReview(
+            uuid4().hex,
+            raw,
+            ("Задача стала многошаговой или требует передачи скриншота",),
+            time() + 60,
+            self.settings.model_dump_json(),
+            self.settings.task_memory_enabled,
+            future,
+        )
+        self.cloud_review = pending
+        self.task.phase = "cloud_review"
+        self.publish()
+        try:
+            return await asyncio.wait_for(asyncio.shield(future), 60)
+        except TimeoutError:
+            raise asyncio.CancelledError from None
+        finally:
+            if self.cloud_review is pending:
+                self._clear_cloud_review()
+
     def start(
         self,
         command: str,
@@ -481,22 +601,39 @@ class DesktopService:
         cloud_consent: bool = False,
         memory: MemoryContext | None = None,
         conversation_consent: bool = False,
+        _authorized: bool = False,
+        _reviewed: bool = False,
+        _request: Request | None = None,
     ) -> bool:
         if self.busy or self.voice.task is not None or self.closing:
             raise ValueError("busy")
+        request = _request or Request(
+            id=uuid4(),
+            operation="run",
+            command=command,
+            mode=mode.value,
+            cloud_consent=cloud_consent,
+            conversation_consent=conversation_consent,
+        )
+        if not _authorized:
+            prepared = self._prepare_cloud_request(request)
+            if prepared is None:
+                return False
+            request, _reviewed = prepared
+            cloud_consent = request.cloud_consent
+            conversation_consent = request.conversation_consent
         provider = self.override_provider
         direct_target = chrome_destination(command) if provider is None else None
         if direct_target is not None:
             provider = ChromeCommandProvider(chrome_command(command))
         if self.settings.provider == "openai" and direct_target is None:
-            if not cloud_consent:
-                self.notice = (
-                    "Проверьте текст и разрешите передачу команды, наблюдений "
-                    "и профиля рабочего пространства в OpenAI."
-                )
-                self.publish()
-                return False
             provider = provider or OpenAIProvider(self.settings.model)
+            provider = ReviewedCloudProvider(
+                provider,
+                lambda: self._review_more_cloud_context(request),
+                reviewed=_reviewed,
+                history_allowed=conversation_consent,
+            )
         provider = provider or DesktopOfflineProvider()
         self.voice.wake_review = False
         self.voice.pause_wake()
@@ -586,11 +723,13 @@ class DesktopService:
                 if not self._task_cancelled and not self.closing:
                     self.voice.speak(self.last_speech)
         finally:
+            self._clear_cloud_review()
             self.worker = None
             self.runner = None
             self.publish()
 
     def cancel(self) -> None:
+        self._clear_cloud_review()
         self._task_cancelled = True
         self.cloud_voice = None
         self.voice.cancel()
@@ -659,14 +798,10 @@ class DesktopService:
                         raise ValueError("busy")
                     self.auxiliary = asyncio.create_task(self._auxiliary(raw))
             elif raw.operation == "run":
-                if not self.start(
-                    raw.command,
-                    Mode(raw.mode),
-                    cloud_consent=raw.cloud_consent,
-                    memory=await self._memory_context(raw),
-                    conversation_consent=raw.conversation_consent,
-                ):
+                if not await self._launch_request(raw):
                     error = "cloud_consent_required"
+            elif raw.operation == "cloud_review":
+                await self._respond_cloud_review(raw)
             elif raw.operation == "cancel":
                 self.watchers.notices.clear()
                 self.cancel()
@@ -694,6 +829,7 @@ class DesktopService:
                 finally:
                     self.auxiliary = None
             elif raw.operation == "configure":
+                self._clear_cloud_review()
                 if self.busy or self.voice.task is not None:
                     raise ValueError("busy")
                 assert raw.settings is not None
@@ -790,6 +926,8 @@ class DesktopService:
                 "invalid_answer",
                 "memory_changed",
                 "memory_consent_required",
+                "cloud_review_expired",
+                "cloud_review_changed",
                 "workspace_changed",
             }
             error = str(exc) if str(exc) in allowed else "invalid_request"
