@@ -2,8 +2,9 @@
 
 import asyncio
 import concurrent.futures
+from pathlib import Path
 from threading import Event, Lock, Thread
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
@@ -11,6 +12,10 @@ from jarvis.browser.session import BrowserSession
 from jarvis.security.browser_policy import BrowserMode, NetworkPolicy, validate_cdp_endpoint
 from jarvis.tools.base import ExecutionContext, ToolError
 from jarvis.tools.browser import BrowserCommand, BrowserResult
+from jarvis.workspace.models import WorkspaceProfile
+
+if TYPE_CHECKING:
+    from jarvis.config import AppConfig
 
 
 class BrowserHost:
@@ -20,12 +25,16 @@ class BrowserHost:
         *,
         headless: bool | None = None,
         cdp_endpoint: str = "",
+        profile_dir: Path | None = None,
+        workspace: WorkspaceProfile | None = None,
     ) -> None:
         self.policy = policy or NetworkPolicy()
         self.headless = self.policy.mode is BrowserMode.STRICT if headless is None else headless
         self.cdp_endpoint = validate_cdp_endpoint(cdp_endpoint) if cdp_endpoint else ""
-        if self.cdp_endpoint and self.policy.mode is not BrowserMode.LIVE:
+        if self.cdp_endpoint and self.policy.mode is BrowserMode.STRICT:
             raise ValueError("CDP requires Live Browser mode.")
+        self.profile_dir = profile_dir
+        self.workspace = WorkspaceProfile.model_validate(workspace or WorkspaceProfile())
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: Thread | None = None
         self._session: BrowserSession | None = None
@@ -33,7 +42,16 @@ class BrowserHost:
         self._serial: asyncio.Lock | None = None
         self._closed = False
         self._ready = Event()
-        self.operation_timeout = 15.0
+        self.operation_timeout = 30.0 if self.policy.mode is BrowserMode.WORKSPACE else 15.0
+
+    @classmethod
+    def from_config(cls, config: "AppConfig") -> "BrowserHost":
+        return cls(
+            config.browser_policy,
+            cdp_endpoint=config.browser_cdp_endpoint,
+            profile_dir=config.browser_profile_dir,
+            workspace=config.workspace_profile,
+        )
 
     def _start(self) -> None:
         with self._lock:
@@ -50,7 +68,11 @@ class BrowserHost:
         asyncio.set_event_loop(loop)
         self._loop = loop
         self._session = BrowserSession(
-            self.policy, headless=self.headless, cdp_endpoint=self.cdp_endpoint
+            self.policy,
+            headless=self.headless,
+            cdp_endpoint=self.cdp_endpoint,
+            profile_dir=self.profile_dir,
+            workspace=self.workspace,
         )
         self._serial = asyncio.Lock()
         self._ready.set()

@@ -58,7 +58,12 @@ class PermissionWorkbench(QDialog):
         self.registry, self.outbox = local_registry()
         register_windows(self.registry, windows_backend or ProcessBackend())
         self.browser_host = browser_host or BrowserHost()
-        register_browser(self.registry, self.browser_host, self.browser_host.policy)
+        register_browser(
+            self.registry,
+            self.browser_host,
+            self.browser_host.policy,
+            workspace=self.browser_host.workspace,
+        )
         self._result_tool = ""
         self.approvals = ApprovalStore()
         self.authority = self.approvals.take_authority(self.audit.approved)

@@ -32,6 +32,17 @@ from jarvis.memory.models import MemoryContext
 from jarvis.permissions.approvals import Action, ApprovalToken
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Mode, Risk, Status
+from jarvis.tools.browser import (
+    BrowserResult,
+    PageTarget,
+    PageView,
+)
+from jarvis.tools.browser import (
+    ClickElement as BrowserClick,
+)
+from jarvis.tools.browser import (
+    TypeElement as BrowserType,
+)
 from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.scratchpad import MAX_SCRATCHPAD_BYTES, MAX_SCRATCHPAD_KEYS, ScratchpadWrite
 from jarvis.tools.windows import ClickElement, WindowsResult, WindowTarget
@@ -334,6 +345,36 @@ class Runner:
                         args = click.model_copy(
                             update={"element": matches[0], "mark_id": None}
                         ).model_dump(mode="json")
+            if proposal.tool in ("browser.click", "browser.type") and isinstance(args, dict):
+                tool = self.registry.get(proposal.tool)
+                if tool is not None:
+                    try:
+                        browser_args = tool.parameters.model_validate(args, strict=True)
+                    except ValidationError:
+                        pass
+                    else:
+                        if (
+                            isinstance(browser_args, (BrowserClick, BrowserType))
+                            and browser_args.mark_id is not None
+                        ):
+                            page = self._browser_page(browser_args.target)
+                            browser_matches = (
+                                [
+                                    element
+                                    for element in page.elements
+                                    if element.mark_id == browser_args.mark_id
+                                ]
+                                if page
+                                else []
+                            )
+                            if len(browser_matches) != 1:
+                                return PlanResult("error", tuple(self.steps), "unobserved_target")
+                            args = browser_args.model_copy(
+                                update={
+                                    "element": browser_matches[0],
+                                    "mark_id": None,
+                                }
+                            ).model_dump(mode="json")
             action = self.engine.prepare(proposal.tool, args, mode)
             if isinstance(action, Outcome):
                 self.steps.append(
@@ -452,6 +493,21 @@ class Runner:
 
     def _observed_target(self, action: Action) -> bool:
         args = json.loads(action.payload)
+        if action.tool.startswith("browser.") and "target" in args:
+            target = PageTarget.model_validate(args["target"])
+            if action.tool in ("browser.click", "browser.type"):
+                browser_page = self._browser_page(target)
+                element = (
+                    (BrowserClick if action.tool == "browser.click" else BrowserType)
+                    .model_validate_json(action.payload)
+                    .element
+                )
+                return (
+                    browser_page is not None
+                    and element is not None
+                    and element in browser_page.elements
+                )
+            return self._browser_target_observed(target)
         if action.tool == "windows.click_element":
             click = ClickElement.model_validate_json(action.payload)
             click_observed = self._click_observation(click.target)
@@ -572,3 +628,38 @@ class Runner:
                 if "element" not in args and args["target"] in result.get("tabs", []):
                     return True
         return False
+
+    def _browser_target_observed(self, target: PageTarget) -> bool:
+        return self._browser_latest(target)[0]
+
+    def _browser_page(self, target: PageTarget) -> PageView | None:
+        return self._browser_latest(target)[1]
+
+    def _browser_latest(self, target: PageTarget) -> tuple[bool, PageView | None]:
+        """Latest observation per tab, never history before a failed/uncertain mutation."""
+        mutations = {
+            "browser.click",
+            "browser.type",
+            "browser.navigate",
+            "browser.close",
+            "browser.scroll",
+            "browser.press_key",
+            "browser.trigger_1password_autofill",
+        }
+        for step in reversed(self.steps):
+            if not step.tool.startswith("browser."):
+                continue
+            result = BrowserResult.model_validate_json(step.outcome.result_json or "{}")
+            if result.closed_tab == target.tab_id or result.affected_tab == target.tab_id:
+                return False, None
+            if step.outcome.status is Status.SUCCESS:
+                if result.page is not None and result.page.target.tab_id == target.tab_id:
+                    return (True, result.page) if result.page.target == target else (False, None)
+                for tab in result.tabs:
+                    if tab.tab_id == target.tab_id:
+                        return tab == target, None
+            if step.tool in mutations:
+                payload = json.loads(step.payload or "{}")
+                if payload.get("target", {}).get("tab_id") == target.tab_id:
+                    return False, None
+        return False, None

@@ -8,7 +8,8 @@ _SENSITIVE_ACTION = re.compile(
     r"\b(?:оплат\w*|плат[еиё]\w*|удал\w*|отправ\w*|послать|купить|покуп\w*|"
     r"заказ\w*|оформ\w*|закры\w*|сброс\w*|стереть|очист\w*|подтверд\w*|"
     r"pay\w*|delet\w*|remov\w*|send\w*|submit\w*|buy\w*|purchas\w*|"
-    r"checkout|order\w*|close|exit|quit|discard\w*|erase\w*|confirm\w*)\b"
+    r"checkout|order\w*|close|exit|quit|discard\w*|erase\w*|confirm\w*|publish\w*|"
+    r"post|comment|опубликов\w*|публиков\w*)\b"
     r"|\b(?:не\s+сохранять|без\s+сохранения|do\s+not\s+save|don['’]t\s+save)\b"
 )
 

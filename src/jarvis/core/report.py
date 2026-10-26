@@ -213,6 +213,10 @@ DEEDS: dict[str, Callable[[dict[str, object], bool], str]] = {
     ),
     "browser.type": lambda args, spoken: "заполнил поле" + _quoted(_field(args, "element", "name")),
     "browser.close": lambda args, spoken: "закрыл вкладку",
+    "browser.open_workspace_app": lambda args, spoken: "открыл рабочее приложение",
+    "browser.scroll": lambda args, spoken: "прокрутил страницу",
+    "browser.press_key": lambda args, spoken: "нажал клавишу в браузере",
+    "browser.trigger_1password_autofill": lambda args, spoken: "запросил автозаполнение 1Password",
     "local.append_message": lambda args, spoken: "добавил тестовое сообщение",
 }
 

@@ -49,6 +49,18 @@ class AppConfig:
             self.workspace_profile, additional_origins=self.browser_origins, mode=self.browser_mode
         )
 
+    @property
+    def browser_profile_dir(self) -> Path | None:
+        return (
+            self.data_dir / "browser_profile"
+            if self.browser_mode is BrowserMode.WORKSPACE and not self.browser_cdp_endpoint
+            else None
+        )
+
+    @property
+    def file_policy(self) -> FilePolicy:
+        return FilePolicy(self.file_roots, denied_roots=(str(self.data_dir / "browser_profile"),))
+
     def __post_init__(self) -> None:
         object.__setattr__(
             self, "workspace_profile", WorkspaceProfile.model_validate(self.workspace_profile)
@@ -70,10 +82,10 @@ class AppConfig:
             raise ValueError("Invalid browser origin policy.") from None
         if self.browser_cdp_endpoint:
             validate_cdp_endpoint(self.browser_cdp_endpoint)
-            if self.browser_mode is not BrowserMode.LIVE:
+            if self.browser_mode is BrowserMode.STRICT:
                 raise ValueError("CDP requires Live Browser mode.")
         try:
-            FilePolicy(self.file_roots)
+            _ = self.file_policy
         except ToolError:
             raise ValueError("Invalid file folder policy.") from None
         for name, value, minimum, maximum in (
@@ -105,7 +117,9 @@ def load_config(environ: Mapping[str, str] | None = None) -> AppConfig:
 
     try:
         default_browser_mode = (
-            "live" if workspace.browser_mode == "authenticated_workspace" else "strict"
+            "authenticated_workspace"
+            if workspace.browser_mode == "authenticated_workspace"
+            else "strict"
         )
         browser_mode = BrowserMode(env.get("JARVIS_BROWSER_MODE", default_browser_mode))
     except ValueError:
@@ -120,6 +134,10 @@ def load_config(environ: Mapping[str, str] | None = None) -> AppConfig:
         filesystem_roots = tuple(Path(root) for root in roots)
     except (ValueError, TypeError):
         raise ValueError("Invalid filesystem project roots.") from None
+    cdp_url = env.get("JARVIS_BROWSER_CDP_URL", "")
+    old_cdp_url = env.get("JARVIS_BROWSER_CDP_ENDPOINT", "")
+    if cdp_url and old_cdp_url and cdp_url.rstrip("/") != old_cdp_url.rstrip("/"):
+        raise ValueError("Conflicting CDP startup endpoints.")
     return AppConfig(
         data_dir=directory,
         workspace_profile=workspace,
@@ -129,7 +147,7 @@ def load_config(environ: Mapping[str, str] | None = None) -> AppConfig:
         planner_model=env.get("JARVIS_PLANNER_MODEL", ""),
         filesystem_roots=filesystem_roots,
         browser_mode=browser_mode,
-        browser_cdp_endpoint=env.get("JARVIS_BROWSER_CDP_ENDPOINT", ""),
+        browser_cdp_endpoint=cdp_url or old_cdp_url,
         fast_model=env.get("JARVIS_FAST_MODEL", "deepseek-flash"),
         browser_origins=tuple(
             part.strip()

@@ -74,12 +74,10 @@ class PlannerWindow(QDialog):
         self.override_provider = provider
         self.workspace_profile = config.workspace_profile
         self.limits = limits or Limits()
-        self.host = browser_host or BrowserHost(
-            config.browser_policy, cdp_endpoint=config.browser_cdp_endpoint
-        )
+        self.host = browser_host or BrowserHost.from_config(config)
         self.registry, self.outbox = local_tools if local_tools is not None else local_registry()
         self.offline_commands_label = "локальные" if local_tools is not None else "учебные"
-        register_browser(self.registry, self.host, self.host.policy)
+        register_browser(self.registry, self.host, self.host.policy, workspace=self.host.workspace)
         register_windows(self.registry, windows_backend or ProcessBackend())
         register_filesystem(self.registry, config.filesystem_policy)
         self.mail_session = mail_session or MailSession()

@@ -119,10 +119,10 @@ class DesktopService:
         self.settings = Settings(model=config.planner_model)
         self.override_provider = provider
         self.limits = limits or Limits()
-        self.host = BrowserHost(config.browser_policy, cdp_endpoint=config.browser_cdp_endpoint)
+        self.host = BrowserHost.from_config(config)
         self.registry, self.outbox = desktop_registry(config.data_dir)
         register_filesystem(self.registry, config.filesystem_policy)
-        register_browser(self.registry, self.host, self.host.policy)
+        register_browser(self.registry, self.host, self.host.policy, workspace=self.host.workspace)
         register_windows(self.registry, ProcessBackend(before_click=self._highlight))
         self.mail_session = MailSession()
         register_outlook(self.registry, self.mail_session)

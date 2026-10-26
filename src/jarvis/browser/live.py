@@ -1,4 +1,4 @@
-"""Per-page CDP network checks for live Chromium; no cookies or headers leave Chrome."""
+"""Per-page CDP checks. Cookie/header contents never enter tool results or audit."""
 
 import asyncio
 from typing import Any
@@ -23,34 +23,38 @@ class LiveNetworkGuard:
         self.failures: set[Page] = set()
         self._dns_slots = asyncio.Semaphore(16)
         self._stopping = False
+        self._attach_lock = asyncio.Lock()
 
     async def attach(self, page: Page) -> None:
-        if page in self.connections:
-            return
-        self._stopping = False
-        connection = await page.context.new_cdp_session(page)
-        self.connections[page] = connection
+        async with self._attach_lock:
+            if page in self.connections:
+                return
+            self._stopping = False
+            connection = await page.context.new_cdp_session(page)
+            self.connections[page] = connection
 
-        def paused(event: dict[str, Any]) -> None:
-            if self._stopping:
-                return  # Fetch.disable below releases the pause when disconnecting.
-            task = asyncio.create_task(self._request(page, connection, event))
-            self.tasks.add(task)
-            task.add_done_callback(self.tasks.discard)
+            def paused(event: dict[str, Any]) -> None:
+                if self._stopping:
+                    return  # Fetch.disable below releases the pause when disconnecting.
+                task = asyncio.create_task(self._request(page, connection, event))
+                self.tasks.add(task)
+                task.add_done_callback(self.tasks.discard)
 
-        connection.on("Fetch.requestPaused", paused)
-        await connection.send("Network.enable")
-        await connection.send("Network.setBypassServiceWorker", {"bypass": True})
-        await connection.send(
-            "Network.setBlockedURLs", {"urls": ["ws://*", "wss://*", "ftp://*", "file://*"]}
-        )
-        await connection.send("Fetch.enable", {"patterns": [{"requestStage": "Request"}]})
+            connection.on("Fetch.requestPaused", paused)
+            await connection.send("Network.enable")
+            await connection.send("Network.setBypassServiceWorker", {"bypass": True})
+            await connection.send(
+                "Network.setBlockedURLs", {"urls": ["ws://*", "wss://*", "ftp://*", "file://*"]}
+            )
+            await connection.send("Fetch.enable", {"patterns": [{"requestStage": "Request"}]})
 
     async def _request(self, page: Page, connection: CDPSession, event: dict[str, Any]) -> None:
         request_id = event["requestId"]
         try:
             async with self._dns_slots:
-                await self.policy.validate_live_request(event["request"]["url"])
+                await self.policy.validate_live_request(
+                    event["request"]["url"], event["request"].get("method", "GET")
+                )
         except asyncio.CancelledError:
             # Detach/Fetch.disable releases pending requests during shutdown.
             raise

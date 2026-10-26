@@ -1,5 +1,9 @@
 # Режимы браузера
 
+Новый профильный режим этапа 2 описан в [AUTHENTICATED_WORKSPACE_BROWSER.md](AUTHENTICATED_WORKSPACE_BROWSER.md):
+постоянный `<data_dir>/browser_profile`, `JARVIS_BROWSER_CDP_URL`, SPA-поля,
+per-tab marks и переключение приложений. Таблица ниже описывает сохранённые legacy режимы.
+
 По запросу пользователя от 2026-10-24 добавлен **Live Browser** и opt-in подключение
 к видимому Chrome через CDP. Прежние ограничения этапа 4 теперь относятся к
 **Strict Sandbox**, который остаётся режимом по умолчанию. Это изменение браузерного
