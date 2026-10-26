@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from jarvis.core.planner.identifiers import valid_model
+from jarvis.desktop.settings import UiSettingsStore
 from jarvis.files.policy import FilePolicy, default_roots
 from jarvis.security.browser_policy import (
     DEFAULT_ORIGINS,
@@ -64,6 +65,9 @@ class AppConfig:
             denied_roots=(
                 str(self.data_dir / "browser_profile"),
                 str(self.data_dir / "workspace_profile.json"),
+                str(self.data_dir / "workspace_chrome_profile"),
+                str(self.data_dir / "workspace_browser.json"),
+                str(self.data_dir / "ui_settings.json"),
             ),
         )
 
@@ -114,6 +118,7 @@ def load_config(environ: Mapping[str, str] | None = None) -> AppConfig:
         base = Path(env.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
     directory = Path(env.get("JARVIS_DATA_DIR", str(base / "Jarvis"))).expanduser()
     workspace = WorkspaceStore(directory).load()
+    ui_settings = UiSettingsStore(directory).load()
 
     def integer(key: str, default: int) -> int:
         try:
@@ -124,7 +129,7 @@ def load_config(environ: Mapping[str, str] | None = None) -> AppConfig:
     try:
         default_browser_mode = (
             "authenticated_workspace"
-            if workspace.browser_mode == "authenticated_workspace"
+            if (ui_settings.browser_mode or workspace.browser_mode) == "authenticated_workspace"
             else "strict"
         )
         browser_mode = BrowserMode(env.get("JARVIS_BROWSER_MODE", default_browser_mode))
@@ -150,7 +155,7 @@ def load_config(environ: Mapping[str, str] | None = None) -> AppConfig:
         demo_duration_ms=integer("JARVIS_DEMO_DURATION_MS", 2400),
         task_timeout_ms=integer("JARVIS_TASK_TIMEOUT_MS", 10000),
         activity_limit=integer("JARVIS_ACTIVITY_LIMIT", 200),
-        planner_model=env.get("JARVIS_PLANNER_MODEL", ""),
+        planner_model=env.get("JARVIS_PLANNER_MODEL", ui_settings.planner_model),
         filesystem_roots=filesystem_roots,
         browser_mode=browser_mode,
         browser_cdp_endpoint=cdp_url or old_cdp_url,

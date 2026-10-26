@@ -7,7 +7,7 @@
   "scripts": {
     "start": "npm run build && node scripts/desktop.mjs --built",
     "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/sync-desktop-assets.mjs",
     "desktop": "node scripts/desktop.mjs",
     "setup": "node scripts/setup.mjs",
     "qa:electron": "npm run build && node scripts/verify-desktop.cjs",

@@ -142,6 +142,23 @@ export function WorkspacePanel({ state, active, apply }: {
           </section>
           <section className="glass-card workspace-section">
             <h2>Режим браузера</h2>
+            <div className="control-actions">
+              <button type="button" className="outline-button" disabled={dirty} onClick={async () => {
+                setPending(true); setError("");
+                try {
+                  const next = await window.jarvis!.workspaceBrowser(); apply(next);
+                  if (next.workspace) { setSaved(next.workspace); setDraft(structuredClone(next.workspace.profile)); }
+                }
+                catch (error) { setError(readableError(error)); }
+                finally { setPending(false); }
+              }}>Открыть рабочий браузер</button>
+              <span role="status">{state?.workspace_browser?.state === "connected"
+                ? "Браузер подключён" : state?.workspace_browser?.state === "connecting"
+                  ? "Подключение…" : "Рабочий браузер не подключён"}</span>
+            </div>
+            <small>Откроется отдельный профиль Chrome или Edge. Войдите в сервисы самостоятельно;
+              сессии сохранятся. После подключения браузер будет восстанавливаться при запуске
+              Jarvis в режиме Authenticated Workspace.</small>
             <label>Выбранный режим
               <select value={draft.browser_mode} onChange={(e) => setDraft({ ...draft,
                 browser_mode: e.target.value as WorkspaceProfile["browser_mode"] })}>

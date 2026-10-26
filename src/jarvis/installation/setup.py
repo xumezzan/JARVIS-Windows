@@ -176,6 +176,7 @@ def slot_environment(slot: Path, model: str) -> dict[str, str]:
     env["PLAYWRIGHT_BROWSERS_PATH"] = str(slot / "browsers")
     env["JARVIS_VOSK_MODEL"] = str(slot / "models" / model)
     env["QT_QPA_PLATFORM"] = "windows"
+    env.pop("ELECTRON_RUN_AS_NODE", None)
     return env
 
 
@@ -242,6 +243,10 @@ def prepare_slot(
     archive = root / "cache" / "vosk.zip"
     download(asset["url"], archive, asset["sha256"], asset["size"])
     extract_model(archive, slot / "models", asset["directory"])
+    progress("electron_desktop")
+    from jarvis.installation.desktop import prepare_desktop
+
+    prepare_desktop(slot, repository, root)
     return slot
 
 
@@ -365,17 +370,13 @@ def shown_window(receipt: object, launched: int) -> bool:
 
 
 def launch(slot: Path, model: str, root: Path) -> None:
-    """Observe a real shown Qt window via a fresh PID-bound receipt; leave it running."""
+    """Observe the real Electron window and ready backend, bound to the launched PID."""
     report = root / "startup.json"
     report.unlink(missing_ok=True)
     process = subprocess.Popen(
         [
-            str(slot / "venv" / "Scripts" / "pythonw.exe"),
-            "-I",
-            "-m",
-            "jarvis",
-            "--startup-report",
-            str(report),
+            str(slot / "desktop" / "electron.exe"),
+            "--jarvis-startup-report=" + str(report),
         ],
         env=slot_environment(slot, model),
         stdin=subprocess.DEVNULL,

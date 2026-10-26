@@ -142,7 +142,7 @@ class Runtime {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error("runtime_response_timeout"));
-      }, 10000);
+      }, operation === "workspace_browser" ? 45000 : 10000);
       this.pending.set(id, { resolve, reject, timer });
       this.child.stdin.write(
         JSON.stringify({ id, operation, ...fields }) + "\n",
