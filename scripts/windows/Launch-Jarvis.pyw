@@ -23,6 +23,18 @@ try:
         raise ValueError("Invalid installation pointer")
     slot = root / "slots" / active["slot"]
     env = dict(os.environ)
+    configuration = slot / "launcher-environment.json"
+    if configuration.is_file():
+        if configuration.stat().st_size > 8192:
+            raise ValueError("Invalid launcher environment")
+        saved = json.loads(configuration.read_text(encoding="utf-8"))
+        if not isinstance(saved, dict) or set(saved) - {"LOCALAPPDATA", "JARVIS_DATA_DIR"}:
+            raise ValueError("Invalid launcher environment")
+        for name, value in saved.items():
+            if not isinstance(value, str) or not Path(value).is_absolute():
+                raise ValueError("Invalid launcher environment")
+            if name == "LOCALAPPDATA" or not env.get(name):
+                env[name] = value
     data_path = env.get("JARVIS_DATA_DIR")
     if data_path and (
         not Path(data_path).is_absolute() or Path(data_path).resolve().is_relative_to(root)

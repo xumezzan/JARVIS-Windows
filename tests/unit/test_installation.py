@@ -361,3 +361,33 @@ def test_download_redirects_are_not_followed() -> None:
             Message(),
             "http://localhost/",
         )
+
+
+def test_slot_environment_preserves_physical_data_and_browser_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    virtual = tmp_path / "virtual-local"
+    physical = tmp_path / "physical-local"
+    slot = virtual / "JarvisInstall" / "slots" / "b"
+    mappings = {
+        virtual: physical,
+        virtual / "Jarvis": physical / "Jarvis",
+        slot: physical / "JarvisInstall" / "slots" / "b",
+    }
+    resolve = Path.resolve
+
+    def redirected(path: Path, strict: bool = False) -> Path:
+        return mappings[path] if path in mappings else resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", redirected)
+    monkeypatch.setenv("LOCALAPPDATA", str(virtual))
+    monkeypatch.delenv("JARVIS_DATA_DIR", raising=False)
+    environment = setup.slot_environment(slot, "model")
+    assert environment["LOCALAPPDATA"] == str(physical)
+    assert environment["JARVIS_DATA_DIR"] == str(physical / "Jarvis")
+    assert environment["PLAYWRIGHT_BROWSERS_PATH"] == str(mappings[slot] / "browsers")
+    assert environment["JARVIS_VOSK_MODEL"] == str(mappings[slot] / "models" / "model")
+
+    custom_data = tmp_path / "existing-user-data"
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(custom_data))
+    assert setup.slot_environment(slot, "model")["JARVIS_DATA_DIR"] == str(custom_data.resolve())

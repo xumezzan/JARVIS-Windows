@@ -410,6 +410,14 @@ try {
         }
     }
     $jarvisRuntimeReady = $true
+    # Packaged hosts may virtualize LOCALAPPDATA. Persist real paths so a Start
+    # menu launch outside that host reaches the same runtime and existing data.
+    $canonicalRoot = & $python -I -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' $jarvisRoot
+    if ($LASTEXITCODE -ne 0 -or -not [IO.Path]::IsPathRooted($canonicalRoot)) {
+        throw 'The physical installation path could not be resolved.'
+    }
+    $jarvisRoot = $canonicalRoot.Trim()
+    $python = Join-Path $jarvisRoot 'runtime\python.exe'
     Set-BootstrapPhase 'runtime' 'passed'
     Set-BootstrapPhase 'application_setup' 'running'
     Write-Host 'Preparing Jarvis. First installation needs network and at least 3 GB free.'

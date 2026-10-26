@@ -173,8 +173,14 @@ def reject_links(root: Path) -> None:
 
 def slot_environment(slot: Path, model: str) -> dict[str, str]:
     env = clean_environment(os.environ)
+    slot = slot.resolve()
     env["PLAYWRIGHT_BROWSERS_PATH"] = str(slot / "browsers")
     env["JARVIS_VOSK_MODEL"] = str(slot / "models" / model)
+    if local := env.get("LOCALAPPDATA"):
+        env["LOCALAPPDATA"] = str(Path(local).resolve())
+        env["JARVIS_DATA_DIR"] = str(
+            Path(env.get("JARVIS_DATA_DIR", str(Path(local) / "Jarvis"))).resolve()
+        )
     env["QT_QPA_PLATFORM"] = "windows"
     env.pop("ELECTRON_RUN_AS_NODE", None)
     return env
@@ -247,6 +253,10 @@ def prepare_slot(
     from jarvis.installation.desktop import prepare_desktop
 
     prepare_desktop(slot, repository, root)
+    atomic_json(
+        slot / "launcher-environment.json",
+        {key: env[key] for key in ("LOCALAPPDATA", "JARVIS_DATA_DIR") if key in env},
+    )
     return slot
 
 
@@ -515,7 +525,7 @@ def main() -> int:
     repository = Path(__file__).resolve().parents[3]
     try:
         install(
-            repository, args.root.absolute(), run_id=args.run_id, source_commit=args.source_commit
+            repository, args.root.resolve(), run_id=args.run_id, source_commit=args.source_commit
         )
         return 0
     except KeyboardInterrupt:
