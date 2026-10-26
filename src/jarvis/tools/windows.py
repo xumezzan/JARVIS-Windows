@@ -17,6 +17,7 @@ MAX_REPLY_BYTES = 2_500_000
 MAX_SCREENSHOT_JPEG_BYTES = 48 * 1024
 MAX_SCREENSHOT_BASE64 = 4 * ((MAX_SCREENSHOT_JPEG_BYTES + 2) // 3)
 MAX_UIA_ELEMENTS = 96
+MAX_UIA_DEPTH = 16
 MAX_ELEMENT_NAME = 120
 MAX_UIA_OBSERVATION_BYTES = 67000
 # Any installed application: a spoken or typed name for a request, and the executable's
@@ -228,7 +229,7 @@ class ElementTarget(ToolModel):
 
 
 class InspectActiveWindow(ToolModel):
-    max_depth: int = Field(default=5, ge=1, le=5)
+    max_depth: int = Field(default=MAX_UIA_DEPTH, ge=1, le=MAX_UIA_DEPTH)
 
 
 class ClipboardGet(ToolModel):
@@ -343,7 +344,7 @@ class NativeRequest(ToolModel):
     result: WindowsResult | None = None
     handle: int | None = Field(default=None, gt=0)
     title: str | None = Field(default=None, min_length=1, max_length=1000)
-    max_depth: int = Field(default=5, ge=1, le=5)
+    max_depth: int = Field(default=MAX_UIA_DEPTH, ge=1, le=MAX_UIA_DEPTH)
     hotkey: str | None = None
     clipboard_sha256: str | None = None
     element: ElementTarget | None = None

@@ -20,6 +20,7 @@ from jarvis.permissions.policies import Risk
 from jarvis.platforms.windows.native import NativeDesktop
 from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.windows import (
+    MAX_UIA_DEPTH,
     MAX_UIA_OBSERVATION_BYTES,
     ClickElement,
     ElementTarget,
@@ -87,10 +88,15 @@ def test_inspection_bounds_long_unicode_metadata_not_only_element_count(
     for i, child in enumerate(children):
         child.element_info.automation_id = "😀" * 500
         child.element_info.runtime_id = [1, i]
-    window.children.return_value = children
+    parent = window
+    for _ in range(13):
+        container = control("Pane", name="")
+        parent.children.return_value = [container]
+        parent = container
+    parent.children.return_value = children
     monkeypatch.setattr(desktop, "active", lambda: (window, target()))
     monkeypatch.setattr(desktop, "resolve", lambda *args: window)
-    result = desktop.inspect(5)
+    result = desktop.inspect(MAX_UIA_DEPTH)
     assert 0 < len(result.elements) < 96 and result.truncated
     assert uia_metadata_bytes(result) <= MAX_UIA_OBSERVATION_BYTES
 

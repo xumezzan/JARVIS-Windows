@@ -30,9 +30,12 @@ from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.windows import (
     MAX_SCREENSHOT_BASE64,
     MAX_SCREENSHOT_JPEG_BYTES,
+    MAX_UIA_DEPTH,
+    MAX_UIA_OBSERVATION_BYTES,
     ClickElement,
     ElementTarget,
     FocusApp,
+    InspectActiveWindow,
     NativeRequest,
     Rectangle,
     SendHotkey,
@@ -41,6 +44,7 @@ from jarvis.tools.windows import (
     clipboard_digest,
     register_windows,
     text_digest,
+    uia_metadata_bytes,
 )
 
 RECT = Rectangle(left=10, top=20, right=610, bottom=420)
@@ -234,6 +238,45 @@ def test_walk_is_bounded_on_cyclic_provider_tree() -> None:
     window.children.return_value = [window] * 20
     controls, truncated = desktop.walk(window)
     assert len(controls) == 2048 and truncated
+
+
+def test_deep_electron_containers_reveal_actions_without_observing_private_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    desktop = adapter()
+    window = control("Window")
+    parent = window
+    for index in range(13):
+        container = control("Pane" if index % 2 else "Group", name="")
+        container.rectangle.return_value = Mock(left=0, top=0, right=0, bottom=0)
+        parent.children.return_value = [container]
+        parent = container
+    button, editor = control(name="Save"), control("Edit", name="Command")
+    editor.element_info.runtime_id = [10, 21]
+    hidden, secret = control(), control("Edit", password=True)
+    hidden.is_visible.return_value = False
+    parent.children.return_value = [button, editor, hidden, secret]
+    monkeypatch.setattr(desktop, "active", lambda: (window, target()))
+    monkeypatch.setattr(desktop, "resolve", lambda *args, **kwargs: window)
+    assert not desktop.inspect(5).elements
+    result = desktop.dispatch(NativeRequest(operation="inspect"))
+    assert {element.control_type for element in result.elements} == {"Button", "Edit"}
+    assert [element.mark_id for element in result.elements] == [1, 2]
+    assert uia_metadata_bytes(result) <= MAX_UIA_OBSERVATION_BYTES
+    for container in (window.children.return_value[0], parent):
+        container.window_text.assert_not_called()
+    hidden.window_text.assert_not_called()
+    secret.window_text.assert_not_called()
+
+
+def test_inspection_protocol_defaults_to_sixteen_and_rejects_larger_depths() -> None:
+    assert InspectActiveWindow().max_depth == MAX_UIA_DEPTH == 16
+    assert NativeRequest(operation="inspect").max_depth == MAX_UIA_DEPTH
+    for depth in (0, MAX_UIA_DEPTH + 1):
+        with pytest.raises(ValidationError):
+            InspectActiveWindow(max_depth=depth)
+        with pytest.raises(ValidationError):
+            NativeRequest(operation="inspect", max_depth=depth)
 
 
 @pytest.mark.parametrize("foreground,clipboard", [(999, "approved"), (100, "changed")])

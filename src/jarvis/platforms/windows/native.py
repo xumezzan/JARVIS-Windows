@@ -23,6 +23,7 @@ from jarvis.tools.base import ToolError
 from jarvis.tools.windows import (
     MAX_ELEMENT_NAME,
     MAX_SCREENSHOT_JPEG_BYTES,
+    MAX_UIA_DEPTH,
     MAX_UIA_ELEMENTS,
     MAX_UIA_OBSERVATION_BYTES,
     AppId,
@@ -324,7 +325,11 @@ class NativeDesktop:
     def runtime(control: Any) -> list[int]:
         return [int(value) for value in control.element_info.runtime_id]
 
-    def walk(self, window: Any, max_depth: int = 5) -> tuple[list[Any], bool]:
+    def walk(self, window: Any, max_depth: int = MAX_UIA_DEPTH) -> tuple[list[Any], bool]:
+        # Electron puts actions behind unnamed Pane/Group wrappers. Traverse those
+        # without reading their names or rejecting empty container rectangles.
+        # element_snapshot still filters invisible, disabled and password controls;
+        # the raw-node cap and killable worker bound wide or broken providers.
         pending = deque([(window, 0)])
         controls: list[Any] = []
         truncated = False
@@ -841,7 +846,7 @@ class NativeDesktop:
         observation = WindowsResult()
         if scope == "active_window":
             window, target = self.active()
-            observation = self._inspection(window, target, 5)
+            observation = self._inspection(window, target, MAX_UIA_DEPTH)
             rect = observation.window_rectangle
             assert rect is not None
             image = grab.grab(bbox=(rect.left, rect.top, rect.right, rect.bottom), all_screens=True)

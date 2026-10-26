@@ -103,7 +103,12 @@ async def test_attachment_helper_regular_size_and_symlink(tmp_path: Path) -> Non
     file.write_bytes(b"exact test data")
     assert await read_attachment(str(file)) == b"exact test data"
     alias = tmp_path / "alias.txt"
-    alias.symlink_to(file)
+    try:
+        alias.symlink_to(file)
+    except OSError as error:
+        if getattr(error, "winerror", None) == 1314:
+            pytest.skip("Requires SeCreateSymbolicLinkPrivilege on Windows")
+        raise
     with pytest.raises(MailFailure):
         await read_attachment(str(alias))
     file.write_bytes(b"x" * 32769)

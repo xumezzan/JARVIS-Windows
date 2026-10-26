@@ -144,7 +144,12 @@ def test_symlinks_and_hardlinks_do_not_escape_roots(policy: FilePolicy, tmp_path
     outside = tmp_path / "outside.txt"
     outside.write_text("private fixture")
     linked = policy.path("Desktop") / "linked.txt"
-    linked.symlink_to(outside)
+    try:
+        linked.symlink_to(outside)
+    except OSError as error:
+        if getattr(error, "winerror", None) == 1314:
+            pytest.skip("Requires SeCreateSymbolicLinkPrivilege on Windows")
+        raise
     with pytest.raises((ToolError, OSError)):
         read_document(policy, ReadDocument(path=str(linked)))
     linked.unlink()
@@ -156,7 +161,12 @@ def test_symlinks_and_hardlinks_do_not_escape_roots(policy: FilePolicy, tmp_path
 
 def test_symlink_parent_never_receives_created_file(policy: FilePolicy, tmp_path: Path) -> None:
     Path(policy.workspace).mkdir()
-    (Path(policy.workspace) / "redirect").symlink_to(tmp_path, target_is_directory=True)
+    try:
+        (Path(policy.workspace) / "redirect").symlink_to(tmp_path, target_is_directory=True)
+    except OSError as error:
+        if getattr(error, "winerror", None) == 1314:
+            pytest.skip("Requires SeCreateSymbolicLinkPrivilege on Windows")
+        raise
     with pytest.raises((OSError, ToolError)):
         write(policy, WriteFile(path="workspace/redirect/injected.py", content="x"))
     assert not (tmp_path / "injected.py").exists()
