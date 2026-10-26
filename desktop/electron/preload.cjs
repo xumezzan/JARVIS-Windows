@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld("jarvis", {
   cancel: () => ipcRenderer.invoke("jarvis-app:cancel"),
   open: (panel) => ipcRenderer.invoke("jarvis-app:open", panel),
   configure: (settings) => ipcRenderer.invoke("jarvis-app:configure", settings),
+  workspace: (command) => ipcRenderer.invoke("jarvis-app:workspace", command),
   answer: (id, answer) => ipcRenderer.invoke("jarvis-app:answer", id, answer),
   memory: (edit) => ipcRenderer.invoke("jarvis-app:memory", edit),
   mail: (command, mode) => ipcRenderer.invoke("jarvis-app:mail", command, mode),

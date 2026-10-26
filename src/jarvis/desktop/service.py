@@ -24,6 +24,8 @@ from jarvis.desktop.protocol import MAX_REQUEST, MAX_RESPONSE, Request, Settings
 from jarvis.desktop.system_tools import DesktopOfflineProvider, desktop_registry
 from jarvis.desktop.voice import DesktopVoice
 from jarvis.desktop.watchers import EventWatcher, fingerprint
+from jarvis.desktop.workspace import configure as configure_workspace
+from jarvis.desktop.workspace import snapshot as workspace_snapshot
 from jarvis.mail.credentials import MailFailure
 from jarvis.mail.models import Account, Message
 from jarvis.mail.session import MailSession
@@ -53,6 +55,7 @@ from jarvis.tools.windows import Rectangle, register_windows
 from jarvis.voice.contracts import ERROR_TEXT, VoiceError, spoken_result
 from jarvis.voice.elevenlabs import PREVIEW, ElevenLabsSpeaker
 from jarvis.voice.local import VoskRecognizer, exchange
+from jarvis.workspace.store import WorkspaceFailure, WorkspaceStore
 
 
 def now() -> str:
@@ -118,6 +121,7 @@ class DesktopService:
         self.started_count = self.completed_count = 0
         self.history: deque[dict[str, object]] = deque(maxlen=20)
         self.notice = ""
+        self.workspace_state: dict[str, object] | None = None
         self.closing = False
         self.settings = Settings(model=config.planner_model)
         self.override_provider = provider
@@ -215,6 +219,7 @@ class DesktopService:
                 {key: item[key] for key in ("name", "description", "risk")}
                 for item in self.registry.discover()
             ],
+            "workspace": self.workspace_state,
         }
 
     def publish(self) -> None:
@@ -567,6 +572,7 @@ class DesktopService:
             return
         error = ""
         preempt = raw.operation in {
+            "workspace",
             "run",
             "configure",
             "voice_start",
@@ -615,6 +621,14 @@ class DesktopService:
                 if receipt is None or receipt[0] != raw.target_id or receipt[1].done():
                     raise ValueError("invalid_target_receipt")
                 receipt[1].set_result(None)
+            elif raw.operation == "workspace":
+                if self.busy or self.voice.task is not None or self.prompt is not None:
+                    raise ValueError("busy")
+                self.auxiliary = asyncio.create_task(self._workspace(raw))
+                try:
+                    await self.auxiliary
+                finally:
+                    self.auxiliary = None
             elif raw.operation == "configure":
                 if self.busy or self.voice.task is not None:
                     raise ValueError("busy")
@@ -675,6 +689,8 @@ class DesktopService:
         except VoiceError as exc:
             error = exc.code
             self.notice = ERROR_TEXT[exc.code]
+        except WorkspaceFailure as exc:
+            error = str(exc)
         except ValueError as exc:
             allowed = {
                 "busy",
@@ -684,6 +700,7 @@ class DesktopService:
                 "invalid_answer",
                 "memory_changed",
                 "memory_consent_required",
+                "workspace_changed",
             }
             error = str(exc) if str(exc) in allowed else "invalid_request"
         except Exception:
@@ -694,6 +711,21 @@ class DesktopService:
                 self.watchers.resume()
         self.write({"id": str(raw.id), "ok": not error, "error": error, "state": self.snapshot()})
         self.publish()
+
+    async def _workspace(self, raw: Request) -> None:
+        assert raw.workspace is not None
+        await self.voice.stop_wake()
+        profile = await asyncio.to_thread(
+            configure_workspace, WorkspaceStore(self.config.data_dir), raw.workspace
+        )
+        self.workspace_state = workspace_snapshot(
+            profile, self.config.workspace_profile, self.config.browser_mode.value
+        )
+        self.notice = (
+            "Рабочее пространство сохранено. Перезапустите Jarvis, чтобы применить настройки."
+            if raw.workspace.operation != "read"
+            else ""
+        )
 
     async def _auxiliary(self, raw: Request) -> None:
         try:

@@ -3,11 +3,12 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import Field, model_validator
+from pydantic import Field, JsonValue, model_validator
 
 from jarvis.mail.models import Message
 from jarvis.memory.models import Entry, Hint
 from jarvis.tools.base import ToolModel
+from jarvis.workspace.models import AppEntry, UserIdentity, WorkspaceBrowserMode
 
 MAX_REQUEST = 131072
 MAX_RESPONSE = 1048576
@@ -84,6 +85,33 @@ class ElevenCommand(ToolModel):
     consent: bool = False
 
 
+class WorkspaceSettings(ToolModel):
+    """Editable UI fields only; MCP reviews and playbooks cannot be rewritten here."""
+
+    user: UserIdentity
+    apps: tuple[AppEntry, ...] = Field(max_length=128)
+    browser_mode: WorkspaceBrowserMode
+
+
+class WorkspaceCommand(ToolModel):
+    operation: Literal["read", "save", "preset"]
+    revision: str = Field(default="", pattern=r"^(?:[a-f0-9]{64})?$")
+    # Validate semantic settings inside the handler so a mistyped URL is a
+    # recoverable form error, rather than a malformed JSONL envelope.
+    profile: dict[str, JsonValue] | None = Field(default=None, repr=False)
+    preset: Literal["omadli_group"] | None = None
+
+    @model_validator(mode="after")
+    def scope(self) -> "WorkspaceCommand":
+        if (self.operation != "read") != bool(self.revision):
+            raise ValueError("Workspace writes require the last observed revision.")
+        if (self.operation == "save") != (self.profile is not None):
+            raise ValueError("Profile outside save.")
+        if (self.operation == "preset") != (self.preset is not None):
+            raise ValueError("Preset outside selection.")
+        return self
+
+
 class Request(ToolModel):
     id: UUID
     operation: Literal[
@@ -105,6 +133,7 @@ class Request(ToolModel):
         "target_presented",
         "clipboard_sample",
         "watcher_action",
+        "workspace",
     ]
     sample_id: str = Field(default="", pattern=r"^(?:[a-f0-9]{32})?$")
     clipboard_text: str = Field(default="", max_length=16000, repr=False)
@@ -112,7 +141,7 @@ class Request(ToolModel):
     dismiss: bool = False
     command: str = Field(default="", max_length=4000, repr=False)
     mode: Literal["simulation", "execute"] = "simulation"
-    panel: Literal["task", "settings", "memory", "outlook", "voice", "tools"] = "task"
+    panel: Literal["task", "settings", "memory", "outlook", "voice", "tools", "workspace"] = "task"
     cloud_consent: bool = False
     memory_ids: tuple[str, ...] = Field(default=(), max_length=8)
     session_memory: bool = False
@@ -124,6 +153,7 @@ class Request(ToolModel):
     memory: MemoryEdit | None = None
     mail: MailCommand | None = None
     eleven: ElevenCommand | None = None
+    workspace: WorkspaceCommand | None = None
     target_id: str = Field(default="", pattern=r"^(?:[a-f0-9]{32})?$")
 
     @model_validator(mode="after")
@@ -162,6 +192,7 @@ class Request(ToolModel):
             ("memory", self.memory),
             ("mail", self.mail),
             ("eleven", self.eleven),
+            ("workspace", self.workspace),
         ):
             if (self.operation == operation) != (value is not None):
                 raise ValueError("Payload outside its operation.")
