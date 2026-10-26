@@ -114,11 +114,19 @@ class OpenApp(ToolModel):
 class OpenChromeUrl(ToolModel):
     service: Literal["external-chrome"] = "external-chrome"
     account: Literal["current-profile"] = "current-profile"
-    url: str = Field(min_length=1, max_length=6000)
+    url: str = Field(min_length=1, max_length=2000)
+
+
+class ChromeHandoff(ToolModel):
+    url: str = Field(min_length=1, max_length=2000)
+    submitted: bool
+    navigation_verified: Literal[False] = False
 
 
 def chrome_url(value: str) -> str:
     """Initial public HTTPS destination only; Chrome owns subsequent browsing."""
+    if len(value) > 2000:
+        raise ToolError("network_denied")
     return NetworkPolicy(mode=BrowserMode.LIVE).validate(value)
 
 
@@ -309,7 +317,6 @@ class WindowsResult(ToolModel):
     width: int | None = Field(default=None, gt=0, le=1280)
     height: int | None = Field(default=None, gt=0, le=800)
     performed: bool = False
-    opened_url: str | None = Field(default=None, max_length=6000)
     text_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     calculator: CalculatorTarget | None = None
     calculator_value_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
@@ -352,7 +359,7 @@ Operation = Literal[
 class NativeRequest(ToolModel):
     operation: Operation
     app: AppId | None = None
-    url: str | None = Field(default=None, max_length=6000)
+    url: str | None = Field(default=None, max_length=2000)
     target: WindowTarget | None = None
     editor: EditorTarget | None = None
     text: str | None = Field(default=None, max_length=4000)
@@ -385,17 +392,20 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
         await backend.call(NativeRequest(operation="check_chrome"), context)
         return True
 
-    async def chrome_run(args: OpenChromeUrl, context: ExecutionContext) -> WindowsResult:
+    async def chrome_run(args: OpenChromeUrl, context: ExecutionContext) -> ChromeHandoff:
         await NetworkPolicy(mode=BrowserMode.LIVE).validate_live_request(args.url)
         await context.checkpoint()
-        return await backend.call(NativeRequest(operation="open_chrome_url", url=args.url), context)
+        receipt = await backend.call(
+            NativeRequest(operation="open_chrome_url", url=args.url), context
+        )
+        return ChromeHandoff(url=receipt.text or "", submitted=receipt.performed)
 
     async def chrome_verify(
-        args: OpenChromeUrl, result: WindowsResult, context: ExecutionContext
+        args: OpenChromeUrl, result: ChromeHandoff, context: ExecutionContext
     ) -> bool:
         await context.checkpoint()
         # This verifies the handoff receipt, not page load, redirects or page contents.
-        return result.performed and result.opened_url == args.url
+        return result.submitted and result.url == args.url and not result.navigation_verified
 
     registry.register(
         ToolSpec(
@@ -406,7 +416,7 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
             "После передачи сетью и перенаправлениями управляет Chrome, не Strict Sandbox.",
             Risk.CONFIRM,
             OpenChromeUrl,
-            WindowsResult,
+            ChromeHandoff,
             chrome_check,
             chrome_run,
             chrome_verify,

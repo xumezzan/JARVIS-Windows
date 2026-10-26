@@ -64,9 +64,7 @@ async def test_exact_approval_precedes_dns_and_native_handoff(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, approved: bool
 ) -> None:
     backend = Mock()
-    backend.call = AsyncMock(
-        return_value=WindowsResult(performed=True, opened_url="https://apple.com/")
-    )
+    backend.call = AsyncMock(return_value=WindowsResult(performed=True, text="https://apple.com/"))
     dns = AsyncMock(return_value="https://apple.com/")
     monkeypatch.setattr(NetworkPolicy, "validate_live_request", dns)
     registry, store = ToolRegistry(), ApprovalStore()
@@ -111,7 +109,7 @@ def test_native_launch_uses_fixed_executable_and_new_tab_only(
     process = Mock()
     monkeypatch.setattr(subprocess, "Popen", process)
     receipt = desktop.dispatch(NativeRequest(operation="open_chrome_url", url="https://apple.com/"))
-    assert receipt.performed and receipt.opened_url == "https://apple.com/"
+    assert receipt.performed and receipt.text == "https://apple.com/"
     assert receipt.target is None  # No fabricated page/window verification.
     assert process.call_args.args == ([str(executable), "--new-tab", "https://apple.com/"],)
     assert process.call_args.kwargs["shell"] is False
@@ -130,7 +128,7 @@ async def test_desktop_literal_url_works_without_cloud_or_changing_browser_polic
         self: ProcessBackend, request: NativeRequest, context: object
     ) -> WindowsResult:
         calls.append(request)
-        return WindowsResult(performed=True, opened_url=request.url)
+        return WindowsResult(performed=True, text=request.url)
 
     monkeypatch.setattr(ProcessBackend, "call", native_call)
     monkeypatch.setattr(NetworkPolicy, "validate_live_request", AsyncMock())

@@ -337,7 +337,7 @@ class NativeDesktop:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        return WindowsResult(performed=True, opened_url=url)
+        return WindowsResult(performed=True, text=url)
 
     def launch(self, entry: LaunchEntry) -> None:
         """Start the resolved item itself. No user arguments, URLs, PATH lookup or shell."""
