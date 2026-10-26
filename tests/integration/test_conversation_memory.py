@@ -78,7 +78,12 @@ async def test_cloud_history_requires_separate_one_task_consent_and_voice_cannot
     service = DesktopService(AppConfig(tmp_path), events.append, provider=provider)
     try:
         service.start("Проверь систему", Mode.EXECUTE)
-        await until(lambda: service.worker is None)
+        # Consent is the contract here, not a five-second startup deadline on a
+        # loaded Windows runner. Await the actual production-bounded audited task.
+        worker = service.worker
+        assert worker is not None
+        await asyncio.wait_for(asyncio.shield(worker), timeout=service.limits.total_seconds)
+        assert service.task.state == "finished"
         await service.handle(
             request("configure", settings={"provider": "openai", "model": "fixture"})
         )

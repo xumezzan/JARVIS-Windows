@@ -56,6 +56,12 @@ the previous update documented why virtualized paths break Chromium assembly loa
 - Mypy: passed (343 source files).
 - Electron/HUD unit tests: **16 passed**.
 
+The first hosted run exposed an unrelated five-second polling deadline in the
+conversation-consent test while its real initial system-info task was still running.
+Like the adjacent long-task regression, this test now awaits the actual worker within
+the production task budget and asserts it finished before checking consent. Consent
+assertions and production timeouts are unchanged; this is not a performance test.
+
 Live voice, cloud model, Outlook and native E2E remain separate opt-in checks; skipped
 tests are not passed tests. Hosted Windows CI and the matching installation/bootstrap
 reports must be checked independently before declaring the published installation ready.
