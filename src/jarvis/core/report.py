@@ -201,6 +201,11 @@ DEEDS: dict[str, Callable[[dict[str, object], bool], str]] = {
     "files.recycle": lambda args, spoken: "переместил в корзину " + _file(args.get("path")),
     "files.open": lambda args, spoken: "открыл файл " + _file(args.get("path")),
     "windows.open_app": lambda args, spoken: "открыл " + (_plain(args.get("app")) or "приложение"),
+    "windows.open_chrome_url": lambda args, spoken: (
+        "передал адрес "
+        + _host(args.get("url"))
+        + " Chrome в новую вкладку; загрузка страницы не проверена"
+    ),
     "windows.focus_app": lambda args, spoken: "переключился на " + _app(args),
     # The typed text itself is the owner's content, so the report says where, never what.
     "windows.type_text": lambda args, spoken: "напечатал текст в " + _app(args),

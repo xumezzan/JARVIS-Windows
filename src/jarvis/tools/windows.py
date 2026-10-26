@@ -9,6 +9,7 @@ from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from jarvis.permissions.interaction import requires_confirmation
 from jarvis.permissions.policies import Risk
+from jarvis.security.browser_policy import BrowserMode, NetworkPolicy
 from jarvis.tools.base import ExecutionContext, ToolError, ToolModel, ToolSpec
 from jarvis.tools.registry import ToolRegistry
 
@@ -108,6 +109,17 @@ class OpenApp(ToolModel):
             "Do not supply a path, arguments or native window identifiers."
         )
     )
+
+
+class OpenChromeUrl(ToolModel):
+    service: Literal["external-chrome"] = "external-chrome"
+    account: Literal["current-profile"] = "current-profile"
+    url: str = Field(min_length=1, max_length=6000)
+
+
+def chrome_url(value: str) -> str:
+    """Initial public HTTPS destination only; Chrome owns subsequent browsing."""
+    return NetworkPolicy(mode=BrowserMode.LIVE).validate(value)
 
 
 class FocusApp(ToolModel):
@@ -297,6 +309,7 @@ class WindowsResult(ToolModel):
     width: int | None = Field(default=None, gt=0, le=1280)
     height: int | None = Field(default=None, gt=0, le=800)
     performed: bool = False
+    opened_url: str | None = Field(default=None, max_length=6000)
     text_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     calculator: CalculatorTarget | None = None
     calculator_value_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
@@ -318,6 +331,8 @@ Operation = Literal[
     "focus",
     "type",
     "check_open",
+    "check_chrome",
+    "open_chrome_url",
     "check_target",
     "verify",
     "inspect",
@@ -337,6 +352,7 @@ Operation = Literal[
 class NativeRequest(ToolModel):
     operation: Operation
     app: AppId | None = None
+    url: str | None = Field(default=None, max_length=6000)
     target: WindowTarget | None = None
     editor: EditorTarget | None = None
     text: str | None = Field(default=None, max_length=4000)
@@ -361,6 +377,44 @@ class WindowsBackend(Protocol):
 
 
 def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
+    def chrome_policy(args: OpenChromeUrl) -> None:
+        if chrome_url(args.url) != args.url:
+            raise ToolError("network_denied")
+
+    async def chrome_check(args: OpenChromeUrl, context: ExecutionContext) -> bool:
+        await backend.call(NativeRequest(operation="check_chrome"), context)
+        return True
+
+    async def chrome_run(args: OpenChromeUrl, context: ExecutionContext) -> WindowsResult:
+        await NetworkPolicy(mode=BrowserMode.LIVE).validate_live_request(args.url)
+        await context.checkpoint()
+        return await backend.call(NativeRequest(operation="open_chrome_url", url=args.url), context)
+
+    async def chrome_verify(
+        args: OpenChromeUrl, result: WindowsResult, context: ExecutionContext
+    ) -> bool:
+        await context.checkpoint()
+        # This verifies the handoff receipt, not page load, redirects or page contents.
+        return result.performed and result.opened_url == args.url
+
+    registry.register(
+        ToolSpec(
+            "windows.open_chrome_url",
+            "Передать точный HTTPS-адрес обычному Chrome в новой вкладке текущего профиля. "
+            "Требует подтверждения; использует существующие аккаунты. "
+            "Не читает вкладки и не проверяет загрузку страницы. "
+            "После передачи сетью и перенаправлениями управляет Chrome, не Strict Sandbox.",
+            Risk.CONFIRM,
+            OpenChromeUrl,
+            WindowsResult,
+            chrome_check,
+            chrome_run,
+            chrome_verify,
+            timeout_seconds=30,
+            policy=chrome_policy,
+        )
+    )
+
     async def list_check(args: ListWindows, context: ExecutionContext) -> bool:
         await context.checkpoint()
         return True

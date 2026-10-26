@@ -245,6 +245,7 @@ export const toolLabel = (name: string) =>
     "onedrive.write": "Запись в Excel",
     "windows.get_open_windows": "Открытые окна Windows",
     "windows.open_app": "Запуск приложения",
+    "windows.open_chrome_url": "Открытие адреса в вашем Chrome",
     "windows.get_text_fields": "Поля ввода окна",
     "windows.get_calculator_number": "Результат калькулятора",
     "windows.calculator_number": "Число в калькуляторе",

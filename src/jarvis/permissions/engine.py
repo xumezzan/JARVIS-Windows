@@ -55,6 +55,12 @@ class PermissionEngine:
             if len(payload.encode()) > 65536:
                 raise ValueError("Action exceeds snapshot limit.")
             action = Action(request_id, tool.name, payload, tool.classify_risk(payload), mode)
+        except ToolError as error:
+            if error.code == "network_denied" and tool is not None:
+                return self._invalid(
+                    request_id, mode, tool=tool.name, error=ErrorCode.NETWORK_DENIED
+                )
+            return self._invalid(request_id, mode if isinstance(mode, Mode) else Mode.SIMULATION)
         except Exception:
             return self._invalid(request_id, mode if isinstance(mode, Mode) else Mode.SIMULATION)
         try:
@@ -83,23 +89,31 @@ class PermissionEngine:
                 self._approvals.request(action)
         return action
 
-    def _invalid(self, request_id: UUID, mode: Mode) -> Outcome:
+    def _invalid(
+        self,
+        request_id: UUID,
+        mode: Mode,
+        *,
+        tool: str = "unknown",
+        error: ErrorCode = ErrorCode.INVALID_REQUEST,
+    ) -> Outcome:
+        status = Status.DENIED if error is ErrorCode.NETWORK_DENIED else Status.INVALID
         try:
             self._audit.write(
                 AuditEvent(
                     AuditKind.FINISHED,
                     request_id,
-                    "unknown",
+                    tool,
                     None,
                     mode,
                     Decision.DENY,
-                    Status.INVALID,
-                    error=ErrorCode.INVALID_REQUEST,
+                    status,
+                    error=error,
                 )
             )
         except Exception:
             return Outcome(request_id, Status.ERROR, ErrorCode.AUDIT)
-        return Outcome(request_id, Status.INVALID, ErrorCode.INVALID_REQUEST)
+        return Outcome(request_id, status, error)
 
     def _finish(
         self,

@@ -194,6 +194,12 @@ class PlanResult:
             "budget": "Исчерпан бюджет обращений к модели. Задача остановлена.",
         }
         rows = [titles[self.status]]
+        if self.error == "network_denied":
+            rows.append(
+                "Адрес запрещён политикой браузера. Strict Sandbox открывает только "
+                "разрешённые сайты. Для обычного Chrome укажите «открой сайт example.com» "
+                "и подтвердите точный адрес."
+            )
         if self.error:
             rows.append("Категория: " + self.error)
         rows.extend(

@@ -26,6 +26,7 @@ class NativeReply(ToolModel):
             "control_unsupported",
             "native_timeout",
             "native_failure",
+            "network_denied",
         ]
         | None
     ) = None

@@ -21,9 +21,15 @@ from jarvis.config import AppConfig, load_config
 from jarvis.core.planner.contracts import Limits, Provider, Step
 from jarvis.core.planner.openai_provider import OpenAIProvider
 from jarvis.core.planner.runner import Runner
+from jarvis.core.report import written
 from jarvis.desktop.protocol import MAX_REQUEST, MAX_RESPONSE, Request, Settings
 from jarvis.desktop.settings import UiSettings, UiSettingsStore
-from jarvis.desktop.system_tools import DesktopOfflineProvider, desktop_registry
+from jarvis.desktop.system_tools import (
+    ChromeCommandProvider,
+    DesktopOfflineProvider,
+    chrome_command,
+    desktop_registry,
+)
 from jarvis.desktop.voice import DesktopVoice
 from jarvis.desktop.watchers import EventWatcher, fingerprint
 from jarvis.desktop.workspace import configure as configure_workspace
@@ -478,7 +484,10 @@ class DesktopService:
         if self.busy or self.voice.task is not None or self.closing:
             raise ValueError("busy")
         provider = self.override_provider
-        if self.settings.provider == "openai":
+        direct_url = chrome_command(command) if provider is None else None
+        if direct_url is not None:
+            provider = ChromeCommandProvider(direct_url)
+        if self.settings.provider == "openai" and direct_url is None:
             if not cloud_consent:
                 self.notice = (
                     "Проверьте текст и разрешите передачу команды, наблюдений "
@@ -542,6 +551,8 @@ class DesktopService:
             outcome = await runner.run(command, mode)
             self.task.state, self.task.phase = outcome.status, "idle"
             self.task.summary = outcome.summary[:3000]
+            if any(step.tool == "windows.open_chrome_url" for step in outcome.steps):
+                self.task.summary = ("\n".join(written(outcome)) + "\n" + outcome.summary)[:3000]
             self.task.spoken_summary = outcome.spoken_summary
             self.last_speech = spoken_result(outcome)
             if outcome.status == "finished":

@@ -2,6 +2,7 @@
 
 import os
 import platform
+import re
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,12 +10,45 @@ from pathlib import Path
 from pydantic import Field
 
 from jarvis.core.planner.contracts import PlannerInput, Proposal
-from jarvis.core.planner.offline import OfflineProvider
+from jarvis.core.planner.offline import OfflineProvider, call
 from jarvis.permissions.policies import Risk
-from jarvis.tools.base import ExecutionContext, ToolModel, ToolSpec
+from jarvis.tools.base import ExecutionContext, ToolError, ToolModel, ToolSpec
 from jarvis.tools.local import LocalOutbox
 from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.scratchpad import register_scratchpad
+from jarvis.tools.windows import chrome_url
+
+
+def chrome_command(command: str) -> str | None:
+    """Only an explicit, single URL navigation from the owner's command."""
+    match = re.fullmatch(
+        r"(?:(?:открой|открыть|запусти)\s+(?:браузер|chrome|хром)\s+и\s+)?"
+        r"(?:открой|открыть|перейди|перейти)(?:\s+на)?(?:\s+сайт)?\s+"
+        r"((?:https://)?[a-zA-Z0-9][^\s]*)",
+        command.strip(),
+        re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    value = match.group(1)
+    if "." not in value or "://" in value and not value.lower().startswith("https://"):
+        return None
+    try:
+        return chrome_url(value if value.lower().startswith("https://") else "https://" + value)
+    except ToolError:
+        return None
+
+
+class ChromeCommandProvider:
+    """A literal address needs no cloud planner or account/page observations."""
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+
+    async def propose(self, data: PlannerInput) -> Proposal:
+        if data.steps:
+            return Proposal(kind="finish")
+        return call("windows.open_chrome_url", {"url": self.url})
 
 
 class SystemInput(ToolModel):
