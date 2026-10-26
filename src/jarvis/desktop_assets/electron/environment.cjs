@@ -7,3 +7,4 @@ for (const name of ["JARVIS_VOICE_WAKE_WORD", "JARVIS_VOICE_AUTO_STOP_ON_SILENCE
   "JARVIS_VOICE_RMS_THRESHOLD", "JARVIS_VOICE_RMS_CALIBRATE"]) names.add(name);
 module.exports={cleanEnvironment};
 names.add('JARVIS_BROWSER_CDP_URL');
+names.add('PLAYWRIGHT_BROWSERS_PATH');

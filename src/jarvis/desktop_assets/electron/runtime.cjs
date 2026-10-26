@@ -198,4 +198,20 @@ function pythonExecutable(root) {
     (process.platform === "win32" ? "python" : "python3")
   );
 }
-module.exports = { Runtime, pythonExecutable };
+function runtimeConfiguration(root, appPath, isPackaged) {
+  const configPath = path.join(appPath, "python-runtime.json");
+  // The installer ships the official electron.exe with resources/app. Electron
+  // still reports isPackaged=false under that executable name, but the trusted
+  // slot configuration must select its interpreter instead of a system Python.
+  if (!isPackaged && !fs.existsSync(configPath))
+    return { root, python: pythonExecutable(root) };
+  if (fs.statSync(configPath).size > 8192) throw new Error("invalid_packaged_runtime");
+  const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  if (!config || typeof config !== "object" ||
+      Object.keys(config).sort().join(",") !== "python,root" ||
+      typeof config.python !== "string" || typeof config.root !== "string" ||
+      !path.isAbsolute(config.python) || !path.isAbsolute(config.root))
+    throw new Error("invalid_packaged_runtime");
+  return config;
+}
+module.exports = { Runtime, pythonExecutable, runtimeConfiguration };

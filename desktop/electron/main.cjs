@@ -6,7 +6,7 @@ const path = require("node:path");
 const fs = require("node:fs/promises");
 const { constants } = require("node:fs");
 const { pathToFileURL } = require("node:url");
-const { Runtime, pythonExecutable } = require("./runtime.cjs");
+const { Runtime, runtimeConfiguration } = require("./runtime.cjs");
 const repository = path.resolve(__dirname, "../..");
 const startupArgument = process.argv.find((value) => value.startsWith("--jarvis-startup-report="));
 const startupReport = startupArgument?.slice("--jarvis-startup-report=".length);
@@ -376,19 +376,8 @@ async function createWindow() {
   await overlay.ready;
   overlay.onCancel = () => { void runtime?.request("cancel").catch(() => {}); };
   overlay.onRestore = () => taskHud?.restore(true, true);
-  let backendRoot = repository;
-  let backendPython = pythonExecutable(repository);
-  if (app.isPackaged) {
-    const configPath = path.join(app.getAppPath(), "python-runtime.json");
-    const raw = await fs.readFile(configPath, "utf8");
-    if (Buffer.byteLength(raw) > 8192) throw new Error("invalid_packaged_runtime");
-    const config = JSON.parse(raw);
-    if (Object.keys(config).sort().join(",") !== "python,root" ||
-        !path.isAbsolute(config.python) || !path.isAbsolute(config.root))
-      throw new Error("invalid_packaged_runtime");
-    backendRoot = config.root;
-    backendPython = config.python;
-  }
+  const { root: backendRoot, python: backendPython } =
+    runtimeConfiguration(repository, app.getAppPath(), app.isPackaged);
   runtime = new Runtime(backendRoot, backendPython, (message) => {
     if (message.event === "clipboard_poll") {
       // Main-only sampling: never expose clipboard content to a renderer automatically.
