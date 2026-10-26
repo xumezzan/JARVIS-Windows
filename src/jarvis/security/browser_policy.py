@@ -2,6 +2,7 @@
 
 import asyncio
 import ipaddress
+import re
 import socket
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -64,6 +65,7 @@ def covers(domain: str, host: str) -> bool:
 class BrowserMode(StrEnum):
     STRICT = "strict"
     LIVE = "live"
+    WORKSPACE = "authenticated_workspace"
 
 
 def validate_cdp_endpoint(value: str) -> str:
@@ -136,6 +138,7 @@ class NetworkPolicy:
     blocked_domains: tuple[str, ...] = PASSWORD_MANAGERS
     read_only_domains: tuple[str, ...] = field(default=DEFAULT_READ_ONLY)
     mode: BrowserMode = BrowserMode.STRICT
+    private_origins: tuple[str, ...] = ()
 
     @classmethod
     def from_workspace(
@@ -153,11 +156,22 @@ class NetworkPolicy:
             )
         )
         selected = (
-            BrowserMode.LIVE
+            BrowserMode.WORKSPACE
             if profile.browser_mode == "authenticated_workspace"
             else BrowserMode.STRICT
         )
-        return cls(allowed_origins=tuple(origins), mode=mode if mode is not None else selected)
+        return cls(
+            allowed_origins=tuple(origins),
+            mode=mode if mode is not None else selected,
+            private_origins=tuple(
+                dict.fromkeys(
+                    item
+                    for app in profile.apps
+                    if app.enabled and app.allow_private_network
+                    for item in app.allowed_origins
+                )
+            ),
+        )
 
     def __post_init__(self) -> None:
         if not isinstance(self.mode, BrowserMode):
@@ -165,6 +179,9 @@ class NetworkPolicy:
         for item in self.allowed_origins:
             if origin(item) != item or urlsplit(item).scheme != "https":
                 raise ValueError("Allowlist requires exact HTTPS origins.")
+        for item in self.private_origins:
+            if item not in self.allowed_origins or not corporate_origin(item):
+                raise ValueError("Private access requires an explicitly allowed corporate domain.")
         for group in (self.blocked_domains, self.read_only_domains):
             for name in group:
                 if not name or name != name.lower().strip(".") or "/" in name or ":" in name:
@@ -191,7 +208,7 @@ class NetworkPolicy:
 
     def validate(self, value: str) -> str:
         fragment = ""
-        if self.mode is BrowserMode.LIVE:
+        if self.mode is not BrowserMode.STRICT:
             # Fragments are browser-local and needed by SPA routers.
             if len(value) > 6000 or any(ord(char) < 33 or ord(char) > 126 for char in value):
                 raise ToolError("network_denied")
@@ -206,7 +223,7 @@ class NetworkPolicy:
         if self.fixture_origin is not None and current == self.fixture_origin:
             return url + fragment
         if urlsplit(url).scheme != "https" or (
-            self.mode is BrowserMode.STRICT and current not in self.allowed_origins
+            self.mode is not BrowserMode.LIVE and current not in self.allowed_origins
         ):
             raise ToolError("network_denied")
         host = urlsplit(url).hostname
@@ -214,20 +231,26 @@ class NetworkPolicy:
         try:
             address = ipaddress.ip_address(host)
         except ValueError:
-            if host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
+            if (
+                host == "localhost"
+                or host.endswith(".localhost")
+                or (host.endswith((".local", ".internal")) and current not in self.private_origins)
+            ):
                 raise ToolError("network_denied") from None
         else:
             if not public_address(address):
                 raise ToolError("network_denied")
         return url + fragment
 
-    async def validate_live_request(self, value: str) -> str:
+    async def validate_live_request(self, value: str, method: str = "GET") -> str:
         """Network-time preflight for each Chromium request, including redirects.
 
         Chromium owns TLS/cookies and resolves independently. This is not DNS pinning
         or an OS firewall; Strict Sandbox retains its pinned aiohttp connector.
         """
         url = self.validate(value)
+        if not self.writable(url) and method not in ("GET", "HEAD", "OPTIONS"):
+            raise ToolError("network_denied")
         parts = urlsplit(url)
         if self.fixture_origin is None or origin(url) != self.fixture_origin:
             assert parts.hostname is not None
@@ -245,7 +268,15 @@ class NetworkPolicy:
         for family, _, _, _, address in answers:
             ip = str(address[0])
             # Validation happens on the addresses handed to the connector, not a separate lookup.
-            if not public_address(ipaddress.ip_address(ip)):
+            resolved_address = ipaddress.ip_address(ip)
+            authority = f"[{host}]" if ":" in host else host
+            requested_origin = "https://" + authority + (f":{port}" if port != 443 else "")
+            private_allowed = requested_origin in self.private_origins and any(
+                resolved_address in network
+                for network in CORPORATE_NETWORKS
+                if resolved_address.version == network.version
+            )
+            if not public_address(resolved_address) and not private_allowed:
                 raise ToolError("network_denied")
             result.append((family, ip))
         if not result:
@@ -263,7 +294,7 @@ class NetworkPolicy:
         if not self.writable(result):
             # Reading such a site is looking at it; sending it anything is not.
             raise ToolError("network_denied")
-        if self.mode is BrowserMode.LIVE and method == "POST":
+        if self.mode is not BrowserMode.STRICT and method == "POST":
             return result  # Exact observed form; registered browser.click remains CONFIRM.
         # Generic real-world POST effects cannot be classified safely by DOM labels.
         # External writes need a later service-specific registered adapter.
@@ -285,3 +316,34 @@ def public_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bo
         or address.is_loopback
         or address.is_link_local
     )
+
+
+CORPORATE_NETWORKS = tuple(
+    ipaddress.ip_network(value)
+    for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")
+)
+
+
+def corporate_origin(value: str) -> bool:
+    """Exact HTTPS DNS name, never an IP, localhost, wildcard or metadata endpoint."""
+    try:
+        parts = urlsplit(normalized_url(value))
+        host = parts.hostname or ""
+        if origin(value) != value or parts.scheme != "https" or "*" in host or "." not in host:
+            return False
+        if host == "localhost" or host.endswith(".localhost"):
+            return False
+        if len(host) > 253 or not any("a" <= char <= "z" for char in host.rsplit(".", 1)[-1]):
+            return False
+        if any(
+            not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+            for label in host.split(".")
+        ):
+            return False
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            return True
+        return False
+    except ToolError:
+        return False

@@ -21,6 +21,31 @@ HOME = """<!doctype html><html><head><title>Browser fixture</title></head><body>
 <img src="/background"><script>fetch('/script-send',{method:'POST'})</script>
 </body></html>"""
 
+SPA = """<!doctype html><html><head><title>Workspace SPA</title></head><body>
+<div role="tab" tabindex="0" aria-label="Overview">Overview</div>
+<div role="menuitem" tabindex="0" aria-label="Navigation">Navigation</div>
+<input role="combobox" aria-label="Assignee"><div role="option">Alex</div>
+<div contenteditable="true" role="textbox" aria-label="Draft editor"></div>
+<div contenteditable="plaintext-only" aria-label="Notes editor"></div>
+<div role="textbox" contenteditable="true" aria-label="Comment draft"></div>
+<div role="button" tabindex="0" aria-label="Post" onclick="show('Published')">Post</div>
+<button aria-label="Open" data-choice="first" onclick="show('First')">Open</button>
+<button aria-label="Open" data-choice="second" onclick="show('Second')">Open</button>
+<input type="password" value="fixture-private-password">
+<input autocomplete="one-time-code" value="fixture-private-otp">
+<div contenteditable="true" aria-label="Password"><span>fixture-private-editable</span></div>
+<input type="hidden" name="token" value="fixture-private-token">
+<p id="result">Ready</p><p id="events"></p><div style="height:2000px"></div><p>End</p>
+<script>
+function show(text) {document.querySelector('#result').textContent = text;}
+document.querySelector('[aria-label="Draft editor"]').addEventListener('input', e => {
+ document.querySelector('#events').textContent = 'input:' + e.inputType + ':' + e.bubbles;
+});
+document.addEventListener('keydown', e => {
+ if (e.code === 'Backslash' && (e.ctrlKey || e.metaKey)) show('Autofill shortcut requested');
+});
+</script></body></html>"""
+
 
 class FixtureSite:
     def __init__(self) -> None:
@@ -69,7 +94,9 @@ class FixtureSite:
                     self.end_headers()
                     return
                 content = (
-                    HOME
+                    SPA
+                    if self.path == "/workspace-spa"
+                    else HOME
                     if self.path == "/"
                     else """<!doctype html><html><head><title>Live UI</title></head><body>
                     <label>Live query<input type="search"></label>

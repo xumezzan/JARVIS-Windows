@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
-from jarvis.security.browser_policy import NetworkPolicy, normalized_url, origin
+from jarvis.security.browser_policy import NetworkPolicy, corporate_origin, normalized_url, origin
 from jarvis.tools.base import ToolError, ToolModel
 
 Slug = Annotated[str, StringConstraints(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_-]*$")]
@@ -18,7 +18,7 @@ WorkspaceBrowserMode = Literal["strict_sandbox", "authenticated_workspace"]
 MutationRisk = Literal["SAFE", "CONFIRM"]
 
 
-def public_url(value: str) -> str:
+def public_url(value: str, *, allow_private: bool = False) -> str:
     """Pure validation using the browser's existing HTTPS/private-network boundary."""
     try:
         normalized = normalized_url(value)
@@ -26,9 +26,10 @@ def public_url(value: str) -> str:
             raise ValueError("Wildcard hosts are not exact origins.")
         # Describing a password manager does not grant access to it. Generated execution
         # policies retain the mandatory blocked domains, irrespective of this metadata.
-        NetworkPolicy(allowed_origins=(origin(normalized),), blocked_domains=()).validate(
-            normalized
-        )
+        grant = (origin(normalized),) if allow_private else ()
+        NetworkPolicy(
+            allowed_origins=(origin(normalized),), blocked_domains=(), private_origins=grant
+        ).validate(normalized)
         return normalized
     except (ToolError, ValueError):
         raise ValueError(
@@ -58,22 +59,7 @@ class AppEntry(ToolModel):
     workspace_notes: Description = Field(default="", repr=False)
     default_mutation_risk: MutationRisk = "CONFIRM"
     enabled: bool = True
-
-    @field_validator("launch_url")
-    @classmethod
-    def valid_launch(cls, value: str | None) -> str | None:
-        return public_url(value) if value is not None else None
-
-    @field_validator("allowed_origins")
-    @classmethod
-    def exact_origins(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        for value in values:
-            normalized = public_url(value)
-            if value != origin(normalized):
-                raise ValueError("Use exact HTTPS origins without paths, queries or wildcards.")
-        if len(set(values)) != len(values):
-            raise ValueError("Duplicate workspace origins.")
-        return values
+    allow_private_network: bool = False
 
     @field_validator("native_exe_hint")
     @classmethod
@@ -87,6 +73,23 @@ class AppEntry(ToolModel):
 
     @model_validator(mode="after")
     def launch_origin(self) -> "AppEntry":
+        if self.allow_private_network and (
+            self.category != "custom_erp"
+            or not self.allowed_origins
+            or any(not corporate_origin(value) for value in self.allowed_origins)
+        ):
+            raise ValueError("Private access is only available for explicit custom ERP domains.")
+        for value in self.allowed_origins:
+            if value != origin(public_url(value, allow_private=self.allow_private_network)):
+                raise ValueError("Use exact HTTPS origins without paths, queries or wildcards.")
+        if len(set(self.allowed_origins)) != len(self.allowed_origins):
+            raise ValueError("Duplicate workspace origins.")
+        if self.launch_url is not None:
+            object.__setattr__(
+                self,
+                "launch_url",
+                public_url(self.launch_url, allow_private=self.allow_private_network),
+            )
         if self.launch_url is not None and origin(self.launch_url) not in self.allowed_origins:
             raise ValueError("The launch URL must belong to an explicitly allowed origin.")
         if self.enabled and self.kind == "web" and self.launch_url is None:

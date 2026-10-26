@@ -114,8 +114,11 @@ OpenAIProvider сериализует сводку в пользовательс
 origins не содержат путей или query. Проверка DNS остаётся на стороне runtime.
 Отключение одного приложения не отзывает общий origin другого включённого приложения.
 
-`strict_sandbox` соответствует Strict Browser, `authenticated_workspace` — существующему
-Live Browser. При старте явно заданный `JARVIS_BROWSER_MODE` имеет приоритет.
+`strict_sandbox` соответствует Strict Browser, `authenticated_workspace` — новому
+[Workspace Browser](AUTHENTICATED_WORKSPACE_BROWSER.md) с persistent profile либо CDP.
+Для внутреннего `custom_erp` доступен явный `allow_private_network=True` с точными
+корпоративными origins; loopback/link-local остаются запрещены.
+При старте явно заданный `JARVIS_BROWSER_MODE` имеет приоритет.
 CDP endpoint по-прежнему приходит только из trusted startup configuration; профиль
 не содержит cookies, паролей, профиля Chrome или endpoint. При явном создании
 `AppConfig` из Python его `browser_mode` также имеет приоритет.

@@ -90,8 +90,11 @@ class FilePolicy:
     """An explicit allowlist of folders. An empty list denies every path."""
 
     roots: tuple[Path, ...]
+    denied_roots: tuple[Path, ...]
 
-    def __init__(self, roots: tuple[str, ...] | None = None) -> None:
+    def __init__(
+        self, roots: tuple[str, ...] | None = None, *, denied_roots: tuple[str, ...] = ()
+    ) -> None:
         chosen = default_roots() if roots is None else roots
         resolved: list[Path] = []
         for raw in chosen:
@@ -102,6 +105,9 @@ class FilePolicy:
                 raise ToolError("path_denied")
             resolved.append(self.normalise(candidate))
         object.__setattr__(self, "roots", tuple(dict.fromkeys(resolved)))
+        object.__setattr__(
+            self, "denied_roots", tuple(self.normalise(Path(raw)) for raw in denied_roots)
+        )
 
     @staticmethod
     def normalise(path: Path) -> Path:
@@ -111,7 +117,9 @@ class FilePolicy:
             raise ToolError("path_denied") from None
 
     def inside(self, path: Path) -> bool:
-        return any(path == root or path.is_relative_to(root) for root in self.roots)
+        return not any(
+            path == root or path.is_relative_to(root) for root in self.denied_roots
+        ) and any(path == root or path.is_relative_to(root) for root in self.roots)
 
     def check(self, raw: str) -> Path:
         """Resolve one caller-supplied path and prove it stays inside an allowed folder."""

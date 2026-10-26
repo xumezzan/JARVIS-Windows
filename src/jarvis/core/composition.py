@@ -134,13 +134,11 @@ def build(
             **DRIVE_MAPPERS,
         },
     )
-    host = browser_host or BrowserHost(
-        config.browser_policy, cdp_endpoint=config.browser_cdp_endpoint
-    )
+    host = browser_host or BrowserHost.from_config(config)
     registry, outbox = local_registry()
-    register_browser(registry, host, host.policy)
+    register_browser(registry, host, host.policy, workspace=host.workspace)
     register_windows(registry, windows_backend or ProcessBackend())
-    files = FilePolicy(config.file_roots)
+    files = config.file_policy
     register_files(registry, files, LocalFiles())
     register_filesystem(registry, config.filesystem_policy)
     session = mail_session or MailSession()

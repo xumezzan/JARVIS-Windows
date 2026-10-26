@@ -22,6 +22,7 @@ Thumbs.db
 .idea/
 .vscode/
 browser-state/
+browser_profile/
 recordings/
 
 # Local design tools and browser preview dependencies

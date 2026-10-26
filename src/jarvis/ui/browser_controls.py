@@ -23,15 +23,21 @@ class BrowserControls(QWidget):
         self.tool = ""
         self.views: dict[str, PageView] = {}
         layout = QVBoxLayout(self)
+        mode_name = (
+            "Authenticated Workspace Browser" if mode is BrowserMode.WORKSPACE else "Live Browser"
+        )
         notice = QLabel(
             (
-                "Live Browser · CDP: видимый Chrome с его входами и cookies. "
+                mode_name + " · CDP: видимый Chrome с его входами и cookies. "
                 "При закрытии Jarvis вкладки и браузер сохраняются."
                 if attached
+                else "Authenticated Workspace Browser: отдельный постоянный профиль; "
+                "входы сохраняются между запусками. JavaScript и cookies включены."
+                if mode is BrowserMode.WORKSPACE
                 else "Live Browser: JavaScript, cookies, сабресурсы и HTTPS-редиректы включены. "
                 "Отдельный видимый сеанс закрывается вместе с этим окном."
             )
-            if mode is BrowserMode.LIVE
+            if mode is not BrowserMode.STRICT
             else "Strict Sandbox: отдельный анонимный сеанс без JavaScript. Статические страницы "
             "и поиск через GET-формы; отправка POST отключена. Вкладки и введённый текст "
             "удаляются при закрытии этого окна."
@@ -94,8 +100,11 @@ class BrowserControls(QWidget):
         if view is None or view.target != target:
             return
         for element in view.elements:
-            if (self.tool == "browser.type" and element.role in ("textbox", "searchbox")) or (
-                self.tool == "browser.click" and element.role in ("button", "link")
+            if (
+                self.tool == "browser.type" and element.role in ("textbox", "searchbox", "combobox")
+            ) or (
+                self.tool == "browser.click"
+                and element.role in ("button", "link", "tab", "menuitem", "combobox", "option")
             ):
                 self.elements.addItem(f"{element.role}: {element.name}", element)
 

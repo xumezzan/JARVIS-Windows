@@ -568,10 +568,7 @@ class MainWindow(QMainWindow):
                 self.permission_workbench = PermissionWorkbench(
                     self.config.data_dir,
                     self,
-                    browser_host=BrowserHost(
-                        self.config.browser_policy,
-                        cdp_endpoint=self.config.browser_cdp_endpoint,
-                    ),
+                    browser_host=BrowserHost.from_config(self.config),
                 )
             except Exception:
                 self.notice_label.setText(

@@ -122,8 +122,10 @@ async def test_js_button_requires_approval_and_search_field_is_observed(live: Ha
     assert result is not None and "Result: hello" in result.text
 
 
+@pytest.mark.parametrize("mode", [BrowserMode.LIVE, BrowserMode.WORKSPACE])
 async def test_cdp_attaches_existing_tabs_uses_cookies_and_leaves_browser_running(
     tmp_path: Path,
+    mode: BrowserMode,
 ) -> None:
     site = FixtureSite()
     process: asyncio.subprocess.Process | None = None
@@ -167,7 +169,7 @@ async def test_cdp_attaches_existing_tabs_uses_cookies_and_leaves_browser_runnin
             page = context.pages[0]
             await page.goto(site.origin + "/live-ui")
             session = BrowserSession(
-                NetworkPolicy(fixture_origin=site.origin, mode=BrowserMode.LIVE),
+                NetworkPolicy(fixture_origin=site.origin, mode=mode),
                 cdp_endpoint=endpoint,
             )
             await session.start()
@@ -203,6 +205,32 @@ async def test_cdp_attaches_existing_tabs_uses_cookies_and_leaves_browser_runnin
                 assert any(
                     row[1] == "/redirect-destination" and row[3] == "demo=yes" for row in site.seen
                 )
+            if mode is BrowserMode.WORKSPACE:
+                other = FixtureSite()
+                try:
+                    # The initial popup request is context-routed; its allowed
+                    # first hop must not grant a redirect into a private origin.
+                    managed = next(iter(session.pages.values()))
+                    assert session.context is not None
+                    await managed.evaluate(
+                        "url => { const a = document.createElement('a'); a.href = url;"
+                        " a.target = '_blank'; a.textContent = 'Popup redirect fixture';"
+                        " document.body.append(a); }",
+                        site.origin + "/live-private?port=" + str(other.server.server_port),
+                    )
+                    async with session.context.expect_event(
+                        "requestfailed",
+                        predicate=lambda req: (
+                            req.url == other.origin + "/private"
+                            or req.url.startswith(site.origin + "/live-private?")
+                        ),
+                        timeout=5000,
+                    ) as blocked:
+                        await managed.get_by_role("link", name="Popup redirect fixture").click()
+                    await blocked.value
+                    assert not other.seen
+                finally:
+                    other.close()
             await session.close()
             session = None
             assert process.returncode is None

@@ -343,8 +343,8 @@ def test_startup_loads_profile_and_preserves_explicit_browser_override(tmp_path:
     WorkspaceStore(tmp_path).save(profile)
     config = load_config({"JARVIS_DATA_DIR": str(tmp_path)})
     assert config.workspace_profile == profile
-    assert config.browser_mode is BrowserMode.LIVE
-    assert NetworkPolicy.from_workspace(profile).mode is BrowserMode.LIVE
+    assert config.browser_mode is BrowserMode.WORKSPACE
+    assert NetworkPolicy.from_workspace(profile).mode is BrowserMode.WORKSPACE
     strict = load_config({"JARVIS_DATA_DIR": str(tmp_path), "JARVIS_BROWSER_MODE": "strict"})
     assert strict.browser_policy.mode is BrowserMode.STRICT
     assert "https://erp.example.com" in strict.browser_policy.allowed_origins

@@ -95,6 +95,11 @@ test("only trusted non-secret voice config survives runtime environment filterin
     JARVIS_VOICE_RMS_CALIBRATE: "1", JARVIS_VOICE_AUTO_STOP_ON_SILENCE: "1"};
   assert.deepEqual(cleanEnvironment({...config, OPENAI_API_KEY:"fixture-secret", HTTPS_PROXY:"fixture-proxy"}), config);
 });
+test("the trusted workspace CDP alias survives runtime environment filtering", () => {
+  const config = {JARVIS_BROWSER_MODE: "authenticated_workspace",
+    JARVIS_BROWSER_CDP_URL: "http://127.0.0.1:9222"};
+  assert.deepEqual(cleanEnvironment({...config, OPENAI_API_KEY:"fixture-secret"}), config);
+});
 test("an approval remains reachable when the original monitor is unplugged", () => {
   const {window, hud, screen} = setup();
   screen.getDisplayMatching = () => ({id:1, workArea:{x:-1920,y:0,width:1920,height:1080}});
