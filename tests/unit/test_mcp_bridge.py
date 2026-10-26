@@ -192,6 +192,27 @@ def test_unreviewed_or_disabled_server_registers_nothing() -> None:
     assert not registry.discover()
 
 
+def test_manifest_hash_ignores_json_object_key_order() -> None:
+    first = tool()
+    schema = first.input_schema
+    reordered = McpToolDefinition(
+        name=first.name,
+        description=first.description,
+        input_schema={
+            "additionalProperties": False,
+            "required": ["query"],
+            "properties": {"query": {"maxLength": 100, "type": "string"}},
+            "type": "object",
+        },
+    )
+    assert schema == reordered.input_schema
+    config = server(allowed_tools=("search",))
+    assert (
+        config.with_review((first,)).reviewed_digest
+        == config.with_review((reordered,)).reviewed_digest
+    )
+
+
 def test_existing_owner_matrix_can_block_a_workspace_alias() -> None:
     registry = ToolRegistry()
     config = server().with_review((tool(), tool("create_issue")))

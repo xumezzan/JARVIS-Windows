@@ -22,7 +22,9 @@ Value = str | int | float | bool | None
 
 
 def encoded(value: object) -> bytes:
-    return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode()
+    return json.dumps(
+        value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
+    ).encode()
 
 
 def validate_schema(schema: dict[str, JsonValue]) -> None:
