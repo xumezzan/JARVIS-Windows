@@ -4,10 +4,11 @@ import argparse
 import asyncio
 import base64
 import json
+import os
 import sys
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Event, Thread
@@ -21,6 +22,7 @@ from jarvis.core.planner.contracts import Limits, Provider, Step
 from jarvis.core.planner.openai_provider import OpenAIProvider
 from jarvis.core.planner.runner import Runner
 from jarvis.desktop.protocol import MAX_REQUEST, MAX_RESPONSE, Request, Settings
+from jarvis.desktop.settings import UiSettings, UiSettingsStore
 from jarvis.desktop.system_tools import DesktopOfflineProvider, desktop_registry
 from jarvis.desktop.voice import DesktopVoice
 from jarvis.desktop.watchers import EventWatcher, fingerprint
@@ -46,6 +48,8 @@ from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.matrix import load_matrix
 from jarvis.permissions.policies import Decision, Mode, Risk, Status
 from jarvis.platforms.windows.transport import ProcessBackend
+from jarvis.platforms.workspace_browser import BrowserLaunchError, WorkspaceBrowser
+from jarvis.security.browser_policy import BrowserMode
 from jarvis.tools.base import ExecutionContext, ToolError
 from jarvis.tools.browser import register_browser
 from jarvis.tools.calendar import register_calendar
@@ -54,7 +58,7 @@ from jarvis.tools.outlook import register_outlook
 from jarvis.tools.windows import Rectangle, register_windows
 from jarvis.voice.contracts import ERROR_TEXT, VoiceError, spoken_result
 from jarvis.voice.elevenlabs import PREVIEW, ElevenLabsSpeaker
-from jarvis.voice.local import VoskRecognizer, exchange
+from jarvis.voice.local import LocalRecorder, VoskRecognizer, exchange
 from jarvis.workspace.store import WorkspaceFailure, WorkspaceStore
 
 
@@ -123,7 +127,32 @@ class DesktopService:
         self.notice = ""
         self.workspace_state: dict[str, object] | None = None
         self.closing = False
-        self.settings = Settings(model=config.planner_model)
+        self.ui_store = UiSettingsStore(config.data_dir)
+        self.ui_settings = self.ui_store.load()
+        self.settings = Settings.model_validate(
+            self.ui_settings.model_dump(
+                include={
+                    "provider",
+                    "auto_start",
+                    "speech_enabled",
+                    "task_memory_enabled",
+                    "wake_word",
+                    "auto_stop_on_silence",
+                }
+            )
+            | {
+                "model": config.planner_model or self.ui_settings.planner_model,
+                "wake_word": os.environ.get(
+                    "JARVIS_VOICE_WAKE_WORD", str(int(self.ui_settings.wake_word))
+                )
+                == "1",
+                "auto_stop_on_silence": os.environ.get(
+                    "JARVIS_VOICE_AUTO_STOP_ON_SILENCE",
+                    str(int(self.ui_settings.auto_stop_on_silence)),
+                )
+                == "1",
+            }
+        )
         self.override_provider = provider
         self.limits = limits or Limits()
         self.host = BrowserHost.from_config(config)
@@ -138,6 +167,7 @@ class DesktopService:
         register_workspace_mcp(self.registry, config.workspace_profile.mcp_servers, matrix)
         self.audit = AuditLog(config.data_dir / "audit.sqlite3")
         store = ApprovalStore()
+        self.approval_store = store
         self.engine = PermissionEngine(self.registry, store, self.audit)
         self._authority = store.take_authority(self.audit.approved)
         self.runner: Runner | None = None
@@ -155,7 +185,19 @@ class DesktopService:
         self.attachments: list[dict[str, object]] = []
         self.eleven: dict[str, object] = {}
         self.cloud_voice: tuple[str, str] | None = None
-        self.voice = DesktopVoice(self.publish, self.transcript, self._voice_start, self.cancel)
+        self.voice = DesktopVoice(
+            self.publish,
+            self.transcript,
+            self._voice_start,
+            self.cancel,
+            model_path=self.ui_settings.vosk_model_path,
+            wake_word=self.settings.wake_word,
+            auto_stop_on_silence=self.settings.auto_stop_on_silence,
+        )
+        self.voice.auto_start = self.settings.auto_start
+        self.voice.speech_enabled = self.settings.speech_enabled
+        self.workspace_browser: dict[str, object] = {"state": "disconnected"}
+        self.browser_launcher = WorkspaceBrowser(config.data_dir)
         self._wake_blocked = False
         self.last_speech = ""
         self._task_cancelled = False
@@ -220,6 +262,7 @@ class DesktopService:
                 for item in self.registry.discover()
             ],
             "workspace": self.workspace_state,
+            "workspace_browser": self.workspace_browser,
         }
 
     def publish(self) -> None:
@@ -573,6 +616,7 @@ class DesktopService:
         error = ""
         preempt = raw.operation in {
             "workspace",
+            "workspace_browser",
             "run",
             "configure",
             "voice_start",
@@ -629,15 +673,42 @@ class DesktopService:
                     await self.auxiliary
                 finally:
                     self.auxiliary = None
+            elif raw.operation == "workspace_browser":
+                if self.busy or self.voice.task is not None or self.prompt is not None:
+                    raise ValueError("busy")
+                self.auxiliary = asyncio.create_task(self.connect_workspace_browser())
+                try:
+                    await self.auxiliary
+                finally:
+                    self.auxiliary = None
             elif raw.operation == "configure":
                 if self.busy or self.voice.task is not None:
                     raise ValueError("busy")
                 assert raw.settings is not None
                 if raw.settings.model:
                     OpenAIProvider(raw.settings.model)
+                persisted = UiSettings.model_validate(
+                    self.ui_settings.model_dump()
+                    | raw.settings.model_dump(
+                        exclude={
+                            "model",
+                            "watch_clipboard",
+                            "watch_mail",
+                            "watch_speech",
+                        }
+                    )
+                    | {"planner_model": raw.settings.model}
+                )
+                await asyncio.to_thread(self.ui_store.save, persisted)
+                self.ui_settings = persisted
+                await self.voice.stop_wake()
                 self.settings = raw.settings
                 self.voice.auto_start = self.settings.auto_start
                 self.voice.speech_enabled = self.settings.speech_enabled
+                self.voice.wake_enabled = self.settings.wake_word
+                self.voice.wake_suspended = False
+                if isinstance(self.voice.recorder, LocalRecorder):
+                    self.voice.recorder.auto_stop_on_silence = self.settings.auto_stop_on_silence
                 self.cloud_voice = None
                 await self.watchers.configure(
                     self.settings.watch_clipboard,
@@ -659,6 +730,11 @@ class DesktopService:
                     await asyncio.to_thread(self.voice.recognizer.shutdown)
                 self.voice.recognizer = VoskRecognizer(Path(raw.model_path))
                 self.voice.recognizer.warmup()
+                persisted = UiSettings.model_validate(
+                    self.ui_settings.model_dump() | {"vosk_model_path": raw.model_path}
+                )
+                await asyncio.to_thread(self.ui_store.save, persisted)
+                self.ui_settings = persisted
             elif raw.operation == "voice_wake_resume":
                 if self.busy or self.voice.task is not None or not self.voice.wake_enabled:
                     raise ValueError("busy")
@@ -691,6 +767,8 @@ class DesktopService:
             self.notice = ERROR_TEXT[exc.code]
         except WorkspaceFailure as exc:
             error = str(exc)
+        except BrowserLaunchError as exc:
+            error = str(exc)
         except ValueError as exc:
             allowed = {
                 "busy",
@@ -718,6 +796,12 @@ class DesktopService:
         profile = await asyncio.to_thread(
             configure_workspace, WorkspaceStore(self.config.data_dir), raw.workspace
         )
+        if raw.workspace.operation != "read":
+            persisted = UiSettings.model_validate(
+                self.ui_settings.model_dump() | {"browser_mode": profile.browser_mode}
+            )
+            await asyncio.to_thread(self.ui_store.save, persisted)
+            self.ui_settings = persisted
         self.workspace_state = workspace_snapshot(
             profile, self.config.workspace_profile, self.config.browser_mode.value
         )
@@ -726,6 +810,83 @@ class DesktopService:
             if raw.workspace.operation != "read"
             else ""
         )
+
+    async def connect_workspace_browser(self) -> None:
+        """A visible owner's control replaces an idle runtime, never an in-flight action."""
+        await self.voice.stop_wake()
+        self.workspace_browser = {"state": "connecting"}
+        self.publish()
+        host: BrowserHost | None = None
+        try:
+            endpoint = await asyncio.to_thread(self.browser_launcher.launch)
+            active = self.config.workspace_profile
+            active = type(active).model_validate(
+                active.model_dump() | {"browser_mode": "authenticated_workspace"}
+            )
+            config = replace(
+                self.config,
+                browser_mode=BrowserMode.WORKSPACE,
+                browser_cdp_endpoint=endpoint,
+                workspace_profile=active,
+            )
+            host = BrowserHost.from_config(config)
+            # Re-compose the same trusted surface against the existing mail session,
+            # audit and approval store; all previous task observations are discarded.
+            registry, outbox = desktop_registry(config.data_dir)
+            register_filesystem(registry, config.filesystem_policy)
+            register_browser(registry, host, host.policy, workspace=host.workspace)
+            register_windows(registry, ProcessBackend(before_click=self._highlight))
+            register_outlook(registry, self.mail_session)
+            matrix = load_matrix(config.data_dir / "permissions.json")
+            calendar = register_calendar(registry, self.mail_session, matrix)
+            register_workspace_mcp(registry, active.mcp_servers, matrix)
+            engine = PermissionEngine(registry, self.approval_store, self.audit)
+            prepared = engine.prepare("browser.get_tabs", {}, Mode.EXECUTE)
+            try:
+                if isinstance(prepared, Outcome):
+                    raise BrowserLaunchError("workspace_browser_failed")
+                outcome = await engine.execute(prepared)
+                if outcome.status is not Status.SUCCESS:
+                    raise BrowserLaunchError("workspace_browser_failed")
+            except BaseException:
+                await asyncio.to_thread(host.shutdown)
+                raise
+            finally:
+                if not isinstance(prepared, Outcome):
+                    engine.cancel(prepared)
+            persisted = UiSettings.model_validate(
+                self.ui_settings.model_dump()
+                | {
+                    "browser_mode": "authenticated_workspace",
+                    "managed_browser": True,
+                }
+            )
+            profile_store = WorkspaceStore(config.data_dir)
+            profile = await asyncio.to_thread(profile_store.load)
+            profile = type(profile).model_validate(
+                profile.model_dump()
+                | {
+                    "browser_mode": "authenticated_workspace",
+                }
+            )
+            await asyncio.to_thread(profile_store.save, profile)
+            await asyncio.to_thread(self.ui_store.save, persisted)
+            await asyncio.to_thread(self.host.shutdown)
+            self.host, self.config, self.registry, self.engine = host, config, registry, engine
+            self.calendar, self.outbox = calendar, outbox
+            self.runner = None
+            self.ui_settings = persisted
+            self.workspace_browser = {"state": "connected", "endpoint": endpoint}
+            self.notice = "Рабочий браузер подключён. Войдите в сервисы в его отдельном окне."
+            if self.workspace_state is not None:
+                self.workspace_state = workspace_snapshot(
+                    profile, active, config.browser_mode.value
+                )
+        except BaseException:
+            if host is not None and host is not self.host:
+                await asyncio.to_thread(host.shutdown)
+            self.workspace_browser = {"state": "disconnected"}
+            raise
 
     async def _auxiliary(self, raw: Request) -> None:
         try:
@@ -979,6 +1140,18 @@ async def serve() -> int:
     queue: asyncio.Queue[Request | None] = asyncio.Queue(maxsize=8)
     Thread(target=read_pipe, args=(sys.stdin.buffer, loop, queue), daemon=True).start()
     service.publish()
+    if service.ui_settings.managed_browser and service.config.browser_mode is BrowserMode.WORKSPACE:
+        service.auxiliary = asyncio.create_task(service.connect_workspace_browser())
+        try:
+            await service.auxiliary
+        except (BrowserLaunchError, WorkspaceFailure, ToolError, ValueError):
+            await asyncio.to_thread(service.host.shutdown)
+            service.notice = (
+                "Рабочий браузер недоступен. Нажмите «Открыть рабочий браузер» в Пространстве."
+            )
+        finally:
+            service.auxiliary = None
+        service.publish()
     service.voice.wake_allowed = True
     service.publish()
     try:

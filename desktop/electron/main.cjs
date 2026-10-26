@@ -8,6 +8,24 @@ const { constants } = require("node:fs");
 const { pathToFileURL } = require("node:url");
 const { Runtime, pythonExecutable } = require("./runtime.cjs");
 const repository = path.resolve(__dirname, "../..");
+const startupArgument = process.argv.find((value) => value.startsWith("--jarvis-startup-report="));
+const startupReport = startupArgument?.slice("--jarvis-startup-report=".length);
+let startupWritten = false;
+async function writeStartupReport(state) {
+  if (!startupReport || startupWritten || !state.ready || !mainWindow?.isVisible()) return;
+  const allowedRoot = path.resolve(process.env.LOCALAPPDATA || "", "JarvisInstall");
+  if (process.platform !== "win32" || !path.isAbsolute(startupReport) ||
+      path.dirname(startupReport) !== allowedRoot ||
+      !/^startup(?:-[a-f0-9]{32})?\.json$/.test(path.basename(startupReport)))
+    throw new Error("invalid_startup_report");
+  startupWritten = true;
+  const temporary = startupReport + ".tmp";
+  await fs.writeFile(temporary, JSON.stringify({
+    pid: process.pid, ppid: process.ppid, platform: "windows", visible: true,
+    surface: "electron", backend_ready: true,
+  }), { flag: "wx" });
+  await fs.rename(temporary, startupReport);
+}
 let runtime;
 let quitting = false;
 app.setName("Jarvis");
@@ -110,6 +128,9 @@ ipcMain.handle("jarvis-app:run", (event, ...args) => {
 });
 ipcMain.handle("jarvis-app:cancel", (event, ...args) =>
   protectedRequest(event, args, 0, "cancel"),
+);
+ipcMain.handle("jarvis-app:workspace-browser", (event, ...args) =>
+  protectedRequest(event, args, 0, "workspace_browser"),
 );
 ipcMain.handle("jarvis-app:open", (event, ...args) => {
   verifiedWindow(event, args, 1);
@@ -355,7 +376,20 @@ async function createWindow() {
   await overlay.ready;
   overlay.onCancel = () => { void runtime?.request("cancel").catch(() => {}); };
   overlay.onRestore = () => taskHud?.restore(true, true);
-  runtime = new Runtime(repository, pythonExecutable(repository), (message) => {
+  let backendRoot = repository;
+  let backendPython = pythonExecutable(repository);
+  if (app.isPackaged) {
+    const configPath = path.join(app.getAppPath(), "python-runtime.json");
+    const raw = await fs.readFile(configPath, "utf8");
+    if (Buffer.byteLength(raw) > 8192) throw new Error("invalid_packaged_runtime");
+    const config = JSON.parse(raw);
+    if (Object.keys(config).sort().join(",") !== "python,root" ||
+        !path.isAbsolute(config.python) || !path.isAbsolute(config.root))
+      throw new Error("invalid_packaged_runtime");
+    backendRoot = config.root;
+    backendPython = config.python;
+  }
+  runtime = new Runtime(backendRoot, backendPython, (message) => {
     if (message.event === "clipboard_poll") {
       // Main-only sampling: never expose clipboard content to a renderer automatically.
       void (async () => {
@@ -382,6 +416,9 @@ async function createWindow() {
     if (message.event === "state") {
       taskHud.update(message.state);
       overlay.update(message.state);
+      void writeStartupReport(message.state).catch(() => {
+        dialog.showErrorBox("Jarvis", "Не удалось записать отчёт запуска. Проверьте установку.");
+      });
     } else if (message.event === "unavailable") {
       taskHud.update(null);
       overlay.update(null);

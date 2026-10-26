@@ -23,6 +23,8 @@ class Settings(ToolModel):
     watch_clipboard: bool = False
     watch_mail: bool = False
     watch_speech: bool = False
+    wake_word: bool = False
+    auto_stop_on_silence: bool = False
 
 
 class Reply(ToolModel):
@@ -134,6 +136,7 @@ class Request(ToolModel):
         "clipboard_sample",
         "watcher_action",
         "workspace",
+        "workspace_browser",
     ]
     sample_id: str = Field(default="", pattern=r"^(?:[a-f0-9]{32})?$")
     clipboard_text: str = Field(default="", max_length=16000, repr=False)

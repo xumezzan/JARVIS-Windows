@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import ValidationError
 
+from jarvis.tools.base import ToolModel
 from jarvis.workspace.models import WorkspaceProfile
 
 MAX_PROFILE_BYTES = 262_144
@@ -20,11 +21,11 @@ class WorkspaceFailure(ValueError):
         super().__init__("workspace_" + code)
 
 
-class WorkspaceStore:
-    def __init__(self, data_dir: Path):
-        self.path = data_dir / "workspace_profile.json"
+class JsonSettingsStore[T: ToolModel]:
+    def __init__(self, path: Path, schema: type[T]):
+        self.path, self.schema = path, schema
 
-    def load(self) -> WorkspaceProfile:
+    def load(self) -> T:
         try:
             if self.path.is_symlink():
                 raise WorkspaceFailure("storage")
@@ -32,7 +33,7 @@ class WorkspaceStore:
             try:
                 fd = os.open(self.path, flags)
             except FileNotFoundError:
-                return WorkspaceProfile()
+                return self.schema()
             try:
                 info = os.fstat(fd)
                 if not stat.S_ISREG(info.st_mode):
@@ -45,15 +46,15 @@ class WorkspaceStore:
                 os.close(fd)
             if len(raw) > MAX_PROFILE_BYTES:
                 raise WorkspaceFailure("limit")
-            return WorkspaceProfile.model_validate_json(raw)
+            return self.schema.model_validate_json(raw)
         except ValidationError:
             raise WorkspaceFailure("invalid") from None
         except OSError:
             raise WorkspaceFailure("storage") from None
 
-    def save(self, profile: WorkspaceProfile) -> None:
+    def save(self, profile: T) -> None:
         try:
-            checked = WorkspaceProfile.model_validate(profile)
+            checked = self.schema.model_validate(profile)
             raw = checked.model_dump_json().encode("utf-8")
         except (ValidationError, ValueError):
             raise WorkspaceFailure("invalid") from None
@@ -77,3 +78,8 @@ class WorkspaceStore:
             if temporary is not None:
                 with suppress(OSError):
                     temporary.unlink(missing_ok=True)
+
+
+class WorkspaceStore(JsonSettingsStore[WorkspaceProfile]):
+    def __init__(self, data_dir: Path):
+        super().__init__(data_dir / "workspace_profile.json", WorkspaceProfile)

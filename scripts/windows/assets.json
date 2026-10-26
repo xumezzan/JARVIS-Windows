@@ -2,6 +2,14 @@
   "schema": 1,
   "reviewed": "2026-09-15",
   "windows_acceptance": "pending",
+  "electron": {
+    "version": "44.7.2",
+    "url": "https://github.com/electron/electron/releases/download/v44.7.2/electron-v44.7.2-win32-x64.zip",
+    "sha256": "10a89447ef64ac5cb9f782af48ffd83734a40ae91681259d1048ca3c9e6c5da4",
+    "size": 157867015,
+    "source": "Official electron/electron GitHub release asset digest; matches existing npm Electron version.",
+    "windows_acceptance": "pending"
+  },
   "python": {
     "version": "3.13.15",
     "url": "https://www.python.org/ftp/python/3.13.15/python-3.13.15-amd64.exe",

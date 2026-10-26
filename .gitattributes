@@ -1,0 +1,3 @@
+# Source hashes and committed prebuilt assets must survive Windows checkout unchanged.
+desktop/** text eol=lf
+src/jarvis/desktop_assets/** -text

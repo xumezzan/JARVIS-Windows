@@ -10,6 +10,8 @@ __pycache__/
 htmlcov/
 build/
 dist/
+!src/jarvis/desktop_assets/dist/
+!src/jarvis/desktop_assets/dist/**
 .env
 .env.*
 !.env.example
@@ -35,3 +37,4 @@ node_modules/
 desktop/node_modules
 desktop/node_modules 2/
 desktop/.node_modules-preserved-*/
+desktop/release/

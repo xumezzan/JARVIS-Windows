@@ -22,6 +22,9 @@ class DesktopVoice:
         recorder: Recorder | None = None,
         recognizer: Recognizer | None = None,
         speaker: Speaker | None = None,
+        model_path: str = "",
+        wake_word: bool | None = None,
+        auto_stop_on_silence: bool | None = None,
     ) -> None:
         self.publish, self.transcript, self.start, self.cancel_plan = (
             publish,
@@ -29,11 +32,15 @@ class DesktopVoice:
             start,
             cancel,
         )
-        model = os.environ.get("JARVIS_VOSK_MODEL", "")
+        model = os.environ.get("JARVIS_VOSK_MODEL", model_path)
         self.recognizer = recognizer or (VoskRecognizer(Path(model)) if model else None)
         self.recorder = recorder or LocalRecorder(
             host=self.recognizer.host if isinstance(self.recognizer, VoskRecognizer) else None,
-            auto_stop_on_silence=os.environ.get("JARVIS_VOICE_AUTO_STOP_ON_SILENCE", "0") == "1",
+            auto_stop_on_silence=(
+                os.environ.get("JARVIS_VOICE_AUTO_STOP_ON_SILENCE", "0") == "1"
+                if auto_stop_on_silence is None
+                else auto_stop_on_silence
+            ),
         )
         self.speaker = speaker or LocalSpeaker()
         if self.recognizer is not None and not self.recognizer.local_only:
@@ -45,7 +52,9 @@ class DesktopVoice:
         self.auto_start = False
         self.speech_enabled = False
         self.closed = False
-        self.wake_enabled = os.environ.get("JARVIS_VOICE_WAKE_WORD", "0") == "1"
+        self.wake_enabled = (
+            os.environ.get("JARVIS_VOICE_WAKE_WORD", "0") == "1" if wake_word is None else wake_word
+        )
         self.wake_allowed = False  # serve() publishes the opt-in indicator before arming.
         self.wake_suspended = False
         self.wake_review = False

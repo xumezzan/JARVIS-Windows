@@ -31,14 +31,14 @@ try:
     env["PLAYWRIGHT_BROWSERS_PATH"] = str(slot / "browsers")
     env["JARVIS_VOSK_MODEL"] = str(slot / "models" / active["model"])
     env["QT_QPA_PLATFORM"] = "windows"
+    env.pop("ELECTRON_RUN_AS_NODE", None)
+    executable = slot / "desktop" / "electron.exe"
+    if not executable.is_file():
+        raise ValueError("Electron installation needs repair")
     process = subprocess.Popen(
         [
-            str(slot / "venv" / "Scripts" / "pythonw.exe"),
-            "-I",
-            "-m",
-            "jarvis",
-            "--startup-report",
-            str(receipt),
+            str(executable),
+            "--jarvis-startup-report=" + str(receipt),
         ],
         env=env,
         cwd=root,

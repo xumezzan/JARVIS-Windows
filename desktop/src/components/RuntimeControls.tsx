@@ -151,6 +151,8 @@ export function VoiceSettingsPanel({
       state.settings.watch_clipboard,
       state.settings.watch_mail,
       state.settings.watch_speech,
+      state.settings.wake_word,
+      state.settings.auto_stop_on_silence,
     ],
   );
   const busy = !state.can_run;
@@ -208,7 +210,7 @@ export function VoiceSettingsPanel({
       <h3>Голосовой ввод</h3>
       <p>
         Модель Vosk загружается заранее и остаётся в RAM. Микрофон включается
-        только при удержании кнопки.
+        при удержании кнопки или при явно включённом ожидании «Джарвис».
       </p>
       <button
         className="outline-button"
@@ -233,6 +235,16 @@ export function VoiceSettingsPanel({
         проверьте текст и дайте согласие. Подтверждения действий запрашиваются
         отдельно.
       </small>
+      {([
+        ["wake_word", "Ожидать обращение «Джарвис» (Wake Word)"],
+        ["auto_stop_on_silence", "Завершать запись по тишине (Auto-stop on silence)"],
+      ] as const).map(([key, label]) => <label className="check-row" key={key}>
+        <input type="checkbox" disabled={busy} checked={settings[key] ?? false}
+          onChange={(e) => void configure({ ...settings, [key]: e.target.checked })} />
+        {label}
+      </label>)}
+      <small>Эти настройки сохраняются. При включённом Wake Word индикатор микрофона виден;
+        Stop приостанавливает ожидание. Оно не даёт согласия на облако и подтверждений действий.</small>
       <label className="check-row">
         <input
           type="checkbox"

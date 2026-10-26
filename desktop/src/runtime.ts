@@ -7,6 +7,8 @@ export type VoiceSettings = {
   watch_clipboard: boolean;
   watch_mail: boolean;
   watch_speech: boolean;
+  wake_word: boolean;
+  auto_stop_on_silence: boolean;
 };
 export type Prompt = {
   id: string;
@@ -79,6 +81,7 @@ export type History = {
 };
 export type RuntimeState = {
   workspace?: WorkspaceState | null;
+  workspace_browser?: { state: "disconnected" | "connecting" | "connected"; endpoint?: string };
   ready: boolean;
   can_run: boolean;
   started_count: number;
@@ -150,6 +153,7 @@ export type RuntimeEvent =
   | { event: "ui_error"; error: string };
 export interface JarvisApi {
   workspace(command: WorkspaceCommand): Promise<RuntimeState>;
+  workspaceBrowser(): Promise<RuntimeState>;
   watcher(id: string, dismiss?: boolean): Promise<RuntimeState>;
   status(): Promise<{ state: RuntimeState | null; error: string }>;
   run(command: string, mode: Mode, options?: RunOptions): Promise<RuntimeState>;
@@ -279,6 +283,10 @@ export const statusLabel = (name: string) =>
 export function readableError(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
   for (const [code, message] of Object.entries({
+    workspace_browser_missing: "Установите Chrome или Edge и повторите подключение.",
+    workspace_browser_port_busy: "Порт 9222 занят другим процессом. Освободите его и повторите подключение.",
+    workspace_browser_untrusted: "Не удалось проверить принадлежность браузера. Закройте его рабочее окно и подключите заново.",
+    workspace_browser_failed: "Рабочий браузер не подключился. Проверьте его окно и повторите подключение.",
     workspace_changed: "Профиль изменён другим окном. Загрузите его заново и повторите изменения.",
     workspace_storage: "Не удалось прочитать или сохранить профиль. Проверьте доступ к папке данных.",
     workspace_invalid: "Проверьте профиль: нужен точный HTTPS URL без пароля, фрагмента или шаблона домена.",
