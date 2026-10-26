@@ -204,7 +204,7 @@ function runtimeConfiguration(root, appPath, isPackaged) {
   // still reports isPackaged=false under that executable name, but the trusted
   // slot configuration must select its interpreter instead of a system Python.
   if (!isPackaged && !fs.existsSync(configPath))
-    return { root, python: pythonExecutable(root) };
+    return { root, python: pythonExecutable(root), installed: false };
   if (fs.statSync(configPath).size > 8192) throw new Error("invalid_packaged_runtime");
   const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
   if (!config || typeof config !== "object" ||
@@ -212,6 +212,6 @@ function runtimeConfiguration(root, appPath, isPackaged) {
       typeof config.python !== "string" || typeof config.root !== "string" ||
       !path.isAbsolute(config.python) || !path.isAbsolute(config.root))
     throw new Error("invalid_packaged_runtime");
-  return config;
+  return { ...config, installed: true };
 }
 module.exports = { Runtime, pythonExecutable, runtimeConfiguration };

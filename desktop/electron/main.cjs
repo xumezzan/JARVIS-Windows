@@ -11,9 +11,10 @@ const repository = path.resolve(__dirname, "../..");
 const startupArgument = process.argv.find((value) => value.startsWith("--jarvis-startup-report="));
 const startupReport = startupArgument?.slice("--jarvis-startup-report=".length);
 let startupWritten = false;
+let installedRoot;
 async function writeStartupReport(state) {
   if (!startupReport || startupWritten || !state.ready || !mainWindow?.isVisible()) return;
-  const allowedRoot = path.resolve(process.env.LOCALAPPDATA || "", "JarvisInstall");
+  const allowedRoot = installedRoot || path.resolve(process.env.LOCALAPPDATA || "", "JarvisInstall");
   if (process.platform !== "win32" || !path.isAbsolute(startupReport) ||
       path.dirname(startupReport) !== allowedRoot ||
       !/^startup(?:-[a-f0-9]{32})?\.json$/.test(path.basename(startupReport)))
@@ -376,8 +377,9 @@ async function createWindow() {
   await overlay.ready;
   overlay.onCancel = () => { void runtime?.request("cancel").catch(() => {}); };
   overlay.onRestore = () => taskHud?.restore(true, true);
-  const { root: backendRoot, python: backendPython } =
+  const { root: backendRoot, python: backendPython, installed } =
     runtimeConfiguration(repository, app.getAppPath(), app.isPackaged);
+  if (installed) installedRoot = path.resolve(backendRoot, "../..");
   runtime = new Runtime(backendRoot, backendPython, (message) => {
     if (message.event === "clipboard_poll") {
       // Main-only sampling: never expose clipboard content to a renderer automatically.

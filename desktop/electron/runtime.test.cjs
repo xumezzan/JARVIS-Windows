@@ -11,8 +11,8 @@ test('official electron.exe uses its installed slot even when isPackaged is fals
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const config = { root: path.join(directory, 'slot'), python: path.join(directory, 'slot', 'python.exe') };
   fs.writeFileSync(path.join(directory, 'python-runtime.json'), JSON.stringify(config));
-  assert.deepEqual(runtimeConfiguration('unused-dev-root', directory, false), config);
-  assert.deepEqual(runtimeConfiguration('unused-dev-root', directory, true), config);
+  assert.deepEqual(runtimeConfiguration('unused-dev-root', directory, false), { ...config, installed: true });
+  assert.deepEqual(runtimeConfiguration('unused-dev-root', directory, true), { ...config, installed: true });
 });
 
 test('an installed runtime never falls back after a missing or invalid configuration', t => {
