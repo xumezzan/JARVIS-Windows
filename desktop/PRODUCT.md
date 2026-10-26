@@ -1,5 +1,13 @@
 # Product truth: Jarvis Desktop
 
+Дополнение 2026-10-26: [Workspace Setup UI](../docs/WORKSPACE_SETUP_UI.md).
+Панель «Пространство» сохраняет identity, правила работы, 14 приложений Omadli Group,
+пользовательские приложения, их URL/включение и Strict/Authenticated Workspace.
+Настройки вступают в силу после перезапуска; PermissionEngine и согласия сохраняются.
+Calendar tools и reviewed Workspace MCP реализованы в этапе 3; это уточняет прежние
+исторические записи ниже о нереализованном календаре. Live-приёмка сервисов остаётся
+отдельной проверкой, а профиль не подключает аккаунты автоматически.
+
 Дополнение 2026-10-25: [wake word и интерактивный HUD](../docs/WAKE_WORD_HUD.md).
 Явный JARVIS_VOICE_WAKE_WORD=1 разрешает локально ждать «Джарвис» на том же Vosk
 AudioHost и начать endpoint-запись без удержания. Default 0; индикатор микрофона

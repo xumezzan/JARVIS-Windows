@@ -37,7 +37,30 @@ export type RunOptions = {
 };
 export type Mode = "simulation" | "execute";
 export type Panel =
-  "task" | "settings" | "memory" | "outlook" | "voice" | "tools";
+  "task" | "settings" | "memory" | "outlook" | "voice" | "tools" | "workspace";
+export type WorkspaceProfile = {
+  user: {
+    name: string; organization: string; role: string; tasks_description: string;
+    language: string; email_tone: string; social_comments_tone: string;
+  };
+  apps: WorkspaceApp[];
+  browser_mode: "strict_sandbox" | "authenticated_workspace";
+};
+export type WorkspaceApp = {
+  id: string; name: string;
+  category: "productivity" | "communication" | "finance" | "cloud_admin" | "social" | "custom_erp" | "security";
+  kind: "web" | "native" | "hybrid";
+  launch_url: string | null; allowed_origins: string[]; native_exe_hint: string | null;
+  mcp_server_id: string | null; workspace_notes: string;
+  default_mutation_risk: "SAFE" | "CONFIRM"; enabled: boolean; allow_private_network: boolean;
+};
+export type WorkspaceState = {
+  profile: WorkspaceProfile; revision: string; restart_required: boolean; active_browser_mode: string;
+};
+export type WorkspaceCommand =
+  | { operation: "read" }
+  | { operation: "save"; revision: string; profile: WorkspaceProfile }
+  | { operation: "preset"; revision: string; preset: "omadli_group" };
 export type Step = {
   tool: string;
   status: string;
@@ -55,6 +78,7 @@ export type History = {
   steps: number;
 };
 export type RuntimeState = {
+  workspace?: WorkspaceState | null;
   ready: boolean;
   can_run: boolean;
   started_count: number;
@@ -125,6 +149,7 @@ export type RuntimeEvent =
   | { event: "unavailable"; error: string }
   | { event: "ui_error"; error: string };
 export interface JarvisApi {
+  workspace(command: WorkspaceCommand): Promise<RuntimeState>;
   watcher(id: string, dismiss?: boolean): Promise<RuntimeState>;
   status(): Promise<{ state: RuntimeState | null; error: string }>;
   run(command: string, mode: Mode, options?: RunOptions): Promise<RuntimeState>;
@@ -167,8 +192,58 @@ export const toolLabel = (name: string) =>
     "browser.close": "Закрытие вкладки",
     "browser.click": "Нажатие элемента",
     "browser.type": "Ввод на странице",
+    "browser.open_workspace_app": "Открытие рабочего приложения",
+    "browser.scroll": "Прокрутка страницы",
+    "browser.press_key": "Нажатие клавиши в браузере",
+    "browser.trigger_1password_autofill": "Автозаполнение через 1Password",
+    "calendar.list_events": "Встречи Outlook",
+    "calendar.create_draft_event": "Черновик встречи",
+    "calendar.create_event": "Создание встречи Outlook",
+    "calendar.list": "Список встреч",
+    "calendar.search": "Поиск встреч",
+    "calendar.get": "Чтение встречи",
+    "calendar.availability": "Свободное время участников",
+    "calendar.create": "Создание встречи",
+    "calendar.update": "Изменение встречи",
+    "calendar.cancel": "Отмена встречи",
+    "files.find": "Поиск в папках",
+    "files.list_folder": "Содержимое папки",
+    "files.read_text": "Чтение текстового файла",
+    "files.write_text": "Запись текстового файла",
+    "files.rename": "Переименование файла",
+    "files.recycle": "Перемещение в корзину",
+    "files.open": "Открытие файла",
+    "local.check": "Локальная проверка",
+    "local.critical_test": "Проверка критического действия",
+    "local.blocked_test": "Проверка запрещённого действия",
+    "local.append_message": "Сообщение в тестовый исходящий ящик",
+    "fireflies.list": "Встречи Fireflies",
+    "fireflies.search": "Поиск в Fireflies",
+    "fireflies.get": "Сведения о встрече Fireflies",
+    "fireflies.transcript": "Расшифровка встречи",
+    "asana.workspaces": "Пространства Asana",
+    "asana.projects": "Проекты Asana",
+    "asana.tasks": "Задачи Asana",
+    "asana.task": "Чтение задачи Asana",
+    "asana.create_task": "Создание задачи Asana",
+    "notion.search": "Поиск в Notion",
+    "notion.page": "Страница Notion",
+    "notion.read": "Чтение Notion",
+    "notion.create_page": "Создание страницы Notion",
+    "notion.append": "Дополнение страницы Notion",
+    "teams.chats": "Чаты Teams",
+    "teams.messages": "Сообщения Teams",
+    "teams.draft": "Черновик Teams",
+    "teams.send": "Отправка сообщения Teams",
+    "onedrive.files": "Файлы OneDrive",
+    "onedrive.sheets": "Листы Excel",
+    "onedrive.read": "Чтение Excel",
+    "onedrive.write": "Запись в Excel",
     "windows.get_open_windows": "Открытые окна Windows",
     "windows.open_app": "Запуск приложения",
+    "windows.get_text_fields": "Поля ввода окна",
+    "windows.get_calculator_number": "Результат калькулятора",
+    "windows.calculator_number": "Число в калькуляторе",
     "windows.focus_app": "Выбор окна",
     "windows.type_text": "Ввод текста в окно",
     "windows.inspect_active_window": "Анализ активного окна",
@@ -188,7 +263,8 @@ export const toolLabel = (name: string) =>
     "outlook.create_local_draft": "Локальный черновик",
     "outlook.save_draft": "Черновик Outlook",
     "outlook.send": "Отправка письма",
-  })[name] || name;
+  })[name] || (name.startsWith("mcp.") || name.startsWith("mcp_")
+    ? `Инструмент MCP: ${name.replace(/^mcp[._]/, "").replace("__", " / ")}` : name);
 export const statusLabel = (name: string) =>
   ({
     SUCCESS: "Проверено",
@@ -203,6 +279,10 @@ export const statusLabel = (name: string) =>
 export function readableError(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
   for (const [code, message] of Object.entries({
+    workspace_changed: "Профиль изменён другим окном. Загрузите его заново и повторите изменения.",
+    workspace_storage: "Не удалось прочитать или сохранить профиль. Проверьте доступ к папке данных.",
+    workspace_invalid: "Проверьте профиль: нужен точный HTTPS URL без пароля, фрагмента или шаблона домена.",
+    workspace_limit: "Профиль слишком большой. Сократите описания или число приложений.",
     cloud_consent_required:
       "Для OpenAI отметьте согласие на передачу команды и наблюдений.",
     prompt_expired: "Запрос подтверждения истёк. Запустите задачу заново.",

@@ -115,7 +115,7 @@ ipcMain.handle("jarvis-app:open", (event, ...args) => {
   verifiedWindow(event, args, 1);
   const panel = args[0];
   if (
-    !["task", "settings", "memory", "outlook", "voice", "tools"].includes(panel)
+    !["task", "settings", "memory", "outlook", "voice", "tools", "workspace"].includes(panel)
   )
     throw new Error("invalid_panel");
   return protectedRequest(event, args, 1, "open", { panel });
@@ -126,9 +126,13 @@ for (const [channel, operation, field] of [
   ["configure", "configure", "settings"],
   ["memory", "memory", "memory"],
   ["eleven", "eleven", "eleven"],
+  ["workspace", "workspace", "workspace"],
 ]) {
   ipcMain.handle(`jarvis-app:${channel}`, (event, ...args) => {
     verifiedWindow(event, args, 1);
+    // Keep a large settings form inside Python's bounded JSONL request reader.
+    if (channel === "workspace" && Buffer.byteLength(JSON.stringify(args[0]) || "") > 130000)
+      throw new Error("workspace_limit");
     return protectedRequest(event, args, 1, operation, { [field]: args[0] });
   });
 }

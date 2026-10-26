@@ -29,6 +29,7 @@ import {
 import { JarvisOrb } from "./components/JarvisOrb";
 import { CompactHud } from "./components/CompactHud";
 import { TaskHud } from "./components/TaskHud";
+import { WorkspacePanel } from "./components/WorkspacePanel";
 import {
   PromptDialog,
   VoiceSettingsPanel,
@@ -53,6 +54,7 @@ const nav = [
   ["tools", "Инструменты", LayoutGrid],
   ["services", "Подключения", Plug],
   ["memory", "Память", ShieldCheck],
+  ["workspace", "Пространство", Globe],
   ["settings", "Настройки", Settings],
 ] as const;
 type Page = (typeof nav)[number][0];
@@ -186,6 +188,7 @@ function App() {
             tools: "tools",
             voice: "home",
             task: "home",
+            workspace: "workspace",
           } as const
         )[panel],
       );
@@ -378,7 +381,8 @@ function App() {
             tabIndex={-1}
             className={page === "home" ? "dashboard" : "section-page"}
           >
-            {page === "home" ? (
+            <WorkspacePanel state={state} active={page === "workspace"} apply={apply} />
+            {page === "workspace" ? null : page === "home" ? (
               <>
                 <div className="column left-column">
                   <section className="glass-card session-card">
