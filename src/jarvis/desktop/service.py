@@ -27,6 +27,7 @@ from jarvis.desktop.watchers import EventWatcher, fingerprint
 from jarvis.mail.credentials import MailFailure
 from jarvis.mail.models import Account, Message
 from jarvis.mail.session import MailSession
+from jarvis.mcp.bridge import register_workspace_mcp
 from jarvis.memory.conversation import (
     ConversationRingBuffer,
     Playbook,
@@ -40,10 +41,12 @@ from jarvis.memory.store import MemoryFailure, MemoryStore
 from jarvis.observability.audit import AuditEvent, AuditKind, AuditLog, ErrorCode
 from jarvis.permissions.approvals import Action, ApprovalStore, ApprovalToken
 from jarvis.permissions.engine import Outcome, PermissionEngine
+from jarvis.permissions.matrix import load_matrix
 from jarvis.permissions.policies import Decision, Mode, Risk, Status
 from jarvis.platforms.windows.transport import ProcessBackend
 from jarvis.tools.base import ExecutionContext, ToolError
 from jarvis.tools.browser import register_browser
+from jarvis.tools.calendar import register_calendar
 from jarvis.tools.filesystem import register_filesystem
 from jarvis.tools.outlook import register_outlook
 from jarvis.tools.windows import Rectangle, register_windows
@@ -126,6 +129,9 @@ class DesktopService:
         register_windows(self.registry, ProcessBackend(before_click=self._highlight))
         self.mail_session = MailSession()
         register_outlook(self.registry, self.mail_session)
+        matrix = load_matrix(config.data_dir / "permissions.json")
+        self.calendar = register_calendar(self.registry, self.mail_session, matrix)
+        register_workspace_mcp(self.registry, config.workspace_profile.mcp_servers, matrix)
         self.audit = AuditLog(config.data_dir / "audit.sqlite3")
         store = ApprovalStore()
         self.engine = PermissionEngine(self.registry, store, self.audit)

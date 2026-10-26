@@ -3,6 +3,7 @@
 import base64
 import importlib
 import io
+import json
 import random
 from pathlib import Path
 from unittest.mock import Mock
@@ -164,5 +165,16 @@ async def test_maximal_som_image_and_actual_catalog_fit_180k(tmp_path: Path) -> 
         assert size < 180_000
         payload, _ = OpenAIProvider("probe")._request_payload(probe["worst_case"](service.registry))
         assert len(payload["input"][0]["content"][1]["image_url"].split(",")[1]) == 65536
+        context = json.loads(payload["input"][0]["content"][0]["text"])
+        shared_names = context["untrusted_observation_names"]
+        elements = context["untrusted_observations"][0]["untrusted_result"]["elements"]
+        original = json.loads(probe["worst_case"](service.registry).steps[0].outcome.result_json)
+        assert len(elements) == 96
+        for compact, full in zip(elements, original["elements"], strict=True):
+            restored = dict(compact)
+            if "name_ref" in restored:
+                restored["name"] = shared_names[restored.pop("name_ref")]
+            full.pop("name_sha256", None)
+            assert restored == full  # Exact Unicode labels and all target metadata survive.
     finally:
         await service.shutdown()

@@ -3,7 +3,9 @@
 import math
 import re
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from dataclasses import dataclass
+from typing import Any
 
 from jarvis.permissions.policies import Risk
 from jarvis.tools.base import ExecutionContext, P, R, ToolModel, ToolSpec, canonical
@@ -24,6 +26,7 @@ class RegisteredTool:
     verify: Callable[[str, ToolModel, ExecutionContext], Awaitable[bool]]
     policy: Callable[[ToolModel], None]
     classify_risk: Callable[[str], Risk]
+    catalog_schema: dict[str, Any] | None = None
 
     def normalize(self, arguments: object) -> str:
         # Validate Python input before JSON serialization to reject coercion and extra fields.
@@ -44,6 +47,14 @@ class ToolRegistry:
             raise ValueError("Invalid tool name.")
         if spec.name in self._tools:
             raise ValueError("Duplicate tool name.")
+        if spec.catalog_schema is not None and (
+            spec.catalog_schema.get("type") != "object"
+            or spec.catalog_schema.get("additionalProperties") is not False
+            or set(spec.catalog_schema.get("properties", {}))
+            != set(spec.parameters.model_json_schema().get("properties", {}))
+            or spec.policy is None
+        ):
+            raise ValueError("Catalog schema needs matching fields and a pure validation policy.")
         if not isinstance(spec.risk, Risk):
             raise ValueError("Tool risk must be a trusted Risk value.")
         if not math.isfinite(spec.timeout_seconds) or not 0 < spec.timeout_seconds <= 60:
@@ -91,6 +102,7 @@ class ToolRegistry:
             verify,
             policy,
             classify_risk,
+            deepcopy(spec.catalog_schema),
         )
 
     def seal(self) -> None:
@@ -105,7 +117,9 @@ class ToolRegistry:
                 "name": tool.name,
                 "description": tool.description,
                 "risk": tool.risk.value,
-                "parameters": tool.parameters.model_json_schema(),
+                "parameters": deepcopy(tool.catalog_schema)
+                if tool.catalog_schema is not None
+                else tool.parameters.model_json_schema(),
                 "result": tool.result.model_json_schema(),
                 "timeout": tool.timeout_seconds,
                 "cancellation": tool.cancellation,

@@ -186,6 +186,9 @@ def _event(verb: str) -> Callable[[dict[str, object], bool], str]:
 
 
 DEEDS: dict[str, Callable[[dict[str, object], bool], str]] = {
+    "calendar.list_events": lambda args, spoken: "прочитал расписание",
+    "calendar.create_draft_event": lambda args, spoken: "подготовил черновик встречи",
+    "calendar.create_event": lambda args, spoken: "создал встречу",
     "outlook.send": _send,
     "outlook.save_draft": _draft,
     "calendar.create": _event("создал"),
@@ -234,6 +237,18 @@ def _deed(step: Step, spoken: bool) -> str:
 
 
 def _sentence(step: Step, spoken: bool) -> str:
+    if step.tool.startswith("mcp."):
+        if step.outcome.status is Status.SUCCESS:
+            return "Получен ответ MCP; результат действия в сервисе не проверен."
+        if step.outcome.may_have_effects:
+            return "Результат MCP-запроса не подтверждён — проверьте сервис."
+        return "MCP-запрос не выполнен."
+    if (
+        step.tool == "calendar.create_event"
+        and step.outcome.may_have_effects
+        and step.outcome.status is not Status.SUCCESS
+    ):
+        return "Создание встречи не подтверждено — проверьте календарь."
     deed = _deed(step, spoken)
     if not deed:
         return ""

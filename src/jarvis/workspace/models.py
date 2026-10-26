@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
+from jarvis.mcp.models import McpServerConfig
 from jarvis.security.browser_policy import NetworkPolicy, corporate_origin, normalized_url, origin
 from jarvis.tools.base import ToolError, ToolModel
 
@@ -133,9 +134,12 @@ class WorkspaceProfile(ToolModel):
     apps: tuple[AppEntry, ...] = Field(default=(), max_length=128, repr=False)
     playbooks: tuple[WorkflowPlaybook, ...] = Field(default=(), max_length=64, repr=False)
     browser_mode: WorkspaceBrowserMode = "strict_sandbox"
+    mcp_servers: tuple[McpServerConfig, ...] = Field(default=(), max_length=8, repr=False)
 
     @model_validator(mode="after")
     def unique_references(self) -> "WorkspaceProfile":
+        if len({server.server_id for server in self.mcp_servers}) != len(self.mcp_servers):
+            raise ValueError("Workspace MCP server IDs must be unique.")
         app_ids = {app.id for app in self.apps}
         if len(app_ids) != len(self.apps):
             raise ValueError("Workspace application IDs must be unique.")

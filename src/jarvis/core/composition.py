@@ -46,6 +46,7 @@ from jarvis.files.policy import FilePolicy
 from jarvis.knowledge.harvest import GraphHarvester
 from jarvis.knowledge.store import KnowledgeStore
 from jarvis.mail.session import MailSession
+from jarvis.mcp.bridge import register_workspace_mcp
 from jarvis.memory.derived import DerivedStore
 from jarvis.observability.audit import AuditLog
 from jarvis.permissions.approvals import ApprovalAuthority, ApprovalStore
@@ -54,6 +55,7 @@ from jarvis.permissions.matrix import PermissionMatrix, load_matrix
 from jarvis.platforms.files import LocalFiles
 from jarvis.platforms.windows.transport import ProcessBackend
 from jarvis.tools.browser import register_browser
+from jarvis.tools.calendar import register_calendar as register_workspace_calendar
 from jarvis.tools.files import register_files
 from jarvis.tools.filesystem import register_filesystem
 from jarvis.tools.local import LocalOutbox, local_registry
@@ -143,6 +145,8 @@ def build(
     register_filesystem(registry, config.filesystem_policy)
     session = mail_session or MailSession()
     register_outlook(registry, session)
+    register_workspace_calendar(registry, session, matrix)
+    register_workspace_mcp(registry, config.workspace_profile.mcp_servers, matrix)
     calendar = CalendarConnector(session)
     register_calendar(registry, calendar, matrix)
     connectors.add(calendar)

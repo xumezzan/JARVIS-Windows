@@ -5,6 +5,11 @@
 При отсутствии `<data_dir>/workspace_profile.json` используется пустой профиль;
 Omadli Group не выбирается автоматически.
 
+В этапе 3 профиль получил необязательный mcp_servers: конфигурацию и просмотренные
+manifest серверов. argv/URL и manifest не входят в planner_context.
+Настройка, поддерживаемые схемы и ограничения описаны в
+[MCP/Calendar integration](MCP_CALENDAR_INTEGRATION.md).
+
 ## Формат и хранение
 
 Все модели наследуют `ToolModel`: `strict=True`, `extra='forbid'`, `frozen=True`,

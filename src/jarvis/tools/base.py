@@ -5,7 +5,7 @@ import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from threading import Event
-from typing import Literal, TypeVar
+from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 
@@ -95,3 +95,4 @@ class ToolSpec[Params: ToolModel, Result: ToolModel]:
     idempotency: str = "No automatic retry; one execution per prepared request."
     policy: Callable[[Params], None] | None = None  # Pure, synchronous; also runs in simulation.
     classify_risk: Callable[[Params], Risk] | None = None  # Trusted code, normalized snapshot only.
+    catalog_schema: dict[str, Any] | None = None  # Reviewed metadata, never executable types.

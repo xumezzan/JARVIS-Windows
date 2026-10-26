@@ -7,6 +7,7 @@ from threading import RLock
 from urllib.parse import quote
 from uuid import uuid4
 
+from jarvis.connectors.microsoft.models import Draft
 from jarvis.mail.credentials import Credentials, MailFailure, ProcessCredentials
 from jarvis.mail.graph import Graph, GraphTransport
 from jarvis.mail.models import Account, Attachment, MailResult, Message
@@ -23,6 +24,7 @@ class MailSession:
         self._lock = RLock()
         self._attachments: dict[str, tuple[Attachment, bytes]] = {}
         self._drafts: dict[str, Message] = {}
+        self._event_drafts: dict[str, Draft] = {}
 
     def detach(self) -> None:
         with self._lock:
@@ -30,6 +32,26 @@ class MailSession:
             self._client = self._home = ""
             self._attachments.clear()
             self._drafts.clear()
+            self._event_drafts.clear()
+
+    def local_event_draft(self, account: Account, event: Draft) -> str:
+        with self._lock:
+            if not self.matches(account) or len(self._event_drafts) >= 10:
+                raise MailFailure("mail_draft_limit")
+            key = uuid4().hex
+            self._event_drafts[key] = Draft.model_validate(event)
+            return key
+
+    def event_draft_matches(self, account: Account, key: str, event: Draft) -> bool:
+        with self._lock:
+            return self.matches(account) and self._event_drafts.get(key) == event
+
+    def claim_event_draft(self, account: Account, key: str, event: Draft) -> None:
+        """Consume before POST: uncertain effects are never repeated from this draft."""
+        with self._lock:
+            if not self.event_draft_matches(account, key, event):
+                raise MailFailure("mail_account_changed")
+            self._event_drafts.pop(key)
 
     async def connect(self, client_id: str, context: ExecutionContext) -> Account:
         self.detach()
