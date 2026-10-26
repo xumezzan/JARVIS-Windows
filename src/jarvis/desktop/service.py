@@ -28,6 +28,7 @@ from jarvis.desktop.system_tools import (
     ChromeCommandProvider,
     DesktopOfflineProvider,
     chrome_command,
+    chrome_destination,
     desktop_registry,
 )
 from jarvis.desktop.voice import DesktopVoice
@@ -484,10 +485,10 @@ class DesktopService:
         if self.busy or self.voice.task is not None or self.closing:
             raise ValueError("busy")
         provider = self.override_provider
-        direct_url = chrome_command(command) if provider is None else None
-        if direct_url is not None:
-            provider = ChromeCommandProvider(direct_url)
-        if self.settings.provider == "openai" and direct_url is None:
+        direct_target = chrome_destination(command) if provider is None else None
+        if direct_target is not None:
+            provider = ChromeCommandProvider(chrome_command(command))
+        if self.settings.provider == "openai" and direct_target is None:
             if not cloud_consent:
                 self.notice = (
                     "Проверьте текст и разрешите передачу команды, наблюдений "

@@ -195,11 +195,17 @@ class PlanResult:
         }
         rows = [titles[self.status]]
         if self.error == "network_denied":
-            rows.append(
-                "Адрес запрещён политикой браузера. Strict Sandbox открывает только "
-                "разрешённые сайты. Для обычного Chrome укажите «открой сайт example.com» "
-                "и подтвердите точный адрес."
-            )
+            if self.steps and self.steps[-1].tool == "windows.open_chrome_url":
+                rows.append(
+                    "Адрес не прошёл проверку для обычного Chrome. Укажите публичный "
+                    "HTTPS-адрес, например https://www.instagram.com/. "
+                    "Локальные адреса и запрещённые сайты не открываются."
+                )
+            else:
+                rows.append(
+                    "Адрес не прошёл проверку браузера. Проверьте HTTPS-адрес "
+                    "и список разрешённых сайтов выбранного режима."
+                )
         if self.error:
             rows.append("Категория: " + self.error)
         rows.extend(

@@ -6,6 +6,15 @@ A bare domain becomes a canonical HTTPS URL. This single, literal command does n
 need an OpenAI request or cloud consent. Other commands retain their existing
 planner and consent rules; historical context cannot select a URL for this recipe.
 
+`открой сайт instagram` (also `инстаграм`) resolves through the reviewed local alias
+to `https://www.instagram.com/`. Unknown website names ask for an explicit domain;
+the recipe does not append `.com` to an arbitrary brand. Tool input also accepts
+an explicit bare domain and HTTPS URLs without a trailing slash, canonicalizing
+them before creating the exact approval snapshot. URL scheme, public-address,
+blocked-site and DNS checks still apply. The native helper receives only the
+canonical URL. Denial text for external Chrome describes that operation rather
+than suggesting that the Strict Sandbox allowlist governs the owner's Chrome.
+
 `windows.open_chrome_url` is a separate CONFIRM capability. Its approval snapshot
 binds the canonical URL, `external-chrome` service and `current-profile` account.
 It validates the initial public HTTPS destination and existing blocked site tiers,

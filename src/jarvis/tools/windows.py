@@ -4,6 +4,7 @@ import json
 from collections.abc import Callable
 from hashlib import sha256
 from typing import Annotated, Literal, Protocol
+from urllib.parse import urlsplit
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
@@ -116,6 +117,12 @@ class OpenChromeUrl(ToolModel):
     account: Literal["current-profile"] = "current-profile"
     url: str = Field(min_length=1, max_length=2000)
 
+    @field_validator("url")
+    @classmethod
+    def canonical_destination(cls, value: str) -> str:
+        # Canonicalize before the immutable approval snapshot is created.
+        return normalize_chrome_url(value)
+
 
 class ChromeHandoff(ToolModel):
     url: str = Field(min_length=1, max_length=2000)
@@ -128,6 +135,24 @@ def chrome_url(value: str) -> str:
     if len(value) > 2000:
         raise ToolError("network_denied")
     return NetworkPolicy(mode=BrowserMode.LIVE).validate(value)
+
+
+CHROME_SITE_ALIASES = {
+    "instagram": "https://www.instagram.com/",
+    "инстаграм": "https://www.instagram.com/",
+}
+
+
+def normalize_chrome_url(value: str) -> str:
+    """Resolve reviewed names or explicit domains; never guess an unknown brand's domain."""
+    value = value.strip()
+    value = CHROME_SITE_ALIASES.get(value.casefold(), value)
+    candidate = value if "://" in value else "https://" + value
+    canonical = chrome_url(candidate)
+    host = urlsplit(canonical).hostname or ""
+    if "." not in host and ":" not in host:
+        raise ToolError("network_denied")
+    return canonical
 
 
 class FocusApp(ToolModel):

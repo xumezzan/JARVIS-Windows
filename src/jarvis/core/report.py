@@ -242,6 +242,10 @@ def _deed(step: Step, spoken: bool) -> str:
 
 
 def _sentence(step: Step, spoken: bool) -> str:
+    if step.tool == "windows.open_chrome_url" and step.outcome.status is not Status.SUCCESS:
+        if step.outcome.may_have_effects:
+            return "Передача адреса Chrome не подтверждена — проверьте браузер."
+        return "Адрес Chrome не передан — " + REASON.get(step.outcome.error, "не получилось") + "."
     if step.tool.startswith("mcp."):
         if step.outcome.status is Status.SUCCESS:
             return "Получен ответ MCP; результат действия в сервисе не проверен."

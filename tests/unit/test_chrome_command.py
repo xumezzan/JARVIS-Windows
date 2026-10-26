@@ -10,8 +10,9 @@ from uuid import uuid4
 import pytest
 
 from jarvis.config import AppConfig
+from jarvis.core.planner.contracts import Answer, PlannerInput
 from jarvis.desktop.service import DesktopService
-from jarvis.desktop.system_tools import chrome_command
+from jarvis.desktop.system_tools import ChromeCommandProvider, chrome_command, chrome_destination
 from jarvis.observability.audit import AuditLog, ErrorCode
 from jarvis.permissions.approvals import Action, ApprovalStore
 from jarvis.permissions.engine import Outcome, PermissionEngine
@@ -36,6 +37,64 @@ from jarvis.tools.windows import NativeRequest, WindowsResult, register_windows
 )
 def test_exact_website_commands(command: str) -> None:
     assert chrome_command(command) == "https://apple.com/"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "открой сайт instagram",
+        "Открой Instagram",
+        "открой сайт инстаграм",
+        "открой браузер и перейди на сайт instagram",
+        "перейди на instagram.com",
+    ],
+)
+def test_reviewed_site_names_and_domains(command: str) -> None:
+    expected = (
+        "https://instagram.com/"
+        if command.endswith("instagram.com")
+        else "https://www.instagram.com/"
+    )
+    assert chrome_command(command) == expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("instagram", "https://www.instagram.com/"),
+        ("instagram.com", "https://instagram.com/"),
+        ("https://www.instagram.com", "https://www.instagram.com/"),
+        ("HTTPS://WWW.INSTAGRAM.COM", "https://www.instagram.com/"),
+        ("https://www.instagram.com/?next=explore", "https://www.instagram.com/?next=explore"),
+    ],
+)
+def test_tool_normalizes_before_binding_approval(tmp_path: Path, raw: str, expected: str) -> None:
+    backend = Mock()
+    registry = ToolRegistry()
+    register_windows(registry, backend)
+    with closing(AuditLog(tmp_path / "audit.sqlite3")) as audit:
+        engine = PermissionEngine(registry, ApprovalStore(), audit)
+        action = engine.prepare("windows.open_chrome_url", {"url": raw}, Mode.EXECUTE)
+        assert isinstance(action, Action) and action.risk is Risk.CONFIRM
+        assert json.loads(action.payload)["url"] == expected
+        assert not backend.call.called
+
+
+@pytest.mark.asyncio
+async def test_unknown_site_name_asks_for_domain_without_guessing() -> None:
+    assert chrome_destination("открой сайт unknown-brand") == "unknown-brand"
+    assert chrome_command("открой сайт unknown-brand") is None
+    assert chrome_destination("открой блокнот") is None
+    provider = ChromeCommandProvider(None)
+    data = PlannerInput("открой сайт unknown-brand", (), (), Mode.EXECUTE, "[]")
+    proposal = await provider.propose(data)
+    assert proposal.kind == "clarify"
+    clarified = PlannerInput(
+        data.command, (Answer(proposal.question, "example.com"),), (), Mode.EXECUTE, "[]"
+    )
+    proposal = await provider.propose(clarified)
+    assert proposal.tool == "windows.open_chrome_url"
+    assert json.loads(proposal.arguments) == {"url": "https://example.com/"}
 
 
 @pytest.mark.parametrize(
@@ -119,8 +178,15 @@ def test_native_launch_uses_fixed_executable_and_new_tab_only(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command,expected_url",
+    [
+        ("открой сайт apple.com", "https://apple.com/"),
+        ("открой сайт instagram", "https://www.instagram.com/"),
+    ],
+)
 async def test_desktop_literal_url_works_without_cloud_or_changing_browser_policy(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str, expected_url: str
 ) -> None:
     calls: list[NativeRequest] = []
 
@@ -136,7 +202,7 @@ async def test_desktop_literal_url_works_without_cloud_or_changing_browser_polic
     service = DesktopService(AppConfig(tmp_path), events.append)
     try:
         service.settings = service.settings.model_copy(update={"provider": "openai"})
-        assert service.start("открой сайт apple.com", Mode.EXECUTE)
+        assert service.start(command, Mode.EXECUTE)
         import asyncio
 
         async with asyncio.timeout(service.limits.total_seconds):
@@ -144,7 +210,7 @@ async def test_desktop_literal_url_works_without_cloud_or_changing_browser_polic
                 await asyncio.sleep(0.005)
         prompt = service.prompt
         assert prompt is not None and isinstance(prompt.value, Action)
-        assert json.loads(prompt.value.payload)["url"] == "https://apple.com/"
+        assert json.loads(prompt.value.payload)["url"] == expected_url
         assert not calls
         wire = prompt.wire()
         from jarvis.desktop.protocol import Request
