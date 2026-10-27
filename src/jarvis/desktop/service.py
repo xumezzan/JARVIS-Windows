@@ -22,7 +22,12 @@ from jarvis.core.planner.contracts import Limits, Provider, Step
 from jarvis.core.planner.openai_provider import OpenAIProvider
 from jarvis.core.planner.runner import Runner
 from jarvis.core.report import written
-from jarvis.desktop.cloud_consent import CloudReview, ReviewedCloudProvider, review_reasons
+from jarvis.desktop.cloud_consent import (
+    CloudPolicyStore,
+    CloudReview,
+    ReviewedCloudProvider,
+    review_reasons,
+)
 from jarvis.desktop.protocol import MAX_REQUEST, MAX_RESPONSE, Request, Settings
 from jarvis.desktop.settings import UiSettings, UiSettingsStore
 from jarvis.desktop.system_tools import (
@@ -138,6 +143,7 @@ class DesktopService:
         self.closing = False
         self.ui_store = UiSettingsStore(config.data_dir)
         self.ui_settings = self.ui_store.load()
+        self.cloud_policy = CloudPolicyStore(config.data_dir).load()
         self.settings = Settings.model_validate(
             self.ui_settings.model_dump(
                 include={
@@ -493,7 +499,7 @@ class DesktopService:
         if raw.cloud_consent and not reasons:
             # Compatibility for an explicit one-task grant from existing trusted clients.
             return raw, True
-        if self.ui_settings.routine_cloud_consent and not reasons:
+        if self.cloud_policy.routine_cloud_consent and not reasons:
             return raw.model_copy(
                 update={
                     "cloud_consent": True,

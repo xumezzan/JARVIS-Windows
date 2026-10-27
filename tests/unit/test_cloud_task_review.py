@@ -10,7 +10,7 @@ from tests.unit.test_planner import Scripted
 
 from jarvis.config import AppConfig
 from jarvis.core.planner.offline import call
-from jarvis.desktop.cloud_consent import review_reasons
+from jarvis.desktop.cloud_consent import CloudPolicy, CloudPolicyStore, review_reasons
 from jarvis.desktop.protocol import CloudReviewReply, Request
 from jarvis.desktop.service import DesktopService
 from jarvis.desktop.settings import UiSettings, UiSettingsStore
@@ -37,10 +37,19 @@ def test_ordinary_tasks_do_not_need_review(command: str) -> None:
     assert not review_reasons(command)
 
 
+def test_standing_policy_does_not_change_legacy_ui_settings(tmp_path: Path) -> None:
+    store = UiSettingsStore(tmp_path)
+    store.save(UiSettings(provider="openai", planner_model="fixture"))
+    before = (tmp_path / "ui_settings.json").read_bytes()
+    assert not CloudPolicyStore(tmp_path).load().routine_cloud_consent
+    CloudPolicyStore(tmp_path).save(CloudPolicy(routine_cloud_consent=True))
+    assert (tmp_path / "ui_settings.json").read_bytes() == before
+    assert store.load().planner_model == "fixture"
+
+
 def service_for(path: Path, provider: Scripted) -> DesktopService:
-    UiSettingsStore(path).save(
-        UiSettings(provider="openai", planner_model="fixture", routine_cloud_consent=True)
-    )
+    UiSettingsStore(path).save(UiSettings(provider="openai", planner_model="fixture"))
+    CloudPolicyStore(path).save(CloudPolicy(routine_cloud_consent=True))
     return DesktopService(AppConfig(path), lambda event: None, provider=provider)
 
 
@@ -77,7 +86,7 @@ async def test_ordinary_task_uses_saved_permission_without_a_question(tmp_path: 
         await finished(service)
         assert provider.inputs and service.task.state == "finished"
         assert service.cloud_review is None and service.prompt is None
-        assert UiSettingsStore(tmp_path).load().routine_cloud_consent
+        assert CloudPolicyStore(tmp_path).load().routine_cloud_consent
     finally:
         await service.shutdown()
 

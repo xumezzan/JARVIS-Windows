@@ -3,8 +3,10 @@
 The owner chose this policy on 2026-10-26: ordinary tasks use the configured OpenAI
 provider without repeated consent questions. Their enabled recent-task history and
 explicitly selected memory are included under that standing authorization. The
-non-secret `routine_cloud_consent` preference records it for this profile and
-survives restart. It defaults to false for other/fresh profiles; per-task choices
+non-secret `routine_cloud_consent` preference in `cloud_task_policy.json` records
+it for this profile and survives restart. This separate file keeps older slots'
+strict `ui_settings.json` schema compatible with rollback. It defaults to false
+for other/fresh profiles; per-task choices
 and pending review IDs are never persisted as approvals.
 
 The permanent command/history/selected-memory consent controls were removed from

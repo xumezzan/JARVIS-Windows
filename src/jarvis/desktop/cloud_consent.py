@@ -4,12 +4,25 @@ import asyncio
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 from jarvis.core.planner.contracts import PlannerInput, Proposal, Provider
 from jarvis.desktop.protocol import Request
 from jarvis.knowledge.models import KnowledgeContext
 from jarvis.memory.conversation import TaskMemoryContext
 from jarvis.memory.derived import DerivedContext
+from jarvis.tools.base import ToolModel
+from jarvis.workspace.store import JsonSettingsStore
+
+
+class CloudPolicy(ToolModel):
+    routine_cloud_consent: bool = False
+
+
+class CloudPolicyStore(JsonSettingsStore[CloudPolicy]):
+    def __init__(self, directory: Path) -> None:
+        # A separate file keeps older slots' strict UI-settings schemas readable.
+        super().__init__(directory / "cloud_task_policy.json", CloudPolicy)
 
 
 def review_reasons(command: str) -> tuple[str, ...]:

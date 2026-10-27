@@ -1,4 +1,4 @@
-"""Non-secret preferences and the owner's standing ordinary-task cloud policy."""
+"""Explicit non-secret UI preferences; no consent, credentials or approval state."""
 
 from pathlib import Path
 from typing import Literal
@@ -22,7 +22,6 @@ class UiSettings(ToolModel):
     browser_mode: WorkspaceBrowserMode | None = None
     vosk_model_path: str = Field(default="", max_length=2000, repr=False)
     managed_browser: bool = False
-    routine_cloud_consent: bool = False
 
     @field_validator("planner_model")
     @classmethod

@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 
 from jarvis.config import AppConfig
 from jarvis.core.planner.contracts import PlannerInput, Proposal
+from jarvis.desktop.cloud_consent import CloudPolicy, CloudPolicyStore
 from jarvis.desktop.service import DesktopService
 from jarvis.desktop.settings import UiSettings, UiSettingsStore
 from jarvis.permissions.policies import Mode
@@ -24,9 +25,9 @@ async def main() -> None:
             UiSettings(
                 provider="openai",
                 planner_model="fixture",
-                routine_cloud_consent=True,
             )
         )
+        CloudPolicyStore(path).save(CloudPolicy(routine_cloud_consent=True))
         service = DesktopService(AppConfig(path), lambda event: None, provider=NoCloud())
         try:
             ordinary = service.snapshot()
