@@ -624,7 +624,7 @@ function App() {
                       id="mode"
                       value={mode}
                       disabled={
-                        working || pending || state?.voice_phase !== "idle"
+                        working || pending || !!state?.cloud_review || state?.voice_phase !== "idle"
                       }
                       onChange={(event) => setMode(event.target.value as Mode)}
                     >

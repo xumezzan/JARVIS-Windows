@@ -53,6 +53,7 @@ const { chromium } = require("playwright");
     await page.evaluate(() => window.__showCloudReviewFixture());
     const card = page.getByRole("region", { name: "Вопрос о данных задачи" });
     await card.waitFor();
+    assert.equal(await page.getByLabel("Режим", { exact: true }).isDisabled(), true);
     assert.ok(await card.evaluate(el => el.scrollHeight <= el.clientHeight + 1));
     assert.equal(await page.locator("dialog[open]").count(), 0);
     assert.equal(await card.locator('input[type="checkbox"]').count(), 2);

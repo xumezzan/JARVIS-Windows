@@ -18,7 +18,7 @@ export function CloudConsentCard({ review, busy, onDecision }: {
     <section className="glass-card cloud-review-card" aria-label="Вопрос о данных задачи">
       <h3>Можно передать данные этой задачи в OpenAI?</h3>
       <p className="cloud-review-command">{review.command}</p>
-      <p>{review.reasons.join(" · ")}</p>
+      <p>{review.mode === "simulation" ? "Симуляция" : "Выполнение"} · {review.reasons.join(" · ")}</p>
       <label className="check-row">
         <input type="checkbox" checked={current} disabled={busy || expired}
           onChange={(event) => setCurrent(event.target.checked)} />
