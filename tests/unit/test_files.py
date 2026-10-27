@@ -122,7 +122,7 @@ async def test_finding_and_reading_stay_inside_the_policy(session: Session, home
     # The folder policy is decided while the action is prepared, so a path outside the
     # allowed folders never becomes an action at all.
     outside = await session.run("files.read_text", {"path": str(home.parent / "secret.txt")})
-    assert outside.status is Status.INVALID and outside.error is ErrorCode.INVALID_REQUEST
+    assert outside.status is Status.INVALID and outside.error is ErrorCode.PATH_DENIED
 
 
 @pytest.mark.asyncio

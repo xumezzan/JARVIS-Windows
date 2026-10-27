@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from typing import Literal
 
+from jarvis.observability.diagnostics import Reason
 from jarvis.tools.base import ExecutionContext, ToolError, ToolModel
 from jarvis.tools.windows import MAX_REPLY_BYTES, NativeRequest, Rectangle, WindowsResult
 
@@ -17,6 +18,7 @@ class TargetPreview(ToolModel):
 
 class NativeReply(ToolModel):
     result: WindowsResult | None = None
+    reason: Reason | None = None
     error: (
         Literal[
             "unsupported_platform",
@@ -115,7 +117,7 @@ class ProcessBackend:
                     raise ToolError("native_failure")
                 reply = NativeReply.model_validate_json(raw)
                 if reply.error is not None:
-                    raise ToolError(reply.error)
+                    raise ToolError(reply.error, reason=reply.reason)
                 if reply.result is None:
                     raise ToolError("native_failure")
                 if preview and not previewed:

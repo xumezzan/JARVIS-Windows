@@ -66,7 +66,9 @@ def test_rich_edit_multiline_input_and_independent_readback(
     monkeypatch.setattr(desktop, "editor_target", lambda *args: target().editor)
     monkeypatch.setattr(desktop, "writable", lambda *args: True)
 
-    def insert(window: object, control: object, value: str, overwrite: bool) -> None:
+    def insert(
+        window: object, control: object, value: str, overwrite: bool, *, existing: str = ""
+    ) -> None:
         assert control is editor and not overwrite
         stored[0] = value.replace("\n", "\r")
 
@@ -78,8 +80,13 @@ def test_rich_edit_multiline_input_and_independent_readback(
     assert verified.text_sha256 == wanted
     # A document containing only paragraph marks is still existing content.
     stored[0] = "\r"
+    observed = target()
+    assert observed.editor is not None
+    observed = observed.model_copy(
+        update={"editor": observed.editor.model_copy(update={"content_sha256": text_digest("")})}
+    )
     with pytest.raises(ToolError, match="target_changed"):
-        desktop.dispatch(NativeRequest(operation="type", target=target(), text="new"))
+        desktop.dispatch(NativeRequest(operation="type", target=observed, text="new"))
 
 
 @pytest.mark.parametrize(
@@ -88,7 +95,6 @@ def test_rich_edit_multiline_input_and_independent_readback(
         ("pid", 999),
         ("process_started", 4567.0),
         ("runtime_id", [8]),
-        ("title", "changed"),
         ("executable", "C:\\wrong.exe"),
     ],
 )
@@ -130,8 +136,13 @@ def test_existing_content_is_never_replaced_unless_asked(
 ) -> None:
     editor = Mock(handle=101)
     prepared(desktop, monkeypatch, editor=editor, reads=("unsaved user content",))
+    observed = target()
+    assert observed.editor is not None
+    observed = observed.model_copy(
+        update={"editor": observed.editor.model_copy(update={"content_sha256": text_digest("")})}
+    )
     with pytest.raises(ToolError, match="target_changed"):
-        desktop.dispatch(NativeRequest(operation="type", target=target(), text="new"))
+        desktop.dispatch(NativeRequest(operation="type", target=observed, text="new"))
     desktop.user32.SendMessageTimeoutW.assert_not_called()
     editor.iface_value.SetValue.assert_not_called()
 
@@ -206,7 +217,7 @@ def test_literal_directed_message_and_readback(
     editor.iface_value.SetValue.assert_not_called()
 
 
-def test_an_empty_field_is_filled_without_selecting_anything(
+def test_an_empty_field_is_filled_after_directed_end_selection(
     desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     editor = Mock(handle=101)
@@ -214,7 +225,10 @@ def test_an_empty_field_is_filled_without_selecting_anything(
     prepared(desktop, monkeypatch, editor=editor, reads=("", text))
     monkeypatch.setattr(desktop, "native_handle", lambda *args: 101)
     desktop.dispatch(NativeRequest(operation="type", target=target(), text=text))
-    assert [item.args[1] for item in desktop.user32.SendMessageTimeoutW.call_args_list] == [0xC2]
+    assert [item.args[1] for item in desktop.user32.SendMessageTimeoutW.call_args_list] == [
+        0xB1,
+        0xC2,
+    ]
 
 
 def test_a_field_without_its_own_window_uses_the_value_pattern(
@@ -298,9 +312,67 @@ def test_script_hosts_are_never_launchable_by_name(
     desktop: NativeDesktop, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     installed(tmp_path, monkeypatch, "Windows PowerShell", "Командная строка", "cmd")
-    for name in ("powershell", "windows powershell", "командная строка", "cmd"):
+    for name in ("powershell", "windows powershell"):
         with pytest.raises(ToolError, match="application_missing"):
             desktop.resolve_app(name)
+
+
+def test_cmd_and_exe_suffixes_resolve_from_fixed_catalog(
+    desktop: NativeDesktop, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    installed(tmp_path, monkeypatch)
+    system32 = tmp_path / "SYSTEMROOT/System32"
+    for name in ("cmd", "calc", "mspaint", "explorer"):
+        (system32 / (name + ".exe")).touch()
+    for name in ("cmd", "calc", "mspaint", "explorer", "notepad"):
+        assert desktop.resolve_app(name + ".exe").path == system32 / (name + ".exe")
+    assert desktop.resolve_app("командная строка").key == "cmd"
+
+
+def test_title_change_preserves_identity_but_explicit_title_check_can_refuse(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        desktop,
+        "snapshot",
+        lambda *args, **kwargs: target().model_copy(update={"title": "A new document title"}),
+    )
+    assert desktop.resolve(target()) is not None
+    with pytest.raises(ToolError, match="target_changed"):
+        desktop.resolve(target(), check_title=True)
+
+
+def test_append_to_observed_nonempty_uia_editor_preserves_content(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stored = ["existing text"]
+    observed = target()
+    assert observed.editor is not None
+    observed = observed.model_copy(
+        update={
+            "empty": False,
+            "editor": observed.editor.model_copy(update={"content_sha256": text_digest(stored[0])}),
+        }
+    )
+    editor = Mock(handle=0)
+    monkeypatch.setattr(desktop, "resolve", lambda *args, **kwargs: Mock())
+    monkeypatch.setattr(desktop, "controls", lambda *args: [editor])
+    monkeypatch.setattr(desktop, "editor_target", lambda *args: observed.editor)
+    monkeypatch.setattr(desktop, "writable", lambda *args: True)
+    monkeypatch.setattr(desktop, "read", lambda *args: stored[0])
+    monkeypatch.setattr(desktop, "native_handle", lambda *args: 0)
+    editor.iface_value.SetValue.side_effect = lambda text: stored.__setitem__(0, text)
+    result = desktop.dispatch(NativeRequest(operation="type", target=observed, text=" + appended"))
+    assert stored[0] == "existing text + appended"
+    assert result.text_sha256 == text_digest(stored[0])
+    assert result.inserted_text_sha256 == text_digest(" + appended")
+    assert (
+        desktop.dispatch(
+            NativeRequest(operation="verify", target=observed, result=result)
+        ).text_sha256
+        == result.text_sha256
+    )
+    desktop.user32.SendMessageTimeoutW.assert_not_called()
 
 
 def test_ambiguous_application_name_fails_closed(

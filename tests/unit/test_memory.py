@@ -25,7 +25,7 @@ from jarvis.memory.store import MemoryFailure, MemoryStore
 from jarvis.observability.audit import AuditLog
 from jarvis.permissions.approvals import Action, ApprovalStore, ApprovalToken
 from jarvis.permissions.engine import PermissionEngine
-from jarvis.permissions.policies import Mode
+from jarvis.permissions.policies import Mode, Status
 from jarvis.tools.local import local_registry
 from jarvis.tools.windows import register_windows
 
@@ -355,7 +355,8 @@ async def test_memory_cannot_supply_stale_windows_target(tmp_path: Path, mode: M
             ),
         )
         result = await runner.run("test", mode)
-        assert result.error == "unobserved_target" and not result.steps
+        assert result.error == "unobserved_target" and len(result.steps) == 1
+        assert result.steps[0].outcome.status is Status.DENIED
         assert not probe.calls
     finally:
         audit.close()

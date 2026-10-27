@@ -45,6 +45,8 @@ AUDIT_FIELDS = {
     "error",
     "result_summary",
     "may_have_effects",
+    "stage",
+    "reason",
 }
 
 

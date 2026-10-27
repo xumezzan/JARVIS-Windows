@@ -8,6 +8,7 @@ from time import monotonic
 from uuid import UUID, uuid4
 
 from jarvis.observability.audit import AuditEvent, AuditKind, AuditLog, ErrorCode
+from jarvis.observability.diagnostics import Reason, Stage, failure_message
 from jarvis.permissions.approvals import Action, ApprovalStore, ApprovalToken
 from jarvis.permissions.policies import Decision, Mode, Risk, Status, decide
 from jarvis.tools.base import ExecutionContext, ToolError, canonical
@@ -23,6 +24,19 @@ class Outcome:
     result_json: str | None = field(default=None, repr=False)
     # Ephemeral verified image handoff; never part of textual results or audit.
     screenshot_b64: str | None = field(default=None, repr=False)
+    stage: Stage | None = None
+    reason: Reason | None = None
+
+    @property
+    def diagnostic(self) -> dict[str, str | bool | None] | None:
+        if self.error is ErrorCode.NONE:
+            return None
+        return {
+            "stage": self.stage.value if self.stage else None,
+            "reason": self.reason.value if self.reason else None,
+            "message": failure_message(self.error.value, self.reason, self.may_have_effects),
+            "may_have_effects": self.may_have_effects,
+        }
 
 
 @dataclass
@@ -47,6 +61,7 @@ class PermissionEngine:
         self, tool_name: str, arguments: object, mode: Mode = Mode.SIMULATION
     ) -> Action | Outcome:
         request_id = uuid4()
+        tool = None
         try:
             tool = self._registry.get(tool_name)
             if tool is None or not isinstance(mode, Mode):
@@ -56,13 +71,19 @@ class PermissionEngine:
                 raise ValueError("Action exceeds snapshot limit.")
             action = Action(request_id, tool.name, payload, tool.classify_risk(payload), mode)
         except ToolError as error:
-            if error.code == "network_denied" and tool is not None:
-                return self._invalid(
-                    request_id, mode, tool=tool.name, error=ErrorCode.NETWORK_DENIED
-                )
-            return self._invalid(request_id, mode if isinstance(mode, Mode) else Mode.SIMULATION)
+            return self._invalid(
+                request_id,
+                mode if isinstance(mode, Mode) else Mode.SIMULATION,
+                tool=tool.name if tool is not None else "unknown",
+                error=ErrorCode(error.code),
+                reason=error.reason,
+            )
         except Exception:
-            return self._invalid(request_id, mode if isinstance(mode, Mode) else Mode.SIMULATION)
+            return self._invalid(
+                request_id,
+                mode if isinstance(mode, Mode) else Mode.SIMULATION,
+                tool=tool.name if tool is not None else "unknown",
+            )
         try:
             self._audit.write(
                 AuditEvent(
@@ -75,9 +96,9 @@ class PermissionEngine:
                 )
             )
         except Exception:
-            return Outcome(request_id, Status.ERROR, ErrorCode.AUDIT)
+            return Outcome(request_id, Status.ERROR, ErrorCode.AUDIT, stage=Stage.AUDIT)
         if decide(action.risk) is Decision.DENY:
-            return self._finish(action, Status.DENIED, ErrorCode.POLICY)
+            return self._finish(action, Status.DENIED, ErrorCode.POLICY, stage=Stage.POLICY)
         with self._lock:
             for pending in list(self._pending.values()):
                 if not pending.running and monotonic() - pending.created > 300:
@@ -96,8 +117,15 @@ class PermissionEngine:
         *,
         tool: str = "unknown",
         error: ErrorCode = ErrorCode.INVALID_REQUEST,
+        stage: Stage = Stage.PREPARE,
+        reason: Reason | None = Reason.INVALID_ARGUMENTS,
     ) -> Outcome:
-        status = Status.DENIED if error is ErrorCode.NETWORK_DENIED else Status.INVALID
+        # Keep normalization's INVALID contract while preserving the policy's actual code.
+        status = (
+            Status.DENIED
+            if error in (ErrorCode.NETWORK_DENIED, ErrorCode.UNOBSERVED_TARGET)
+            else Status.INVALID
+        )
         try:
             self._audit.write(
                 AuditEvent(
@@ -109,11 +137,43 @@ class PermissionEngine:
                     Decision.DENY,
                     status,
                     error=error,
+                    stage=stage,
+                    reason=reason,
                 )
             )
         except Exception:
-            return Outcome(request_id, Status.ERROR, ErrorCode.AUDIT)
-        return Outcome(request_id, status, error)
+            return Outcome(request_id, Status.ERROR, ErrorCode.AUDIT, stage=Stage.AUDIT)
+        return Outcome(request_id, status, error, stage=stage, reason=reason)
+
+    def reject_proposal(self, tool_name: str, mode: Mode, reason: Reason) -> Outcome:
+        """Record grounding failures before a complete action can be prepared."""
+        tool = self._registry.get(tool_name)
+        return self._invalid(
+            uuid4(),
+            mode,
+            tool=tool.name if tool is not None else "unknown",
+            error=ErrorCode.UNOBSERVED_TARGET,
+            stage=Stage.OBSERVED_TARGET,
+            reason=reason,
+        )
+
+    def reject(self, action: Action, error: ErrorCode, reason: Reason) -> Outcome:
+        """Refuse an engine-owned unissued action, without mislabelling it cancellation."""
+        with self._lock:
+            pending = self._pending.get(action.request_id)
+            if pending is None or pending.running or pending.action != action:
+                return self._invalid(uuid4(), Mode.SIMULATION)
+            self._pending.pop(action.request_id)
+            self._approvals.invalidate(action)
+            return self._finish(
+                action,
+                Status.DENIED,
+                error,
+                stage=Stage.PRECONDITIONS
+                if error is ErrorCode.DUPLICATE_EFFECT
+                else Stage.OBSERVED_TARGET,
+                reason=reason,
+            )
 
     def _finish(
         self,
@@ -124,6 +184,9 @@ class PermissionEngine:
         may_have_effects: bool = False,
         result: str | None = None,
         screenshot_b64: str | None = None,
+        *,
+        stage: Stage | None = None,
+        reason: Reason | None = None,
     ) -> Outcome:
         try:
             self._audit.write(
@@ -142,11 +205,28 @@ class PermissionEngine:
                     int((monotonic() - started) * 1000) if started is not None else 0,
                     error,
                     may_have_effects,
+                    stage=stage,
+                    reason=reason,
                 )
             )
         except Exception:
-            return Outcome(action.request_id, Status.ERROR, ErrorCode.AUDIT, may_have_effects)
-        return Outcome(action.request_id, status, error, may_have_effects, result, screenshot_b64)
+            return Outcome(
+                action.request_id,
+                Status.ERROR,
+                ErrorCode.AUDIT,
+                may_have_effects,
+                stage=Stage.AUDIT,
+            )
+        return Outcome(
+            action.request_id,
+            status,
+            error,
+            may_have_effects,
+            result,
+            screenshot_b64,
+            stage,
+            reason,
+        )
 
     def cancel(self, action: Action) -> None:
         with self._lock:
@@ -157,7 +237,12 @@ class PermissionEngine:
             self._approvals.invalidate(pending.action)
             if not pending.running:
                 self._pending.pop(action.request_id)
-                outcome = self._finish(pending.action, Status.CANCELLED, ErrorCode.CANCELLED)
+                outcome = self._finish(
+                    pending.action,
+                    Status.CANCELLED,
+                    ErrorCode.CANCELLED,
+                    stage=Stage.APPROVAL if action.risk is Risk.CONFIRM else Stage.PREPARE,
+                )
                 self._cancelled[action.request_id] = (pending.action.signature, outcome)
                 while len(self._cancelled) > 256:
                     self._cancelled.pop(next(iter(self._cancelled)))
@@ -187,17 +272,22 @@ class PermissionEngine:
         tool = self._registry.get(action.tool)
         assert tool is not None  # Sealed registry and engine-owned snapshot.
         may_have_effects = False
+        stage = Stage.POLICY
         context = ExecutionContext(pending.cancelled)
 
         async def perform() -> Outcome:
-            nonlocal may_have_effects
+            nonlocal may_have_effects, stage
             await context.checkpoint()
             if decide(action.risk) is Decision.DENY:
-                return self._finish(action, Status.DENIED, ErrorCode.POLICY, started)
+                return self._finish(action, Status.DENIED, ErrorCode.POLICY, started, stage=stage)
+            stage = Stage.APPROVAL
             if action.risk is Risk.CONFIRM and not self._approvals.is_valid(token, action):
-                return self._finish(action, Status.DENIED, ErrorCode.APPROVAL, started)
+                return self._finish(action, Status.DENIED, ErrorCode.APPROVAL, started, stage=stage)
+            stage = Stage.PRECONDITIONS
             if action.mode is Mode.EXECUTE and not await tool.check(action.payload, context):
-                return self._finish(action, Status.DENIED, ErrorCode.PRECONDITION, started)
+                return self._finish(
+                    action, Status.DENIED, ErrorCode.PRECONDITION, started, stage=stage
+                )
             await context.checkpoint()
             if action.risk is Risk.CONFIRM and not self._approvals.consume(token, action):
                 return self._finish(action, Status.DENIED, ErrorCode.APPROVAL, started)
@@ -216,11 +306,15 @@ class PermissionEngine:
                     )
                 )
             except Exception:
-                return self._finish(action, Status.ERROR, ErrorCode.AUDIT, started)
+                return self._finish(
+                    action, Status.ERROR, ErrorCode.AUDIT, started, stage=Stage.AUDIT
+                )
             await context.checkpoint()
             may_have_effects = True
+            stage = Stage.EXECUTE
             result = await tool.run(action.payload, context)
             await context.checkpoint()
+            stage = Stage.VERIFY
             if not await tool.verify(action.payload, result, context):
                 return self._finish(
                     action,
@@ -228,6 +322,7 @@ class PermissionEngine:
                     ErrorCode.VERIFICATION,
                     started,
                     may_have_effects=True,
+                    stage=stage,
                 )
             await context.checkpoint()
             result_json = canonical(result)
@@ -269,15 +364,21 @@ class PermissionEngine:
                     ErrorCode.CANCELLED,
                     started,
                     may_have_effects,
+                    stage=stage,
                 )
             pending.cancelled.set()
             return self._finish(
-                action, Status.TIMEOUT, ErrorCode.TIMEOUT, started, may_have_effects
+                action, Status.TIMEOUT, ErrorCode.TIMEOUT, started, may_have_effects, stage=stage
             )
         except asyncio.CancelledError:
             pending.cancelled.set()
             return self._finish(
-                action, Status.CANCELLED, ErrorCode.CANCELLED, started, may_have_effects
+                action,
+                Status.CANCELLED,
+                ErrorCode.CANCELLED,
+                started,
+                may_have_effects,
+                stage=stage,
             )
         except ToolError as error:
             return self._finish(
@@ -288,10 +389,12 @@ class PermissionEngine:
                 ErrorCode(error.code),
                 started,
                 may_have_effects,
+                stage=stage,
+                reason=error.reason,
             )
         except Exception:
             return self._finish(
-                action, Status.ERROR, ErrorCode.EXECUTION, started, may_have_effects
+                action, Status.ERROR, ErrorCode.EXECUTION, started, may_have_effects, stage=stage
             )
         finally:
             job.cancel()

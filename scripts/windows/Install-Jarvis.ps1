@@ -432,6 +432,8 @@ try {
     Set-BootstrapPhase 'application_setup' 'passed'
     Set-BootstrapPhase 'launcher_shortcut' 'running'
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Launch-Jarvis.pyw') -Destination $jarvisRoot -Force
+    # Stdlib, read-only Flight Recorder remains usable even when app dependencies fail.
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'diagnose_failures.py') -Destination $jarvisRoot -Force
     # The icon lives beside the launcher rather than inside a slot: slots are retired on
     # update, and a shortcut pointing into a retired one loses its picture.
     Copy-Item -LiteralPath (Join-Path $repository 'src\jarvis\ui\assets\jarvis.ico') -Destination $jarvisRoot -Force

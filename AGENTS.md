@@ -174,7 +174,8 @@ action snapshot. BLOCKED and CRITICAL stay disabled.
 Windows calls belong in the killable helper, never directly in the UI/event loop.
 windows.open_app starts any installed application the user can start: resolve the spoken
 name through the Windows apps folder, Start menu, App Paths and system tools, refuse an
-ambiguous name, and never launch a script host or interpreter by name. A launched window is
+ambiguous name. The owner's 2026-10-27 exception permits launching cmd.exe without arguments;
+other script hosts and interpreters remain excluded. A launched window is
 identified by its own executable, never by the requested word. No user text ever becomes a
 path, argument or command line.
 Typing is ROUTINE and reaches only a field the caller observed in this task, in a window
@@ -182,7 +183,7 @@ identified exactly by process, start time, handle and runtime id. A field is mat
 role, class, automation id, name and selected tab, because an application may rebuild the
 control and change its handle without changing the field; an ambiguous or missing match is
 refused. Password and read-only fields are never targets, and no observation ever returns
-the content of a field. Existing content stays unless the caller asks to replace it, and
+the content of a field. Input appends to existing content unless the caller asks to replace it, and
 replacing selects the field with a directed message first. Write through the control's own
 window message when it has one, otherwise the application's value pattern. Do not add global
 keys, clipboard, coordinates or a submit key.

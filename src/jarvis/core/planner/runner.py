@@ -30,6 +30,8 @@ from jarvis.knowledge.models import KnowledgeContext
 from jarvis.memory.conversation import TaskMemoryContext
 from jarvis.memory.derived import DerivedContext
 from jarvis.memory.models import MemoryContext
+from jarvis.observability.audit import ErrorCode
+from jarvis.observability.diagnostics import Reason
 from jarvis.permissions.approvals import Action, ApprovalToken
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Mode, Risk, Status
@@ -46,7 +48,7 @@ from jarvis.tools.browser import (
 )
 from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.scratchpad import MAX_SCRATCHPAD_BYTES, MAX_SCRATCHPAD_KEYS, ScratchpadWrite
-from jarvis.tools.windows import ClickElement, WindowsResult, WindowTarget
+from jarvis.tools.windows import ClickElement, FocusApp, WindowsResult, WindowTarget, window_matches
 from jarvis.workspace.models import WorkspaceProfile
 
 MICROSOFT = ("outlook.", "calendar.")
@@ -85,6 +87,14 @@ class Runner:
         self.workspace = WorkspaceProfile.model_validate(
             workspace or WorkspaceProfile()
         ).planner_context()
+        # Native hints stay local and are resolved by the same installed-app catalog.
+        # They cannot inject a path or arguments and never grant a new capability.
+        self._native_hints = {
+            label.casefold(): app.native_exe_hint
+            for app in (workspace.apps if workspace is not None else ())
+            if app.enabled and app.kind in ("native", "hybrid") and app.native_exe_hint
+            for label in (app.id, app.name)
+        }
         self.registry = registry
         self.engine = engine
         self.provider = provider
@@ -105,6 +115,60 @@ class Runner:
         self.steps: list[Step] = list(resumed)
         self.calls = 0
         self._used = False
+        self._uncertain_effects: set[str] = set()
+
+    def _record(self, step: Step) -> None:
+        self._screenshot_b64 = None
+        self.steps.append(step)
+        self.notify("tool", step)
+
+    def _recoverable(self, outcome: Outcome) -> bool:
+        # Replanning is bounded by both the ordinary budget and three consecutive failures.
+        # Cancellation, approval/policy denial, audit failures and timeouts always stop.
+        return outcome.error in {
+            ErrorCode.INVALID_REQUEST,
+            ErrorCode.UNOBSERVED_TARGET,
+            ErrorCode.PRECONDITION,
+            ErrorCode.TARGET_CHANGED,
+            ErrorCode.PAGE_CHANGED,
+            ErrorCode.CONTROL_UNSUPPORTED,
+            ErrorCode.APPLICATION_MISSING,
+            ErrorCode.APPLICATION_AMBIGUOUS,
+            ErrorCode.VERIFICATION,
+        } and not (
+            len(self.steps) >= 3
+            and all(
+                step.outcome.status not in (Status.SUCCESS, Status.SIMULATED)
+                for step in self.steps[-3:]
+            )
+        )
+
+    def _is_effect(self, action: Action | Step) -> bool:
+        registered = self.registry.get(action.tool)
+        risk = (
+            action.risk
+            if isinstance(action, Action)
+            else registered.risk
+            if registered
+            else Risk.CONFIRM
+        )
+        return risk is not Risk.SAFE or action.tool in {
+            "windows.open_app",
+            "windows.open_chrome_url",
+            "windows.focus_app",
+            "windows.type_text",
+            "windows.click_element",
+            "windows.send_hotkey",
+            "windows.clipboard_set",
+            "windows.calculator_number",
+            "browser.open",
+            "browser.navigate",
+            "browser.click",
+            "browser.type",
+            "browser.close",
+            "browser.press_key",
+            "browser.scroll",
+        }
 
     def cancel(self) -> None:
         self.cancelled.set()
@@ -269,6 +333,23 @@ class Runner:
             if self.cancelled.is_set():
                 raise asyncio.CancelledError
             if proposal.kind == "finish":
+                failed = next(
+                    (
+                        step.outcome
+                        for step in reversed(self.steps)
+                        if step.outcome.status not in (Status.SUCCESS, Status.SIMULATED)
+                        and step.outcome.may_have_effects
+                        and self._is_effect(step)
+                    ),
+                    None,
+                )
+                if self.steps and self.steps[-1].outcome.status not in (
+                    Status.SUCCESS,
+                    Status.SIMULATED,
+                ):
+                    failed = self.steps[-1].outcome
+                if failed is not None:
+                    return PlanResult("error", tuple(self.steps), failed.error.value)
                 return PlanResult(
                     "no_action"
                     if not self.steps
@@ -296,7 +377,14 @@ class Runner:
                 continue
             if len(self.steps) >= self.limits.max_steps:
                 return PlanResult("limit", tuple(self.steps))
-            args = json.loads(proposal.arguments)
+            try:
+                args = json.loads(proposal.arguments)
+            except (ValueError, TypeError):
+                args = None  # prepare owns validation and its durable diagnostic.
+            if proposal.tool == "windows.open_app" and isinstance(args, dict):
+                app_name = args.get("app")
+                if isinstance(app_name, str) and app_name.casefold() in self._native_hints:
+                    args = args | {"app": self._native_hints[app_name.casefold()]}
             calendar_invite = proposal.tool in (
                 "calendar.create_draft_event",
                 "calendar.create_event",
@@ -362,7 +450,13 @@ class Runner:
                             else []
                         )
                         if len(matches) != 1:
-                            return PlanResult("error", tuple(self.steps), "unobserved_target")
+                            failure = self.engine.reject_proposal(
+                                proposal.tool, mode, Reason.STALE_MARK
+                            )
+                            self._record(Step(proposal.tool, failure))
+                            if self._recoverable(failure):
+                                continue
+                            return PlanResult("error", tuple(self.steps), failure.error.value)
                         # Resolve before prepare: policy/approval bind the full exact element.
                         args = click.model_copy(
                             update={"element": matches[0], "mark_id": None}
@@ -390,7 +484,13 @@ class Runner:
                                 else []
                             )
                             if len(browser_matches) != 1:
-                                return PlanResult("error", tuple(self.steps), "unobserved_target")
+                                failure = self.engine.reject_proposal(
+                                    proposal.tool, mode, Reason.STALE_MARK
+                                )
+                                self._record(Step(proposal.tool, failure))
+                                if self._recoverable(failure):
+                                    continue
+                                return PlanResult("error", tuple(self.steps), failure.error.value)
                             args = browser_args.model_copy(
                                 update={
                                     "element": browser_matches[0],
@@ -398,6 +498,15 @@ class Runner:
                                 }
                             ).model_dump(mode="json")
             registered = self.registry.get(proposal.tool)
+            if proposal.tool == "windows.focus_app" and isinstance(args, dict):
+                with suppress(ValueError, TypeError):
+                    selector = FocusApp.model_validate(args)
+                    if selector.target is None:
+                        # Resolve human selectors from this task's observation, then bind the
+                        # immutable action to its process identity. A title may change later.
+                        selected = self._focus_observation(selector)
+                        if selected is not None:
+                            args = FocusApp(target=selected).model_dump()
             if registered is not None:
                 with suppress(ValueError, TypeError):  # prepare() owns INVALID and its audit.
                     # Function calls arrive as JSON: an array is the valid wire form
@@ -408,12 +517,9 @@ class Runner:
                     ).model_dump()
             action = self.engine.prepare(proposal.tool, args, mode)
             if isinstance(action, Outcome):
-                self.steps.append(
-                    Step(
-                        "invalid_request" if action.status is Status.INVALID else proposal.tool,
-                        action,
-                    )
-                )
+                self._record(Step(proposal.tool if registered is not None else "unknown", action))
+                if registered is not None and self._recoverable(action):
+                    continue
                 return PlanResult("error", tuple(self.steps), action.error.value)
             self.active = action
             if action.tool == "memory.scratchpad_write":
@@ -426,15 +532,30 @@ class Runner:
                 ):
                     raise ProviderError("context_limit")
             if not self._observed_target(action):
-                self.engine.cancel(action)
+                outcome = self.engine.reject(
+                    action, ErrorCode.UNOBSERVED_TARGET, self._observation_reason(action)
+                )
                 self.active = None
-                return PlanResult("error", tuple(self.steps), "unobserved_target")
+                self._record(Step(action.tool, outcome, action.payload))
+                if self._recoverable(outcome):
+                    continue
+                return PlanResult("error", tuple(self.steps), outcome.error.value)
             # Reads leave nothing behind, so only effects are journalled and guarded.
             journal = self.journal if action.risk is not Risk.SAFE else None
             key = step_key(action.tool, action.payload)
-            if journal is not None and journal.issued(key):
-                self.engine.cancel(action)
+            if key in self._uncertain_effects:
+                outcome = self.engine.reject(
+                    action, ErrorCode.DUPLICATE_EFFECT, Reason.EFFECT_ALREADY_ISSUED
+                )
                 self.active = None
+                self._record(Step(action.tool, outcome, action.payload))
+                return PlanResult("error", tuple(self.steps), outcome.error.value)
+            if journal is not None and journal.issued(key):
+                outcome = self.engine.reject(
+                    action, ErrorCode.DUPLICATE_EFFECT, Reason.EFFECT_ALREADY_ISSUED
+                )
+                self.active = None
+                self._record(Step(action.tool, outcome, action.payload))
                 return PlanResult("error", tuple(self.steps), "duplicate_effect")
             token = None
             if action.risk is Risk.CONFIRM:
@@ -476,6 +597,10 @@ class Runner:
                     # The step stays unresolved, so a later attempt still refuses to repeat it.
                     return PlanResult("error", tuple(self.steps), "journal_unavailable")
             if outcome.status not in (Status.SUCCESS, Status.SIMULATED):
+                if outcome.may_have_effects and self._is_effect(action):
+                    self._uncertain_effects.add(key)
+                if self._recoverable(outcome):
+                    continue
                 return PlanResult(
                     "cancelled"
                     if outcome.status is Status.CANCELLED
@@ -485,6 +610,44 @@ class Runner:
                     tuple(self.steps),
                     outcome.error.value,
                 )
+
+    def _observation_reason(self, action: Action) -> Reason:
+        if action.tool in ("windows.click_element", "browser.click", "browser.type"):
+            return Reason.STALE_ELEMENT
+        if (
+            action.tool == "windows.send_hotkey"
+            and json.loads(action.payload).get("hotkey") == "Ctrl+V"
+        ):
+            return Reason.CLIPBOARD_NOT_OBSERVED
+        return Reason.TARGET_NOT_OBSERVED
+
+    def _focus_observation(self, selector: FocusApp) -> WindowTarget | None:
+        for step in reversed(self.steps):
+            if step.outcome.status is not Status.SUCCESS or not step.tool.startswith("windows."):
+                continue
+            metadata = json.loads(step.outcome.result_json or "{}")
+            if not isinstance(metadata, dict) or not (
+                "target" in metadata or "windows" in metadata
+            ):
+                continue  # Chrome handoff receipts do not contain WindowsResult targets.
+            result = WindowsResult.model_validate_json(step.outcome.result_json or "{}")
+            targets = {
+                target.handle: target
+                for target in [result.target, *result.windows]
+                if target is not None
+            }
+            matches = [
+                target
+                for target in targets.values()
+                if selector.handle == target.handle
+                or selector.title is not None
+                and selector.title.casefold() in target.title.casefold()
+                or selector.process is not None
+                and window_matches(target, selector.process)
+            ]
+            if matches:
+                return matches[0] if len(matches) == 1 else None
+        return None
 
     def _latest_screenshot(self) -> str | None:
         if not self.steps:
@@ -611,28 +774,7 @@ class Runner:
                 )
             return True
         if action.tool == "windows.focus_app" and args.get("target") is None:
-            for step in reversed(self.steps):
-                if step.outcome.status is not Status.SUCCESS or not step.tool.startswith(
-                    "windows."
-                ):
-                    continue
-                result = json.loads(step.outcome.result_json or "{}")
-                targets = [result.get("target"), *result.get("windows", [])]
-                matches = [
-                    target
-                    for target in targets
-                    if isinstance(target, dict)
-                    and (
-                        (args.get("handle") is not None and target.get("handle") == args["handle"])
-                        or (
-                            args.get("title") is not None
-                            and args["title"].casefold() in target.get("title", "").casefold()
-                        )
-                    )
-                ]
-                if len(matches) == 1:
-                    return True
-            return False
+            return self._focus_observation(FocusApp.model_validate_json(action.payload)) is not None
         if "target" not in args or not action.tool.startswith(("browser.", "windows.")):
             return True
         for step in reversed(self.steps):

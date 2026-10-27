@@ -36,7 +36,7 @@ def main() -> None:
                 desktop.before_click = preview
             reply = NativeReply(result=desktop.dispatch(request))
     except ToolError as error:
-        reply = NativeReply.model_validate({"error": error.code})
+        reply = NativeReply.model_validate({"error": error.code, "reason": error.reason})
     except Exception:
         reply = NativeReply(error="native_failure")
     encoded = reply.model_dump_json()

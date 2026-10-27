@@ -691,6 +691,13 @@ svg {
   border-color: var(--success-surface);
   color: var(--foreground);
 }
+.step-list li.step-failed { align-items: flex-start; }
+.step-failure { margin-top: 10px; max-width: 65ch; overflow-wrap: anywhere; }
+.step-failure p { margin: 6px 0; font-size: 12px; line-height: 1.6; color: var(--foreground); }
+.step-failure summary { cursor: pointer; font-size: 12px; padding: 6px 0; }
+.step-failure dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; font-size: 12px; }
+.step-failure dt { color: var(--muted); }
+.step-failure dd { margin: 0; overflow-wrap: anywhere; }
 .result-content {
   padding-top: 16px;
   overflow: auto;

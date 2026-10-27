@@ -32,6 +32,13 @@ def chrome_destination(command: str) -> str | None:
     if match is None:
         return None
     value = match.group("destination")
+    if value.casefold().endswith(".exe") and not (
+        match.group("browser")
+        or match.group("site")
+        or match.group("verb").casefold() in {"перейди", "перейти"}
+    ):
+        # A Windows executable name is an app request, not an implicit website.
+        return None
     if not (
         match.group("browser")
         or match.group("site")

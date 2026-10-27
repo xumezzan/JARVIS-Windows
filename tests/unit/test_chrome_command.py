@@ -39,6 +39,15 @@ def test_exact_website_commands(command: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "name", ["calc.exe", "explorer.exe", "mspaint.exe", "cmd.exe", "notepad.exe"]
+)
+def test_executable_names_are_not_implicitly_routed_to_chrome(name: str) -> None:
+    assert chrome_destination("открой " + name) is None
+    assert chrome_command("открой " + name) is None
+    assert chrome_destination("открой сайт " + name) == name
+
+
+@pytest.mark.parametrize(
     "command",
     [
         "открой сайт instagram",

@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Any, cast
 
+from jarvis.observability.diagnostics import Reason
 from jarvis.tools.base import ToolError
 from jarvis.tools.windows import (
     MAX_ELEMENT_NAME,
@@ -44,6 +45,7 @@ from jarvis.tools.windows import (
     normalize_newlines,
     text_digest,
     uia_metadata_bytes,
+    window_matches,
 )
 
 EDIT_CLASSES = {"edit", "richedit20w", "richedit50w", "richeditd2dpt"}
@@ -65,11 +67,9 @@ HOTKEYS = {
 }
 KEY_CHARACTERS = set(string.ascii_lowercase + string.digits + " ._+-")
 
-# Script hosts and interpreters are not launched by name: starting one would turn a spoken
-# word into an arbitrary code execution surface, which no tool in this application exposes.
+# Script hosts and interpreters remain excluded. The owner's 2026-10-27 exception permits
+# cmd.exe itself from the installed catalog, with no arguments or command string.
 SCRIPT_HOSTS = {
-    "cmd",
-    "command prompt",
     "cscript",
     "developer command prompt",
     "developer powershell",
@@ -85,7 +85,6 @@ SCRIPT_HOSTS = {
     "windows terminal",
     "wscript",
     "wt",
-    "командная строка",
     "терминал",
 }
 
@@ -104,15 +103,20 @@ ALIASES = {
     "проводник": "explorer",
     "paint": "mspaint",
     "пейнт": "mspaint",
+    "командная строка": "cmd",
+    "command prompt": "cmd",
 }
 
 # Always-present Windows applications, so a bare installation still answers common requests.
-SYSTEM_APPS = ("notepad", "mspaint", "calc", "explorer", "charmap", "magnify")
+SYSTEM_APPS = ("notepad", "mspaint", "calc", "explorer", "charmap", "magnify", "cmd")
 
 
 def normalize(name: str) -> str:
     """Compare spoken words, file stems and window titles on the same footing."""
-    folded = "".join(character if character.isalnum() else " " for character in name.casefold())
+    name = name.casefold().strip()
+    if name.endswith(".exe"):
+        name = name[:-4]
+    folded = "".join(character if character.isalnum() else " " for character in name)
     return " ".join(folded.split())
 
 
@@ -272,7 +276,7 @@ class NativeDesktop:
             if not wanted:
                 continue
             if wanted in SCRIPT_HOSTS:
-                raise ToolError("application_missing")
+                raise ToolError("application_missing", reason=Reason.APPLICATION_BLOCKED)
             for select in (
                 lambda entry, want=wanted: normalize(entry.name) == want or entry.key == want,
                 lambda entry, want=wanted: normalize(entry.name).startswith(want),
@@ -376,6 +380,7 @@ class NativeDesktop:
         while pending and len(controls) < 2048:
             parent, depth = pending.popleft()
             if depth >= max_depth:
+                truncated = True
                 continue
             try:
                 children = parent.children()
@@ -539,7 +544,7 @@ class NativeDesktop:
                 # Recursive editor inspection can block in an unrelated application.
                 # Select by top-level identity first; opening uses these shallow scans.
                 snapshot = self.snapshot(window, include_editor=False)
-                if app is not None and snapshot.app != app:
+                if app is not None and not window_matches(snapshot, app):
                     continue
                 result.append(self.with_editor(snapshot) if include_editor else snapshot)
             except Exception:
@@ -548,7 +553,7 @@ class NativeDesktop:
                 break
         return result
 
-    def resolve(self, target: WindowTarget, check_title: bool = True) -> Any:
+    def resolve(self, target: WindowTarget, check_title: bool = False) -> Any:
         try:
             window = self.desktop.window(handle=target.handle).wrapper_object()
             current = self.snapshot(window, include_editor=False)
@@ -559,7 +564,7 @@ class NativeDesktop:
                 raise ToolError("target_changed")
             return window
         except Exception:
-            raise ToolError("target_changed") from None
+            raise ToolError("target_changed", reason=Reason.WINDOW_IDENTITY_CHANGED) from None
 
     def message(self, handle: int, code: int, first: int, second: ctypes.c_void_p) -> None:
         result = ctypes.c_size_t()
@@ -570,14 +575,15 @@ class NativeDesktop:
         ):
             raise ToolError("native_failure")
 
-    def write(self, window: Any, editor: Any, value: str, overwrite: bool) -> None:
+    def write(
+        self, window: Any, editor: Any, value: str, overwrite: bool, *, existing: str = ""
+    ) -> None:
         """One directed write. Never global keys, clipboard, coordinates or a submit key."""
         handle = self.native_handle(window, editor)
         if handle:
-            if overwrite:
-                # EM_SETSEL over the whole field, so replacing really replaces. Selecting
-                # is a message to this exact control, not a key press anyone else can see.
-                self.message(handle, 0x00B1, 0, ctypes.c_void_p(-1))
+            # Explicit replace selects all; append selects the end, preserving existing text
+            # even if the application had a selection or caret in the middle.
+            self.message(handle, 0x00B1, 0 if overwrite else -1, ctypes.c_void_p(-1))
             buffer = ctypes.create_unicode_buffer(value)
             # EM_REPLACESEL with undo enabled.
             self.message(handle, 0x00C2, 1, ctypes.cast(buffer, ctypes.c_void_p))
@@ -585,7 +591,7 @@ class NativeDesktop:
         # A field with no window of its own, as in browser and Electron user interfaces:
         # the value pattern is the application's own supported way to set the text.
         try:
-            editor.iface_value.SetValue(value)
+            editor.iface_value.SetValue(value if overwrite else existing + value)
         except Exception:
             raise ToolError("control_unsupported") from None
 
@@ -594,14 +600,12 @@ class NativeDesktop:
         window = self.resolve(args.target, check_title=False)
         editor = self.chosen_editor(window, args.field)
         if not self.writable(editor):
-            raise ToolError("control_unsupported")
+            raise ToolError("control_unsupported", reason=Reason.EDITOR_NOT_WRITABLE)
         if (
             args.field.content_sha256 is not None
             and text_digest(self.read(editor)) != args.field.content_sha256
         ):
-            raise ToolError("target_changed")
-        if not args.overwrite and self.read(editor) != "":
-            raise ToolError("target_changed")
+            raise ToolError("target_changed", reason=Reason.EDITOR_CHANGED)
         return window, editor
 
     @staticmethod
@@ -696,7 +700,10 @@ class NativeDesktop:
                 )
             case "focus":
                 selector = FocusApp(
-                    target=request.target, handle=request.handle, title=request.title
+                    target=request.target,
+                    handle=request.handle,
+                    title=request.title,
+                    process=request.process,
                 )
                 target = selector.target or self.select_window(selector)
                 self.activate(target)
@@ -706,11 +713,20 @@ class NativeDesktop:
                     raise ToolError("native_failure")
                 args = self.typing(request)
                 window, editor = self.resolve_editor(args)
-                self.write(window, editor, args.text, args.overwrite)
+                existing_text = self.read(editor) if not args.overwrite else ""
+                expected = existing_text + args.text
+                self.write(window, editor, args.text, args.overwrite, existing=existing_text)
                 editor = self.chosen_editor(
                     self.resolve(args.target, check_title=False), args.field
                 )
-                return WindowsResult(target=args.target, text_sha256=text_digest(self.read(editor)))
+                actual = text_digest(self.read(editor))
+                if actual != text_digest(expected):
+                    raise ToolError("target_changed", reason=Reason.EDITOR_CHANGED)
+                return WindowsResult(
+                    target=args.target,
+                    text_sha256=actual,
+                    inserted_text_sha256=text_digest(args.text),
+                )
             case "verify":
                 if request.target is None or request.result is None:
                     raise ToolError("native_failure")
@@ -744,10 +760,13 @@ class NativeDesktop:
         matches = [
             target
             for target in self.windows()
-            if selector.title is not None and selector.title.casefold() in target.title.casefold()
+            if selector.title is not None
+            and selector.title.casefold() in target.title.casefold()
+            or selector.process is not None
+            and window_matches(target, selector.process)
         ]
         if len(matches) != 1:
-            raise ToolError("target_changed")
+            raise ToolError("target_changed", reason=Reason.AMBIGUOUS_WINDOW)
         return matches[0]
 
     def active(self) -> tuple[Any, WindowTarget]:
@@ -768,7 +787,7 @@ class NativeDesktop:
     def require_foreground(self, target: WindowTarget) -> None:
         self.resolve(target)
         if int(self.user32.GetForegroundWindow() or 0) != target.handle:
-            raise ToolError("target_changed")
+            raise ToolError("target_changed", reason=Reason.WINDOW_NOT_FOREGROUND)
 
     @staticmethod
     def rectangle(control: Any) -> Rectangle:

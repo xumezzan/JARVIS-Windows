@@ -9,6 +9,7 @@ from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict
 
+from jarvis.observability.diagnostics import Reason
 from jarvis.permissions.policies import Risk
 
 
@@ -45,8 +46,11 @@ class ToolError(Exception):
             "file_conflict",
             "file_too_large",
         ],
+        *,
+        reason: Reason | None = None,
     ) -> None:
         self.code = code
+        self.reason = reason
         super().__init__(code)
 
 

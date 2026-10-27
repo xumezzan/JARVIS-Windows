@@ -241,6 +241,28 @@ def _deed(step: Step, spoken: bool) -> str:
     return build(args, spoken) if isinstance(args, dict) else ""
 
 
+def attempted_action(step: Step) -> str:
+    """A bounded local UI label for intent, never a claim of completion or typed content."""
+    try:
+        args = json.loads(step.payload or "{}")
+    except ValueError:
+        args = {}
+    if not isinstance(args, dict):
+        args = {}
+    app = _quoted(args.get("app") or _field(args, "target", "app"))
+    if step.tool == "windows.open_app":
+        return "Запустить приложение" + app
+    if step.tool == "windows.focus_app":
+        return "Переключить фокус на окно" + app
+    if step.tool == "windows.type_text":
+        return ("Заменить текст в поле" if args.get("overwrite") else "Дописать текст в поле") + app
+    if step.tool == "windows.click_element":
+        return "Нажать элемент" + _quoted(_field(args, "element", "name")) + app
+    if step.tool == "windows.send_hotkey":
+        return "Отправить сочетание" + _quoted(args.get("hotkey")) + app
+    return "Вызвать " + step.tool[:100]
+
+
 def _sentence(step: Step, spoken: bool) -> str:
     if step.tool == "windows.open_chrome_url" and step.outcome.status is not Status.SUCCESS:
         if step.outcome.may_have_effects:

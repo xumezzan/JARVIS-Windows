@@ -108,10 +108,10 @@ class OfflineProvider:
             if typed and count == 1 and data.mode is Mode.EXECUTE:
                 result = json.loads(data.steps[-1].outcome.result_json or "{}")
                 target = result.get("target")
-                if not target or not target.get("empty") or not target.get("editor"):
+                if not target or not target.get("editor"):
                     return Proposal(
                         kind="clarify",
-                        question="Подготовьте пустой Блокнот и укажите новую команду.",
+                        question="Выберите редактируемое поле Блокнота и укажите новую команду.",
                     )
                 return call(
                     "windows.type_text",

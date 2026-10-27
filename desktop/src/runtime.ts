@@ -79,6 +79,9 @@ export type Step = {
   result: string;
   at: string;
   may_have_effects: boolean;
+  request_id?: string;
+  attempt?: string;
+  failure?: { stage: string | null; reason: string | null; message: string; may_have_effects: boolean } | null;
 };
 export type History = {
   id: string;

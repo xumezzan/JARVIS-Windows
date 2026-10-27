@@ -21,7 +21,7 @@ from jarvis.config import AppConfig, load_config
 from jarvis.core.planner.contracts import Limits, Provider, Step
 from jarvis.core.planner.openai_provider import OpenAIProvider
 from jarvis.core.planner.runner import Runner
-from jarvis.core.report import written
+from jarvis.core.report import attempted_action, written
 from jarvis.desktop.cloud_consent import (
     CloudPolicyStore,
     CloudReview,
@@ -305,6 +305,9 @@ class DesktopService:
                     "status": value.outcome.status.value,
                     "error": value.outcome.error.value,
                     "may_have_effects": value.outcome.may_have_effects,
+                    "request_id": str(value.outcome.request_id),
+                    "attempt": attempted_action(value),
+                    "failure": value.outcome.diagnostic,
                     "result": (value.outcome.result_json or "")[:2000],
                     "at": now(),
                 }
