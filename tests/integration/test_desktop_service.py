@@ -19,13 +19,16 @@ from tests.unit.test_planner import Scripted
 from tests.voice_support import VoiceFixture
 
 from jarvis.config import AppConfig
-from jarvis.core.planner.contracts import Proposal
+from jarvis.core.planner.contracts import Proposal, Step
 from jarvis.core.planner.offline import call
 from jarvis.core.planner.openai_provider import OpenAIProvider
 from jarvis.desktop.protocol import MAX_REQUEST, MAX_RESPONSE, Request
 from jarvis.desktop.service import DesktopService, read_pipe
 from jarvis.desktop.voice import DesktopVoice
-from jarvis.permissions.policies import Mode, Risk
+from jarvis.observability.audit import ErrorCode
+from jarvis.observability.diagnostics import Reason, Stage
+from jarvis.permissions.engine import Outcome
+from jarvis.permissions.policies import Mode, Risk, Status
 from jarvis.platforms.windows.transport import ProcessBackend
 from jarvis.tools.base import ExecutionContext, ToolModel, ToolSpec
 from jarvis.tools.windows import MAX_SCREENSHOT_JPEG_BYTES, NativeRequest, WindowsResult
@@ -56,6 +59,32 @@ async def test_desktop_starts_empty_without_account_or_teaching_tools(tmp_path: 
         assert "system.info" in names and "memory.scratchpad_write" in names
         assert not any(str(name).startswith("local.") for name in names)
         assert not hasattr(service, "window")
+    finally:
+        await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_flight_recorder_receives_denials_without_sensitive_payloads(tmp_path: Path) -> None:
+    service = DesktopService(AppConfig(tmp_path), lambda value: None)
+    try:
+        outcome = Outcome(
+            uuid4(),
+            Status.DENIED,
+            ErrorCode.UNOBSERVED_TARGET,
+            stage=Stage.OBSERVED_TARGET,
+            reason=Reason.TARGET_NOT_OBSERVED,
+        )
+        step = Step(
+            "windows.type_text",
+            outcome,
+            json.dumps({"target": {"app": "notepad"}, "text": "PRIVATE_TYPED_TEXT"}),
+        )
+        service._event("tool", step)
+        record = service.task.steps[0]
+        assert record["request_id"] == str(outcome.request_id)
+        assert record["failure"] == outcome.diagnostic
+        assert "notepad" in str(record["attempt"])
+        assert "PRIVATE_TYPED_TEXT" not in json.dumps(record)
     finally:
         await service.shutdown()
 

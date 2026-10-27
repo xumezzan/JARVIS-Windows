@@ -8,7 +8,7 @@ from tests.windows_support import target
 
 from jarvis.platforms.windows.native import LaunchEntry, NativeDesktop
 from jarvis.tools.base import ToolError
-from jarvis.tools.windows import NativeRequest, TypeText
+from jarvis.tools.windows import NativeRequest, TypeText, text_digest
 
 
 @pytest.fixture
@@ -28,8 +28,13 @@ def test_nonempty_editor_is_never_modified(
     monkeypatch.setattr(desktop, "writable", lambda *args: True)
     monkeypatch.setattr(desktop, "editor_target", lambda *args: target().editor)
     monkeypatch.setattr(desktop, "read", lambda *args: "unsaved user content")
+    observed = target()
+    assert observed.editor is not None
+    observed = observed.model_copy(
+        update={"editor": observed.editor.model_copy(update={"content_sha256": text_digest("")})}
+    )
     with pytest.raises(ToolError, match="target_changed"):
-        desktop.dispatch(NativeRequest(operation="type", target=target(), text="new"))
+        desktop.dispatch(NativeRequest(operation="type", target=observed, text="new"))
     desktop.user32.SendMessageTimeoutW.assert_not_called()
 
 

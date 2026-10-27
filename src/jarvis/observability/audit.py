@@ -9,6 +9,7 @@ from pathlib import Path
 from threading import Lock
 from uuid import UUID, uuid4
 
+from jarvis.observability.diagnostics import Reason, Stage
 from jarvis.permissions.approvals import Action, Channel
 from jarvis.permissions.policies import Decision, Mode, Risk, Status
 
@@ -23,6 +24,8 @@ class AuditKind(StrEnum):
 class ErrorCode(StrEnum):
     NONE = "none"
     INVALID_REQUEST = "invalid_request"
+    UNOBSERVED_TARGET = "unobserved_target"
+    DUPLICATE_EFFECT = "duplicate_effect"
     POLICY = "policy_denied"
     APPROVAL = "approval_invalid"
     REPLAY = "request_unavailable"
@@ -73,6 +76,8 @@ class AuditEvent:
     error: ErrorCode = ErrorCode.NONE
     may_have_effects: bool = False
     actor: str = "permission_engine"
+    stage: Stage | None = None
+    reason: Reason | None = None
 
 
 class AuditLog:
@@ -106,6 +111,8 @@ class AuditLog:
             "error": event.error.value,
             "result_summary": event.status.value if event.status else event.kind.value,
             "may_have_effects": event.may_have_effects,
+            "stage": event.stage.value if event.stage else None,
+            "reason": event.reason.value if event.reason else None,
         }
         with self._lock, self._connection:
             self._connection.execute("INSERT INTO events(record) VALUES (?)", (json.dumps(record),))

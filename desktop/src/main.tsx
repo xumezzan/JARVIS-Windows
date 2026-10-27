@@ -647,7 +647,7 @@ function App() {
                     {task?.steps.length ? (
                       <ol className="step-list">
                         {task.steps.map((step, i) => (
-                          <li key={i}>
+                          <li key={step.request_id || i} className={step.failure ? "step-failed" : ""}>
                             <span
                               className={`step-icon ${step.status === "SUCCESS" ? "success" : ""}`}
                             >
@@ -667,6 +667,22 @@ function App() {
                                   ? ` · ${step.error}`
                                   : ""}
                               </small>
+                              {step.failure && (
+                                <div className="step-failure">
+                                  <p>{step.attempt || `Вызвать ${step.tool}`}</p>
+                                  <p>{step.failure.message}</p>
+                                  <details>
+                                    <summary>Flight Recorder · детали отказа</summary>
+                                    <dl>
+                                      <dt>Инструмент</dt><dd>{step.tool}</dd>
+                                      <dt>Этап</dt><dd>{step.failure.stage || "Не записан"}</dd>
+                                      <dt>Код</dt><dd>{step.error}</dd>
+                                      <dt>Правило</dt><dd>{step.failure.reason || "Отдельный код правила не записан"}</dd>
+                                      <dt>Запрос</dt><dd>{step.request_id || "Не записан"}</dd>
+                                    </dl>
+                                  </details>
+                                </div>
+                              )}
                             </div>
                             <time>{time(step.at)}</time>
                           </li>

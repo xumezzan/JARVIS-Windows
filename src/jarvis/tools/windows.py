@@ -18,7 +18,7 @@ MAX_REPLY_BYTES = 2_500_000
 MAX_SCREENSHOT_JPEG_BYTES = 48 * 1024
 MAX_SCREENSHOT_BASE64 = 4 * ((MAX_SCREENSHOT_JPEG_BYTES + 2) // 3)
 MAX_UIA_ELEMENTS = 96
-MAX_UIA_DEPTH = 16
+MAX_UIA_DEPTH = 32
 MAX_ELEMENT_NAME = 120
 MAX_UIA_OBSERVATION_BYTES = 67000
 # Any installed application: a spoken or typed name for a request, and the executable's
@@ -89,14 +89,32 @@ class WindowTarget(ToolModel):
     editor: EditorTarget | None = None
     empty: bool = False
 
+    @property
+    def identity(self) -> tuple[object, ...]:
+        return (
+            self.app,
+            self.handle,
+            self.pid,
+            self.process_started,
+            self.executable,
+            tuple(self.runtime_id),
+        )
+
+
+def window_matches(target: WindowTarget, query: str) -> bool:
+    """Human search only; subsequent actions still bind an exact observed identity."""
+    query = query.casefold().strip()
+    if query.endswith(".exe"):
+        query = query[:-4]
+    return bool(query) and (query in target.app.casefold() or query in target.title.casefold())
+
 
 class ListWindows(ToolModel):
     app: AppId | None = Field(
         default=None,
         description=(
-            "Exact executable key copied from an observed WindowTarget.app, for example "
-            "'notepad'. This is not a spoken or localized application name. "
-            "Use null to list all open windows when no key has been observed."
+            "Partial process name or window title, e.g. 'notepad', 'chrome.exe' or 'Отчёт'. "
+            "Use null to list all open windows. Results contain exact identities."
         ),
     )
 
@@ -193,10 +211,14 @@ class FocusApp(ToolModel):
     target: WindowTarget | None = None
     handle: int | None = Field(default=None, gt=0)
     title: str | None = Field(default=None, min_length=1, max_length=1000)
+    process: AppId | None = None
 
     @model_validator(mode="after")
     def one_selector(self) -> "FocusApp":
-        if sum(value is not None for value in (self.target, self.handle, self.title)) != 1:
+        if (
+            sum(value is not None for value in (self.target, self.handle, self.title, self.process))
+            != 1
+        ):
             raise ValueError("Supply exactly one window selector.")
         if self.title is not None and not self.title.strip():
             raise ValueError("Empty title selector.")
@@ -377,6 +399,9 @@ class WindowsResult(ToolModel):
     height: int | None = Field(default=None, gt=0, le=800)
     performed: bool = False
     text_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    inserted_text_sha256: str | None = Field(
+        default=None, pattern=r"^[a-f0-9]{64}$", exclude_if=lambda value: value is None
+    )
     calculator: CalculatorTarget | None = None
     calculator_value_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
@@ -426,6 +451,7 @@ class NativeRequest(ToolModel):
     result: WindowsResult | None = None
     handle: int | None = Field(default=None, gt=0)
     title: str | None = Field(default=None, min_length=1, max_length=1000)
+    process: AppId | None = None
     max_depth: int = Field(default=MAX_UIA_DEPTH, ge=1, le=MAX_UIA_DEPTH)
     hotkey: str | None = None
     clipboard_sha256: str | None = None
@@ -496,7 +522,7 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
         args: ListWindows, result: WindowsResult, context: ExecutionContext
     ) -> bool:
         await context.checkpoint()
-        return all(args.app is None or item.app == args.app for item in result.windows)
+        return all(args.app is None or window_matches(item, args.app) for item in result.windows)
 
     async def open_check(args: OpenApp, context: ExecutionContext) -> bool:
         await backend.call(NativeRequest(operation="check_open", app=args.app), context)
@@ -539,11 +565,13 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
     ) -> bool:
         if result.target is None or not result.focused:
             return False
-        if args.target is not None and result.target != args.target:
+        if args.target is not None and result.target.identity != args.target.identity:
             return False
         if args.handle is not None and result.target.handle != args.handle:
             return False
         if args.title is not None and args.title.casefold() not in result.target.title.casefold():
+            return False
+        if args.process is not None and not window_matches(result.target, args.process):
             return False
         checked = await backend.call(
             NativeRequest(operation="verify", target=result.target, result=result), context
@@ -576,7 +604,16 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
         )
 
     async def type_verify(args: TypeText, result: WindowsResult, context: ExecutionContext) -> bool:
-        if result.target != args.target or result.text_sha256 != text_digest(args.text):
+        if (
+            result.target is None
+            or result.target.identity != args.target.identity
+            or result.text_sha256 is None
+        ):
+            return False
+        if args.overwrite or args.target.empty or args.field.content_sha256 == text_digest(""):
+            if result.text_sha256 != text_digest(args.text):
+                return False
+        elif result.inserted_text_sha256 != text_digest(args.text):
             return False
         checked = await backend.call(
             NativeRequest(
@@ -584,7 +621,7 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
             ),
             context,
         )
-        return checked.text_sha256 == text_digest(args.text)
+        return checked.text_sha256 == result.text_sha256
 
     cancellation = "Helper is killed and reaped on stop/timeout; issued OS effects may remain."
     registry.register(

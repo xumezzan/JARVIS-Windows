@@ -282,8 +282,6 @@ async def test_simulation_has_no_effects_or_observations(harness: Harness) -> No
     "tool,args",
     [
         ("shell.exec", {"command": "whoami"}),
-        ("local.check", {"delay_ms": "1"}),
-        ("local.check", {"approval": True}),
         ("local.critical_test", {}),
         ("local.blocked_test", {}),
     ],
@@ -430,7 +428,7 @@ async def test_runner_is_single_use(harness: Harness) -> None:
 
 
 @pytest.mark.asyncio
-async def test_offline_clarification_reobserves_nonempty_notepad() -> None:
+async def test_offline_clarification_reobserves_notepad_without_a_selected_editor() -> None:
     provider = OfflineProvider()
     command = "открой блокнот и напиши «text»"
     initial = PlannerInput(command, (), (), Mode.EXECUTE, "[]")

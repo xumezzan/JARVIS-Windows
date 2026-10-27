@@ -269,8 +269,8 @@ def test_deep_electron_containers_reveal_actions_without_observing_private_contr
     secret.window_text.assert_not_called()
 
 
-def test_inspection_protocol_defaults_to_sixteen_and_rejects_larger_depths() -> None:
-    assert InspectActiveWindow().max_depth == MAX_UIA_DEPTH == 16
+def test_inspection_protocol_defaults_to_thirty_two_and_rejects_larger_depths() -> None:
+    assert InspectActiveWindow().max_depth == MAX_UIA_DEPTH == 32
     assert NativeRequest(operation="inspect").max_depth == MAX_UIA_DEPTH
     for depth in (0, MAX_UIA_DEPTH + 1):
         with pytest.raises(ValidationError):
