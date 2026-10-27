@@ -194,6 +194,17 @@ class PlanResult:
             "budget": "Исчерпан бюджет обращений к модели. Задача остановлена.",
         }
         rows = [titles[self.status]]
+        if self.error == "network_denied":
+            if self.steps and self.steps[-1].tool == "windows.open_chrome_url":
+                rows.append(
+                    "Не удалось разобрать веб-адрес. Укажите HTTP- или HTTPS-адрес, "
+                    "например instagram.com или http://localhost:8080."
+                )
+            else:
+                rows.append(
+                    "Адрес не прошёл проверку браузера. Проверьте HTTPS-адрес "
+                    "и список разрешённых сайтов выбранного режима."
+                )
         if self.error:
             rows.append("Категория: " + self.error)
         rows.extend(

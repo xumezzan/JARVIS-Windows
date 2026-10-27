@@ -335,10 +335,12 @@ async def _browser_policy(path: Path) -> None:
         )
         for name, parameters in invalid_inputs:
             rejected = engine.prepare(name, parameters, Mode.SIMULATION)
+            network_rejection = name != "browser.read"
             _require(
                 isinstance(rejected, Outcome)
-                and rejected.status is Status.INVALID
-                and rejected.error is ErrorCode.INVALID_REQUEST
+                and rejected.status is (Status.DENIED if network_rejection else Status.INVALID)
+                and rejected.error
+                is (ErrorCode.NETWORK_DENIED if network_rejection else ErrorCode.INVALID_REQUEST)
                 and not rejected.may_have_effects
             )
         _require(not backend.called)

@@ -30,6 +30,7 @@ import { JarvisOrb } from "./components/JarvisOrb";
 import { CompactHud } from "./components/CompactHud";
 import { TaskHud } from "./components/TaskHud";
 import { WorkspacePanel } from "./components/WorkspacePanel";
+import { CloudConsentCard } from "./components/CloudConsentCard";
 import {
   PromptDialog,
   VoiceSettingsPanel,
@@ -74,9 +75,6 @@ function App() {
   const [moving, setMoving] = useState(true);
   const [theme, setTheme] = useState("Midnight");
   const [windowMode, setWindowMode] = useState<"normal" | "hud">("normal");
-  const [cloudConsent, setCloudConsent] = useState(false);
-  const [memoryConsent, setMemoryConsent] = useState(false);
-  const [conversationConsent, setConversationConsent] = useState(false);
   const [memoryIds, setMemoryIds] = useState<string[]>([]);
   const [sessionMemory, setSessionMemory] = useState(false);
   const input = useRef<HTMLInputElement>(null);
@@ -116,21 +114,13 @@ function App() {
   useEffect(() => {
     setMemoryIds([]);
     setSessionMemory(false);
-    setMemoryConsent(false);
   }, [
     JSON.stringify(state?.memory_entries),
     JSON.stringify(state?.session_memory),
   ]);
   useEffect(() => {
-    setMemoryConsent(false);
-  }, [memoryIds, sessionMemory]);
-  useEffect(() => {
-    setCloudConsent(false);
-    setConversationConsent(false);
-  }, [state?.provider, state?.model]);
-  useEffect(() => {
-    setConversationConsent(false);
-  }, [JSON.stringify(state?.recent_tasks), JSON.stringify(state?.playbooks)]);
+    if (state?.cloud_review) setPage("home");
+  }, [state?.cloud_review?.id]);
   useEffect(() => {
     if (page === "memory" && ready && window.jarvis)
       void perform(window.jarvis.memory({ operation: "read" }));
@@ -227,26 +217,34 @@ function App() {
     setPending(true);
     try {
       const next = await window.jarvis!.run(command.trim(), mode, {
-        cloud_consent: cloudConsent,
         memory_ids: memoryIds,
         session_memory: sessionMemory,
-        memory_consent: memoryConsent,
-        conversation_consent: conversationConsent,
       });
       apply(next);
-      setCloudConsent(false);
-      setConversationConsent(false);
-      setMemoryConsent(false);
       setMemoryIds([]);
       setSessionMemory(false);
       if (next.task.state === "working") setCommand("");
     } catch (e) {
-      setError(readableError(e));
+      if (!String(e).includes("cloud_consent_required")) setError(readableError(e));
     } finally {
       setPending(false);
-      setCloudConsent(false);
-      setConversationConsent(false);
     }
+  }
+  async function decideCloud(current: boolean, history: boolean) {
+    const review = state?.cloud_review;
+    if (!review || !window.jarvis) return;
+    setError("");
+    setPending(true);
+    try {
+      const next = await window.jarvis.cloudReview({
+        id: review.id, allow_current: current, allow_history: history,
+      });
+      apply(next);
+      if (next.task.state === "working") {
+        setCommand(""); setMemoryIds([]); setSessionMemory(false);
+      }
+    } catch (e) { setError(readableError(e)); }
+    finally { setPending(false); }
   }
   const total = state?.started_count || 0;
   const successful = state?.completed_count || 0;
@@ -294,7 +292,7 @@ function App() {
       )}
     </>
   );
-  if (windowMode === "hud" && state && !state.prompt) return (
+  if (windowMode === "hud" && state && !state.prompt && !state.cloud_review) return (
     <MotionConfig reducedMotion="user">
       <TaskHud state={state} moving={moving} cancel={() => void cancel()}
         restore={() => void window.jarvisWindow?.restore()} />
@@ -526,6 +524,9 @@ function App() {
                       </>
                     )}
                   </div>
+                  {state?.cloud_review && <CloudConsentCard
+                    key={state.cloud_review.id} review={state.cloud_review}
+                    busy={pending} onDecision={decideCloud} />}
                   <div className="voice-console">
                     <div className="voice-controls">
                       <button
@@ -609,53 +610,13 @@ function App() {
                       {working ? <Square /> : <ArrowRight />}
                     </button>
                   </form>
-                  {state?.provider === "openai" && (
-                    <label className="check-row cloud-consent">
-                      <input
-                        type="checkbox"
-                        checked={cloudConsent}
-                        disabled={working || pending}
-                        onChange={(e) => setCloudConsent(e.target.checked)}
-                      />
-                      Разрешаю передать эту команду, уточнения, результаты,
-                      пути и текст прочитанных файлов, скриншоты, scratchpad и профиль
-                      рабочего пространства
-                      в OpenAI (включая симуляцию). API
-                      оплачивается отдельно.
-                    </label>
-                  )}
                   {(memoryIds.length > 0 || sessionMemory) && (
                     <div className="memory-selection">
                       <p>
                         Контекст: меток профиля {memoryIds.length}
                         {sessionMemory ? ", контекст сеанса" : ""}.
                       </p>
-                      {state?.provider === "openai" && (
-                        <label className="check-row">
-                          <input
-                            type="checkbox"
-                            checked={memoryConsent}
-                            disabled={working || pending}
-                            onChange={(e) => setMemoryConsent(e.target.checked)}
-                          />
-                          Разрешаю передать выбранные метки в OpenAI для этой
-                          задачи
-                        </label>
-                      )}
                     </div>
-                  )}
-                  {state?.provider === "openai" && state.settings.task_memory_enabled && (
-                    <label className="check-row cloud-consent">
-                      <input
-                        type="checkbox"
-                        checked={conversationConsent}
-                        disabled={working || pending}
-                        onChange={(e) => setConversationConsent(e.target.checked)}
-                      />
-                      Разрешаю передать последние задачи, их команды, рабочие
-                      заметки, HWND, URL, пути и подходящие рецепты в OpenAI
-                      для этой задачи. Просмотр и удаление — в разделе «Память».
-                    </label>
                   )}
                   <div className="mode-row">
                     <label htmlFor="mode">Режим</label>
@@ -663,7 +624,7 @@ function App() {
                       id="mode"
                       value={mode}
                       disabled={
-                        working || pending || state?.voice_phase !== "idle"
+                        working || pending || !!state?.cloud_review || state?.voice_phase !== "idle"
                       }
                       onChange={(event) => setMode(event.target.value as Mode)}
                     >
@@ -781,7 +742,7 @@ function App() {
                       <small>
                         {task?.phase === "approval"
                           ? "Проверьте точные данные действия."
-                          : "Внешние действия подтверждаются отдельно."}
+                          : "Открытие сайтов — без подтверждения."}
                       </small>
                     </div>
                     <button

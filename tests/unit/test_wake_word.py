@@ -264,7 +264,10 @@ async def test_wake_autostart_does_not_supply_cloud_consent(
         service.publish()
         await until(lambda: service.voice.wake_review and service.voice.task is None)
         assert service.worker is None and service.started_count == 0
-        assert "разрешите" in service.notice
+        assert service.cloud_review is not None
+        assert service.cloud_review.request.command == "проверь систему"
+        assert not service.cloud_review.request.cloud_consent
+        assert service.cloud_review.future is None
     finally:
         await service.shutdown()
 

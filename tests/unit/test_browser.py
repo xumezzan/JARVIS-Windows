@@ -268,7 +268,8 @@ def test_network_policy_also_runs_in_simulation(
         outcome = PermissionEngine(registry, ApprovalStore(), audit).prepare(
             "browser." + name, args, mode
         )
-        assert isinstance(outcome, Outcome) and outcome.status is Status.INVALID
+        assert isinstance(outcome, Outcome) and outcome.status is Status.DENIED
+        assert outcome.error is ErrorCode.NETWORK_DENIED
         assert not probe.calls
 
 
@@ -383,7 +384,8 @@ def test_typing_into_a_read_only_site_never_prepares(mode: Mode, tmp_path: Path)
             {"target": console.model_dump(), "element": FIELD, "text": "1000"},
             mode,
         )
-        assert isinstance(typing, Outcome) and typing.status is Status.INVALID
+        assert isinstance(typing, Outcome) and typing.status is Status.DENIED
+        assert typing.error is ErrorCode.NETWORK_DENIED
         # Reading the same page is still prepared: looking is not changing.
         reading = engine.prepare("browser.read", {"target": console.model_dump()}, mode)
         assert not isinstance(reading, Outcome)

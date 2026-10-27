@@ -37,6 +37,15 @@ export type RunOptions = {
   memory_consent?: boolean;
   conversation_consent?: boolean;
 };
+export type CloudReview = {
+  id: string;
+  command: string;
+  mode: Mode;
+  reasons: string[];
+  expires_at: number;
+  history_available: boolean;
+  profile_count: number;
+};
 export type Mode = "simulation" | "execute";
 export type Panel =
   "task" | "settings" | "memory" | "outlook" | "voice" | "tools" | "workspace";
@@ -112,6 +121,7 @@ export type RuntimeState = {
   native_window_visible: boolean;
   settings: VoiceSettings;
   prompt: Prompt | null;
+  cloud_review?: CloudReview | null;
   memory_entries: MemoryEntry[];
   session_memory: MemoryHint[];
   recent_tasks?: {
@@ -158,6 +168,7 @@ export interface JarvisApi {
   status(): Promise<{ state: RuntimeState | null; error: string }>;
   run(command: string, mode: Mode, options?: RunOptions): Promise<RuntimeState>;
   cancel(): Promise<RuntimeState>;
+  cloudReview(reply: { id: string; allow_current: boolean; allow_history: boolean }): Promise<RuntimeState>;
   open(panel: Panel): Promise<RuntimeState>;
   configure(settings: VoiceSettings): Promise<RuntimeState>;
   answer(id: string, answer: string): Promise<RuntimeState>;
@@ -245,6 +256,7 @@ export const toolLabel = (name: string) =>
     "onedrive.write": "Запись в Excel",
     "windows.get_open_windows": "Открытые окна Windows",
     "windows.open_app": "Запуск приложения",
+    "windows.open_chrome_url": "Открытие адреса в вашем Chrome",
     "windows.get_text_fields": "Поля ввода окна",
     "windows.get_calculator_number": "Результат калькулятора",
     "windows.calculator_number": "Число в калькуляторе",
@@ -292,7 +304,9 @@ export function readableError(error: unknown): string {
     workspace_invalid: "Проверьте профиль: нужен точный HTTPS URL без пароля, фрагмента или шаблона домена.",
     workspace_limit: "Профиль слишком большой. Сократите описания или число приложений.",
     cloud_consent_required:
-      "Для OpenAI отметьте согласие на передачу команды и наблюдений.",
+      "Ответьте на вопрос о передаче данных в чате.",
+    cloud_review_expired: "Вопрос истёк или уже обработан. Запустите задачу заново.",
+    cloud_review_changed: "Настройки изменились. Запустите задачу заново.",
     prompt_expired: "Запрос подтверждения истёк. Запустите задачу заново.",
     prompt_changed: "Данные подтверждения изменились. Запустите задачу заново.",
     memory_changed:

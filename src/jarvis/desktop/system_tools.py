@@ -2,19 +2,80 @@
 
 import os
 import platform
+import re
 import shutil
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import Field
 
 from jarvis.core.planner.contracts import PlannerInput, Proposal
-from jarvis.core.planner.offline import OfflineProvider
+from jarvis.core.planner.offline import OfflineProvider, call
 from jarvis.permissions.policies import Risk
-from jarvis.tools.base import ExecutionContext, ToolModel, ToolSpec
+from jarvis.tools.base import ExecutionContext, ToolError, ToolModel, ToolSpec
 from jarvis.tools.local import LocalOutbox
 from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.scratchpad import register_scratchpad
+from jarvis.tools.windows import CHROME_SITE_ALIASES, normalize_chrome_url
+
+
+def chrome_destination(command: str) -> str | None:
+    """Recognize a single website request, separately from an application launch."""
+    match = re.fullmatch(
+        r"(?P<browser>(?:открой|открыть|запусти)\s+(?:браузер|chrome|хром)\s+и\s+)?"
+        r"(?P<verb>открой|открыть|перейди|перейти)(?:\s+на)?(?P<site>\s+сайт)?\s+"
+        r"(?P<destination>[a-zA-Z0-9\u0400-\u04ff][^\s]*)",
+        command.strip(),
+        re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    value = match.group("destination")
+    if not (
+        match.group("browser")
+        or match.group("site")
+        or match.group("verb").casefold() in {"перейди", "перейти"}
+        or "." in value
+        or "://" in value
+        or value.casefold() in CHROME_SITE_ALIASES
+    ):
+        return None
+    return value
+
+
+def chrome_command(command: str) -> str | None:
+    """Only user text or a reviewed site alias selects the canonical destination."""
+    value = chrome_destination(command)
+    if value is None:
+        return None
+    try:
+        return normalize_chrome_url(value)
+    except ToolError:
+        return None
+
+
+class ChromeCommandProvider:
+    """A literal address needs no cloud planner or account/page observations."""
+
+    def __init__(self, url: str | None) -> None:
+        self.url = url
+
+    async def propose(self, data: PlannerInput) -> Proposal:
+        if data.steps:
+            return Proposal(kind="finish")
+        if self.url is None and data.answers:
+            with suppress(ToolError):
+                self.url = normalize_chrome_url(data.answers[-1].answer)
+        if self.url is None:
+            return Proposal(
+                kind="clarify",
+                question=(
+                    "Укажите адрес сайта, например instagram.com или http://localhost:8080. "
+                    "Поддерживаются HTTP и HTTPS; указанный адрес откроется в вашем Chrome."
+                ),
+            )
+        return call("windows.open_chrome_url", {"url": self.url})
 
 
 class SystemInput(ToolModel):

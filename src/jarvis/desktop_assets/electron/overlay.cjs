@@ -84,7 +84,7 @@ class Overlay {
     const task = state?.task;
     if (task?.state !== "working") this.restoredTask = "";
     const executing = task?.state === "working" && task.mode === "execute";
-    const eligible = !this.taskHud && executing && !state.prompt && this.shortcuts && task.id !== this.restoredTask;
+    const eligible = !this.taskHud && executing && !state.prompt && !state.cloud_review && this.shortcuts && task.id !== this.restoredTask;
     if (eligible && !this.active && !this.disposed) {
       this.active = true;
       this.position();
@@ -95,11 +95,11 @@ class Overlay {
       this.hud.hide();
       this.target.hide();
       if (!this.main.isDestroyed()) {
-        if (state?.prompt) this.main.show();
+        if (state?.prompt || state?.cloud_review) this.main.show();
         else this.main.showInactive();
       }
     }
-    const hint = task?.state !== "working" && !state?.prompt && ["notification", "wake"].includes(this.presentation()?.mode);
+    const hint = task?.state !== "working" && !state?.prompt && !state?.cloud_review && ["notification", "wake"].includes(this.presentation()?.mode);
     if (!this.active) {
       this.hintActive = !!hint;
       if (hint) {
@@ -107,7 +107,7 @@ class Overlay {
         this.hud.showInactive();
       } else this.hud.hide();
     }
-    if (!executing || state?.prompt) this.target.hide();
+    if (!executing || state?.prompt || state?.cloud_review) this.target.hide();
     if (!this.hud.isDestroyed()) this.hud.webContents.send("jarvis-overlay:state", this.presentation());
   }
   restore(focus = false) {
@@ -124,7 +124,7 @@ class Overlay {
   }
   async highlight(message) {
     await this.ready;
-    if (this.disposed || this.state?.task?.state !== "working" || this.state?.prompt)
+    if (this.disposed || this.state?.task?.state !== "working" || this.state?.prompt || this.state?.cloud_review)
       throw new Error("target_cancelled");
     const taskId = this.state.task.id;
     if (this.pendingPaint) this.pendingPaint.reject(new Error("target_superseded"));
@@ -149,7 +149,7 @@ class Overlay {
       });
       await new Promise((resolve) => setTimeout(resolve, 300));
       if (this.disposed || this.state?.task?.id !== taskId ||
-          this.state?.task?.state !== "working" || this.state?.prompt)
+          this.state?.task?.state !== "working" || this.state?.prompt || this.state?.cloud_review)
         throw new Error("target_cancelled");
     } finally {
       clearTimeout(timer);

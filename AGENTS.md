@@ -2,6 +2,30 @@
 
 ## PR #59 integration
 
+Owner policy, 2026-10-26: the Electron home screen has no permanent OpenAI consent
+checkboxes. This owner explicitly authorizes automatic OpenAI processing of ordinary
+tasks and their enabled/selected context through the persisted non-secret
+`routine_cloud_consent` preference. Its default is false for a fresh profile; do not
+infer this standing grant for another user. This overrides the one-task-checkbox
+requirements below for ordinary Electron tasks with that explicit standing grant.
+Money/purchases, sending/publishing, deletion/overwrite, account/access/settings
+changes and long tasks require a fresh question with unchecked current-task and
+optional history checkboxes inside the chat. Decide locally before calling a model;
+if an ordinary task grows past four steps or requires a screenshot, pause before
+the next outbound call and ask there too. Bind each answer to one expiring pending
+request and its provider/model settings. Cancellation, stale/replayed answers and
+changed settings never authorize transmission. This data disclosure consent does
+not approve tool effects; PermissionEngine's action approvals remain separate.
+
+Owner policy, 2026-10-26: opening any HTTP/HTTPS website in the owner's normal Chrome
+is SAFE and needs no confirmation. `windows.open_chrome_url` performs URL syntax
+normalization only, with no site allowlist, site tiers, HTTPS-only requirement,
+public-address restriction or DNS preflight. Local and intranet web addresses are
+included. Chrome handles its own networking and browsing. This explicit owner
+decision lowers this existing capability from CONFIRM; PermissionEngine, durable
+audit, simulation and the existing boundaries for reading pages, forms and other
+actions still apply to their own operations.
+
 The current main product and its connectors/workflow journal remain the default Qt entry
 point. `python -m jarvis --compact` preserves the compact Qt surface; `desktop/` owns the
 Electron surface. Shared runtime additions are described in `docs/MERGE_PR59.md`.

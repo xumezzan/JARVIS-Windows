@@ -201,6 +201,11 @@ DEEDS: dict[str, Callable[[dict[str, object], bool], str]] = {
     "files.recycle": lambda args, spoken: "переместил в корзину " + _file(args.get("path")),
     "files.open": lambda args, spoken: "открыл файл " + _file(args.get("path")),
     "windows.open_app": lambda args, spoken: "открыл " + (_plain(args.get("app")) or "приложение"),
+    "windows.open_chrome_url": lambda args, spoken: (
+        "передал адрес "
+        + _host(args.get("url"))
+        + " Chrome в новую вкладку; загрузка страницы не проверена"
+    ),
     "windows.focus_app": lambda args, spoken: "переключился на " + _app(args),
     # The typed text itself is the owner's content, so the report says where, never what.
     "windows.type_text": lambda args, spoken: "напечатал текст в " + _app(args),
@@ -237,6 +242,12 @@ def _deed(step: Step, spoken: bool) -> str:
 
 
 def _sentence(step: Step, spoken: bool) -> str:
+    if step.tool == "windows.open_chrome_url" and step.outcome.status is not Status.SUCCESS:
+        if step.outcome.may_have_effects:
+            return "Передача адреса Chrome не подтверждена — проверьте браузер."
+        if step.outcome.error is ErrorCode.NETWORK_DENIED:
+            return "Адрес Chrome не передан — некорректный веб-адрес."
+        return "Адрес Chrome не передан — " + REASON.get(step.outcome.error, "не получилось") + "."
     if step.tool.startswith("mcp."):
         if step.outcome.status is Status.SUCCESS:
             return "Получен ответ MCP; результат действия в сервисе не проверен."

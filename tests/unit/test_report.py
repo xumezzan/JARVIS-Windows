@@ -85,6 +85,18 @@ def test_files_and_applications_are_named_by_what_the_owner_would_call_them() ->
     assert SECRET not in " ".join(lines) and "q=secret" not in " ".join(lines)
 
 
+def test_external_chrome_denial_does_not_claim_a_sandbox_or_a_page_load() -> None:
+    result = PlanResult(
+        "error",
+        (step("windows.open_chrome_url", status=Status.DENIED, error=ErrorCode.NETWORK_DENIED),),
+        "network_denied",
+    )
+    assert "Адрес Chrome не передан — некорректный веб-адрес." in written(result)
+    assert "Strict Sandbox" not in result.summary
+    assert "загрузка страницы" not in " ".join(written(result))
+    assert "HTTP- или HTTPS-адрес" in result.summary
+
+
 def test_what_was_typed_is_never_repeated_back() -> None:
     result = PlanResult(
         "finished",

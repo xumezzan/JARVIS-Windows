@@ -20,7 +20,7 @@ from jarvis.config import AppConfig, load_config
 from jarvis.core.planner.contracts import Step
 from jarvis.core.planner.offline import call
 from jarvis.core.planner.runner import Runner
-from jarvis.observability.audit import AuditLog
+from jarvis.observability.audit import AuditLog, ErrorCode
 from jarvis.permissions.approvals import Action, ApprovalStore
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Mode, Risk, Status
@@ -339,7 +339,8 @@ def test_financial_admin_writes_cannot_be_downgraded_by_app_metadata(
         ]
         for tool, args in cases:
             denied = engine.prepare("browser." + tool, {"target": page.model_dump(), **args})
-            assert isinstance(denied, Outcome) and denied.status is Status.INVALID
+            assert isinstance(denied, Outcome) and denied.status is Status.DENIED
+            assert denied.error is ErrorCode.NETWORK_DENIED
 
 
 def test_marks_have_strict_bounds_and_exactly_one_target_form() -> None:

@@ -456,15 +456,23 @@ svg {
   color: var(--muted);
 }
 .center-column {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: 100px minmax(250px, 1fr) 40px 108px 160px 58px 30px;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   text-align: center;
 }
 .center-column > * {
   min-width: 0;
+  flex-shrink: 0;
 }
+.center-column .assistant-heading { min-height: 100px; }
+.center-column .orb-slot { flex: 1 0 250px; min-height: 250px; }
+.center-column .voice-state { min-height: 40px; }
+.center-column .command-context { min-height: 108px; }
+.center-column .voice-console { min-height: 160px; }
+.center-column .composer { min-height: 58px; }
+.center-column .mode-row { min-height: 30px; }
+.dashboard:has(.cloud-review-card) { height: auto; align-items: start; }
 .assistant-heading h1 {
   font-size: 56px;
   font-weight: 200;
@@ -1031,7 +1039,8 @@ svg {
   }
   .center-column {
     grid-row: 1;
-    height: 850px;
+    height: auto;
+    min-height: 850px;
     max-width: 500px;
     width: 100%;
     margin: auto;
@@ -1172,6 +1181,28 @@ svg {
   max-width: 520px;
   margin: 12px auto;
 }
+.cloud-review-card {
+  width: 100%;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  text-align: left;
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.cloud-review-card h3 { font-size: 18px; line-height: 1.4; margin: 0; }
+.cloud-review-card p { margin: 0; }
+.cloud-review-card .cloud-review-command { color: var(--text-primary); font-weight: 600; }
+.cloud-review-card .check-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  margin: 0;
+}
+.cloud-review-card input { width: 16px; height: 16px; }
+.cloud-review-card small { color: var(--text-secondary); }
 .control-actions {
   display: flex;
   flex-wrap: wrap;

@@ -39,6 +39,7 @@ from jarvis.tools.windows import (
     TypeText,
     WindowsResult,
     WindowTarget,
+    chrome_url,
     clipboard_digest,
     normalize_newlines,
     text_digest,
@@ -298,6 +299,45 @@ class NativeDesktop:
             if matches:
                 return matches
         return []
+
+    @staticmethod
+    def chrome_executable() -> Path:
+        """Resolve Chrome from fixed Windows install metadata, never user arguments."""
+        winreg = importlib.import_module("winreg")
+        for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            try:
+                with winreg.OpenKey(
+                    root, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"
+                ) as handle:
+                    candidate = Path(str(winreg.QueryValueEx(handle, "")[0]).strip('"'))
+                if (
+                    candidate.is_absolute()
+                    and candidate.name.lower() == "chrome.exe"
+                    and candidate.is_file()
+                ):
+                    return candidate
+            except OSError:
+                continue
+        for variable in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+            base = os.environ.get(variable)
+            if base:
+                candidate = Path(base) / "Google" / "Chrome" / "Application" / "chrome.exe"
+                if candidate.is_absolute() and candidate.is_file():
+                    return candidate
+        raise ToolError("application_missing")
+
+    def open_chrome_url(self, value: str) -> WindowsResult:
+        url = chrome_url(value)
+        if url != value:
+            raise ToolError("network_denied")
+        subprocess.Popen(
+            [str(self.chrome_executable()), "--new-tab", url],
+            shell=False,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return WindowsResult(performed=True, text=url)
 
     def launch(self, entry: LaunchEntry) -> None:
         """Start the resolved item itself. No user arguments, URLs, PATH lookup or shell."""
@@ -594,6 +634,13 @@ class NativeDesktop:
 
             return dispatch(self, request)
         match request.operation:
+            case "check_chrome":
+                self.chrome_executable()
+                return WindowsResult()
+            case "open_chrome_url":
+                if request.url is None:
+                    raise ToolError("network_denied")
+                return self.open_chrome_url(request.url)
             case "list":
                 windows = self.windows(request.app)
                 return WindowsResult(windows=windows, truncated=len(windows) == 1000)

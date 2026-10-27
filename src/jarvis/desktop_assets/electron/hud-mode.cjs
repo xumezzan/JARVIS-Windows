@@ -22,8 +22,8 @@ class TaskHudWindow {
     const task = state?.task;
     const running = ["working", "running"].includes(task?.state);
     if (!running) this.restoredTask = "";
-    const prompt = state?.prompt || ["approval", "clarification"].includes(task?.phase);
-    const promptId = state?.prompt?.id || (prompt ? `${task.id}:${task.phase}` : "");
+    const prompt = state?.prompt || state?.cloud_review || ["approval", "clarification", "cloud_review"].includes(task?.phase);
+    const promptId = state?.prompt?.id || state?.cloud_review?.id || (prompt ? `${task.id}:${task.phase}` : "");
     const wasHud = !!this.saved;
     const eligible = running && !prompt && this.restoredTask !== task.id;
     if (eligible && !this.saved && !this.window.isDestroyed()) {
