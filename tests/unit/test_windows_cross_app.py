@@ -232,6 +232,49 @@ def test_inspection_depth_password_and_element_bounds(monkeypatch: pytest.Monkey
     assert [element.mark_id for element in result.elements] == list(range(1, 97))
 
 
+def test_web_product_links_and_variant_controls_are_observed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    desktop = adapter()
+    window = control("Window")
+    choices = [
+        control("Hyperlink", "iPhone"),
+        control("RadioButton", "Burgundy"),
+        control("RadioButton", "256 GB"),
+        control("CheckBox", "Without trade-in"),
+        control("ComboBox", "Store country"),
+        control("Button", "Add to Bag"),
+    ]
+    secret = control("Edit", "Card password", password=True)
+    hidden = control("Hyperlink", "Hidden checkout")
+    hidden.is_visible.return_value = False
+    for index, choice in enumerate(choices):
+        choice.element_info.runtime_id = [10, index + 1]
+    window.children.return_value = [*choices, secret, hidden]
+    monkeypatch.setattr(desktop, "active", lambda: (window, target()))
+    monkeypatch.setattr(desktop, "resolve", lambda *args, **kwargs: window)
+    result = desktop.inspect(MAX_UIA_DEPTH)
+    assert {element.name for element in result.elements} == {
+        "iPhone",
+        "Burgundy",
+        "256 GB",
+        "Without trade-in",
+        "Store country",
+        "Add to Bag",
+    }
+    assert {element.control_type for element in result.elements} == {
+        "Hyperlink",
+        "RadioButton",
+        "CheckBox",
+        "ComboBox",
+        "Button",
+    }
+    assert uia_metadata_bytes(result) <= MAX_UIA_OBSERVATION_BYTES
+    assert [element.mark_id for element in result.elements] == list(range(1, 7))
+    secret.window_text.assert_not_called()
+    hidden.window_text.assert_not_called()
+
+
 def test_walk_is_bounded_on_cyclic_provider_tree() -> None:
     desktop = adapter()
     window = control("Window")

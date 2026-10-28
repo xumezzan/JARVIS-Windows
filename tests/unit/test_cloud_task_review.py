@@ -21,6 +21,9 @@ from jarvis.permissions.policies import Mode
     "command",
     [
         "Оплати счёт",
+        "Открой apple.com и добавь в корзину iphone 18 pro max 256 gb burgundy",
+        "Add the selected phone to the bag",
+        "Proceed to checkout",
         "Отправь сообщение Ивану",
         "Удали старые файлы",
         "Перезапиши отчёт",
@@ -32,7 +35,16 @@ def test_review_policy_matches_owner_categories(command: str) -> None:
     assert review_reasons(command)
 
 
-@pytest.mark.parametrize("command", ["Проверь систему", "Открой калькулятор", "Найди документ"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        "Проверь систему",
+        "Открой калькулятор",
+        "Найди документ",
+        "Открой корзину Windows",
+        "Покажи размер файла bag.txt",
+    ],
+)
 def test_ordinary_tasks_do_not_need_review(command: str) -> None:
     assert not review_reasons(command)
 

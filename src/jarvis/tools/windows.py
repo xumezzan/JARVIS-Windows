@@ -324,7 +324,17 @@ class ElementTarget(ToolModel):
     name: str = Field(max_length=MAX_ELEMENT_NAME)
     label_truncated: bool = False
     name_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
-    control_type: Literal["Button", "Edit", "Document", "TabItem", "ListItem"]
+    control_type: Literal[
+        "Button",
+        "Edit",
+        "Document",
+        "TabItem",
+        "ListItem",
+        "Hyperlink",
+        "RadioButton",
+        "CheckBox",
+        "ComboBox",
+    ]
     automation_id: str = Field(max_length=500)
     rectangle: Rectangle
 
