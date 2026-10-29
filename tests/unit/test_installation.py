@@ -349,6 +349,7 @@ def test_an_unexpected_failure_reports_its_kind_not_a_step_never_shown(
 
     monkeypatch.setattr(setup, "install", fail)
     monkeypatch.setattr(setup, "supported_host", lambda: True)
+    monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(sys, "argv", ["setup", "--root", str(tmp_path)])
     assert setup.main() == 1
     reported = capsys.readouterr().err

@@ -9,7 +9,7 @@ const { _electron } = require("playwright");
 (async () => {
   const repository = path.resolve(__dirname, "../..");
   const data = await fs.mkdtemp(path.join(os.tmpdir(), "jarvis-product-e2e-"));
-  const executable = process.env.JARVIS_PACKAGED_EXE || path.join(os.homedir(), "Applications/Jarvis.app/Contents/MacOS/Electron");
+  const executable = process.env.JARVIS_PACKAGED_EXE || path.join(os.homedir(), "Applications/Jarvis.app/Contents/MacOS/Jarvis");
   const env = { ...process.env, JARVIS_DATA_DIR: data };
   for (const name of ["ELECTRON_RUN_AS_NODE", "JARVIS_VOSK_MODEL", "JARVIS_PLANNER_MODEL",
     "JARVIS_VOICE_WAKE_WORD", "JARVIS_VOICE_AUTO_STOP_ON_SILENCE", "JARVIS_BROWSER_MODE",

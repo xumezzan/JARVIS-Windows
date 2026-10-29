@@ -167,6 +167,7 @@ async def test_unsupported_platform_is_explicit(
     audit: AuditLog, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("jarvis.platforms.windows.transport.is_windows", lambda: False)
+    monkeypatch.setattr("jarvis.platforms.windows.transport.sys.platform", "linux")
     engine, _ = engine_for(ProcessBackend(), audit)
     result = await engine.execute(prepared(engine, "get_open_windows", {}))
     assert result.error is ErrorCode.UNSUPPORTED_PLATFORM

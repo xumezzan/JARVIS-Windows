@@ -62,6 +62,7 @@ HOTKEYS = {
     "Ctrl+C": "^c",
     "Ctrl+V": "^v",
     "Ctrl+A": "^a",
+    "Ctrl+Z": "^z",
     "Enter": "{ENTER}",
     "Tab": "{TAB}",
     "Alt+F4": "%{F4}",

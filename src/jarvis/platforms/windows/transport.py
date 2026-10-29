@@ -1,6 +1,8 @@
 """Fixed private stdio protocol, no shell, payload on stdin rather than process argv."""
 
 import asyncio
+import os
+import signal
 import sys
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
@@ -38,6 +40,15 @@ def is_windows() -> bool:
     return sys.platform == "win32"
 
 
+def native_worker() -> str:
+    """Choose trusted code locally; neither a model nor a request selects a module."""
+    if is_windows():
+        return "jarvis.platforms.windows.worker"
+    if sys.platform == "darwin":
+        return "jarvis.platforms.macos.worker"
+    raise ToolError("unsupported_platform")
+
+
 class ProcessBackend:
     def __init__(
         self,
@@ -57,8 +68,7 @@ class ProcessBackend:
         self.before_action = before_action
 
     async def call(self, request: NativeRequest, context: ExecutionContext) -> WindowsResult:
-        if not is_windows():
-            raise ToolError("unsupported_platform")
+        native_worker()
         await context.checkpoint()
         return await self._exchange(request, context)
 
@@ -76,13 +86,14 @@ class ProcessBackend:
                 sys.executable,
                 "-I",
                 "-m",
-                "jarvis.platforms.windows.worker",
+                native_worker(),
                 *(["--visual-target"] if preview else []),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
                 limit=MAX_REPLY_BYTES + 1,
                 creationflags=0x08000000 if is_windows() else 0,
+                start_new_session=sys.platform == "darwin",
             )
         )
         process: asyncio.subprocess.Process | None = None
@@ -165,7 +176,11 @@ class ProcessBackend:
                 process = await launch
             if process.returncode is None:
                 with suppress(ProcessLookupError):
-                    process.kill()
+                    if sys.platform == "darwin":
+                        # The helper's bounded system utilities belong to this run too.
+                        os.killpg(process.pid, signal.SIGKILL)
+                    else:
+                        process.kill()
                 # Drain only after termination: bounded pipe buffers, no live producer.
                 # A paused stdout pipe otherwise can prevent asyncio.wait() from finishing.
                 await process.communicate()

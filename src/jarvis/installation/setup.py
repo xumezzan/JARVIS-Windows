@@ -523,6 +523,8 @@ def install(
 
 
 def supported_host() -> bool:
+    if sys.platform == "darwin":
+        return platform.machine().lower() in {"arm64", "x86_64"}
     return (
         sys.platform == "win32"
         and platform.machine().lower() in {"amd64", "x86_64"}
@@ -538,6 +540,13 @@ def main() -> int:
         "--source-commit", help="Published commit selected by the explicit updater."
     )
     args = parser.parse_args()
+    if sys.platform == "darwin":
+        print(
+            "Use scripts/macos/Launch-Jarvis.command on macOS. "
+            "This entry point installs Windows slots only; no Windows checks were run.",
+            file=sys.stderr,
+        )
+        return 2
     if not supported_host():
         print("Setup requires an interactive Windows 11 x64 session.", file=sys.stderr)
         return 2

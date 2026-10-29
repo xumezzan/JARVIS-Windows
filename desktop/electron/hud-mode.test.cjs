@@ -26,16 +26,18 @@ class Window {
   setMaximumSize(...size) { this.maximum = size; }
   setResizable(value) { this.resizable = value; }
   setAlwaysOnTop(value) { this.top = value; }
+  isVisibleOnAllWorkspaces() { return !!this.workspaces?.[0]; }
+  setVisibleOnAllWorkspaces(...args) { this.workspaces = args; }
   showInactive() { this.visible = true; }
   show() { this.visible = true; }
   focus() { this.focused = true; }
 }
-function setup() {
+function setup(platform = 'win32') {
   const screen = new EventEmitter();
   screen.getDisplayMatching = () => ({workArea: {x:-1920, y:0, width:1920, height:1080}});
   const window = new Window();
   const modes = [];
-  const hud = new TaskHudWindow(window, screen, mode => modes.push(mode));
+  const hud = new TaskHudWindow(window, screen, mode => modes.push(mode), {platform});
   return {window, screen, hud, modes};
 }
 const active = {task: {id: "task", state: "working", phase: "executing"}, prompt: null};
@@ -120,6 +122,16 @@ test("an approval remains reachable when the original monitor is unplugged", () 
   hud.update({...active, prompt:{id:"prompt",kind:"approval"}});
   assert.equal(window.bounds.x, 0);
   assert.equal(window.visible, true);
+  assert.equal(window.focused, true);
+  hud.dispose();
+});
+test("macOS HUD follows fullscreen Spaces only while a task is running", () => {
+  const {window, hud} = setup('darwin');
+  hud.update(active);
+  assert.deepEqual(window.bounds, {x:-376, y:16, width:360, height:120});
+  assert.deepEqual(window.workspaces, [true, {visibleOnFullScreen: true}]);
+  hud.update({...active, prompt: {id: 'approval', kind: 'approval'}});
+  assert.deepEqual(window.workspaces, [false, {visibleOnFullScreen: false}]);
   assert.equal(window.focused, true);
   hud.dispose();
 });
