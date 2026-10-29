@@ -60,6 +60,7 @@ from jarvis.permissions.approvals import Action, ApprovalStore, ApprovalToken
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.matrix import load_matrix
 from jarvis.permissions.policies import Decision, Mode, Risk, Status
+from jarvis.platforms.windows.ghost import CursorTarget
 from jarvis.platforms.windows.transport import ProcessBackend
 from jarvis.platforms.workspace_browser import BrowserLaunchError, WorkspaceBrowser
 from jarvis.security.browser_policy import BrowserMode
@@ -171,10 +172,11 @@ class DesktopService:
         self.override_provider = provider
         self.limits = limits or Limits()
         self.host = BrowserHost.from_config(config)
+        self.host.before_action = self._ghost_preview
         self.registry, self.outbox = desktop_registry(config.data_dir)
         register_filesystem(self.registry, config.filesystem_policy)
         register_browser(self.registry, self.host, self.host.policy, workspace=self.host.workspace)
-        register_windows(self.registry, ProcessBackend(before_click=self._highlight))
+        register_windows(self.registry, ProcessBackend(before_action=self._ghost_preview))
         self.mail_session = MailSession()
         register_outlook(self.registry, self.mail_session)
         matrix = load_matrix(config.data_dir / "permissions.json")
@@ -295,6 +297,12 @@ class DesktopService:
         self.write({"event": "transcript", "text": text[:4000]})
 
     def _event(self, kind: str, value: object) -> None:
+        if kind == "cursor_state":
+            self.write({"event": "cursor_state", "cursor_state": value})
+            if value == "yielding":
+                self.task.phase = "yielding"
+                self.publish()
+            return
         self.task.phase = kind
         if kind == "executing" and isinstance(value, str):
             self.task.active_tool = value
@@ -421,13 +429,25 @@ class DesktopService:
         self.watchers.dismiss(item.id)
 
     async def _highlight(self, rectangle: Rectangle) -> None:
+        await self._ghost_preview(CursorTarget(rectangle=rectangle))
+
+    async def _ghost_preview(self, target: CursorTarget) -> None:
         """A display receipt is not action approval; it can only release an audited adapter."""
+        if self.runner is not None:
+            self.runner.takeover.target = target
+            self.runner.takeover.sample()
+            if self.runner.takeover.pending:
+                raise ToolError("target_changed")
         receipt = uuid4().hex, asyncio.get_running_loop().create_future()
         self.target_receipt = receipt
-        self.write({"event": "target", "id": receipt[0], "rectangle": rectangle.model_dump()})
+        self.write({"event": "target", "id": receipt[0], **target.cursor_move()})
         try:
             async with asyncio.timeout(3):
                 await receipt[1]
+            if self.runner is not None:
+                self.runner.takeover.sample()
+                if self.runner.takeover.pending:
+                    raise ToolError("target_changed")
         except TimeoutError:
             raise ToolError("native_timeout") from None
         finally:
@@ -989,12 +1009,13 @@ class DesktopService:
                 workspace_profile=active,
             )
             host = BrowserHost.from_config(config)
+            host.before_action = self._ghost_preview
             # Re-compose the same trusted surface against the existing mail session,
             # audit and approval store; all previous task observations are discarded.
             registry, outbox = desktop_registry(config.data_dir)
             register_filesystem(registry, config.filesystem_policy)
             register_browser(registry, host, host.policy, workspace=host.workspace)
-            register_windows(registry, ProcessBackend(before_click=self._highlight))
+            register_windows(registry, ProcessBackend(before_action=self._ghost_preview))
             register_outlook(registry, self.mail_session)
             matrix = load_matrix(config.data_dir / "permissions.json")
             calendar = register_calendar(registry, self.mail_session, matrix)

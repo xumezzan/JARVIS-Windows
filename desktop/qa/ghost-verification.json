@@ -1,0 +1,17 @@
+{
+  "pass": true,
+  "renderer": "actual Electron + React",
+  "animation_ms": 280,
+  "click_through": true,
+  "yielding": true,
+  "hidden_on_idle": true,
+  "cursor_before": {
+    "x": 16,
+    "y": 989
+  },
+  "cursor_after": {
+    "x": 16,
+    "y": 989
+  },
+  "cursor_unchanged": true
+}

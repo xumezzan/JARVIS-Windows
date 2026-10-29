@@ -35,6 +35,7 @@ from jarvis.observability.diagnostics import Reason
 from jarvis.permissions.approvals import Action, ApprovalToken
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Mode, Risk, Status
+from jarvis.platforms.windows.ghost import HumanTakeover
 from jarvis.tools.browser import (
     BrowserResult,
     PageTarget,
@@ -77,6 +78,7 @@ class Runner:
         harvester: Harvester | None = None,
         learner: Learner | None = None,
         notify: Callable[[str, object], None] = lambda kind, value: None,
+        takeover: HumanTakeover | None = None,
     ) -> None:
         self.memory = MemoryContext.model_validate(memory or MemoryContext())
         self.task_memory = TaskMemoryContext.model_validate(task_memory or TaskMemoryContext())
@@ -116,6 +118,76 @@ class Runner:
         self.calls = 0
         self._used = False
         self._uncertain_effects: set[str] = set()
+        self.takeover = takeover or HumanTakeover()
+        self._observation_floor = 0
+
+    def _planner_steps(self) -> tuple[Step, ...]:
+        return tuple(
+            replace(step, outcome=replace(step.outcome, result_json=None, screenshot_b64=None))
+            if index < self._observation_floor and step.tool.startswith(("windows.", "browser."))
+            else step
+            for index, step in enumerate(self.steps)
+        )
+
+    async def _fresh_read(self, tool: str, arguments: dict[str, object]) -> Outcome | None:
+        if self.registry.get(tool) is None or len(self.steps) >= self.limits.max_steps:
+            return None
+        action = self.engine.prepare(tool, arguments, Mode.EXECUTE)
+        if isinstance(action, Outcome):
+            self._record(Step(tool, action))
+            return action
+        # Re-observation is not permission to execute a tightened or changed capability.
+        if action.risk is not Risk.SAFE:
+            self.engine.cancel(action)
+            return None
+        self.active = action
+        outcome = await self.engine.execute(action)
+        self.active = None
+        self._record(Step(tool, outcome, action.payload))
+        return outcome
+
+    async def _yield_boundary(self, mode: Mode) -> bool:
+        if mode is not Mode.EXECUTE:
+            return False
+        self.takeover.sample()
+        if not self.takeover.pending:
+            return False
+        if self.active is not None:
+            self.engine.cancel(self.active)
+            self.active = None
+        self.notify("cursor_state", "yielding")
+        while True:
+            while not self.takeover.quiet:
+                if self.cancelled.is_set():
+                    raise asyncio.CancelledError
+                await asyncio.sleep(0.025)
+                self.takeover.sample()
+            old_browser = next(
+                (
+                    json.loads(step.payload).get("target", {}).get("tab_id")
+                    for step in reversed(self.steps)
+                    if step.tool.startswith("browser.")
+                    and step.payload
+                    and json.loads(step.payload).get("target", {}).get("tab_id")
+                ),
+                None,
+            )
+            self._observation_floor = len(self.steps)
+            self._screenshot_b64 = None
+            self.takeover.acknowledge()
+            await self._fresh_read("windows.inspect_active_window", {})
+            tabs = await self._fresh_read("browser.get_tabs", {}) if old_browser else None
+            if tabs is not None and tabs.status is Status.SUCCESS:
+                current = BrowserResult.model_validate_json(tabs.result_json or "{}")
+                for target in current.tabs:
+                    if target.tab_id == old_browser:
+                        await self._fresh_read("browser.read", {"target": target.model_dump()})
+                        break
+            self.notify("observations_refreshed", self._observation_floor)
+            self.takeover.sample()
+            if not bool(self.takeover.pending):
+                self.notify("cursor_state", "idle")
+                return True
 
     def _record(self, step: Step) -> None:
         self._screenshot_b64 = None
@@ -184,10 +256,18 @@ class Runner:
             # rather than honoured quietly (`AGENTS.md`, planner boundary).
             return PlanResult("error", error="journal_required")
         self._used = True
+        if mode is Mode.EXECUTE:
+            try:
+                self.takeover.start()
+            except OSError:
+                self.takeover.stop()
+                return PlanResult("error", tuple(self.steps), "input_monitor_unavailable")
         job = asyncio.create_task(self._run(command, mode))
 
         async def watch() -> None:
             while not self.cancelled.is_set():
+                if mode is Mode.EXECUTE and self.takeover.sample():
+                    self.notify("cursor_state", "yielding")
                 await asyncio.sleep(0.01)
 
         watcher = asyncio.create_task(watch())
@@ -219,6 +299,10 @@ class Runner:
         except Exception:
             return self._settle(PlanResult("error", tuple(self.steps), "planner_failed"))
         finally:
+            self.takeover.stop()
+            self.notify("cursor_state", "idle")
+            watcher.cancel()
+            await asyncio.gather(watcher, return_exceptions=True)
             if self.active is not None:
                 self.engine.cancel(self.active)
                 self.active = None
@@ -305,6 +389,7 @@ class Runner:
         while True:
             if self.cancelled.is_set():
                 raise asyncio.CancelledError
+            await self._yield_boundary(mode)
             if self.calls >= self.limits.budget.max_calls:
                 # The ceiling stops the task with what it has, rather than spending past
                 # what the owner agreed to and reporting it afterwards.
@@ -317,7 +402,7 @@ class Runner:
                     PlannerInput(
                         command,
                         tuple(answers),
-                        tuple(self.steps),
+                        self._planner_steps(),
                         mode,
                         catalog,
                         self.memory,
@@ -330,6 +415,8 @@ class Runner:
                     )
                 )
             proposal = Proposal.model_validate(raw, strict=True)
+            if await self._yield_boundary(mode):
+                continue  # Discard a proposal calculated against the previous UI.
             if self.cancelled.is_set():
                 raise asyncio.CancelledError
             if proposal.kind == "finish":
@@ -564,6 +651,8 @@ class Runner:
                 self._mark("running")
             if self.cancelled.is_set():
                 raise asyncio.CancelledError
+            if await self._yield_boundary(mode):
+                continue  # Cancels the prepared action and its single-use approval.
             if journal is not None:
                 try:
                     # Written before the call: a timeout must not look like an untouched world.
@@ -622,7 +711,7 @@ class Runner:
         return Reason.TARGET_NOT_OBSERVED
 
     def _focus_observation(self, selector: FocusApp) -> WindowTarget | None:
-        for step in reversed(self.steps):
+        for step in reversed(self.steps[self._observation_floor :]):
             if step.outcome.status is not Status.SUCCESS or not step.tool.startswith("windows."):
                 continue
             metadata = json.loads(step.outcome.result_json or "{}")
@@ -665,7 +754,7 @@ class Runner:
             "windows.type_text",
             "windows.send_hotkey",
         }
-        for step in reversed(self.steps):
+        for step in reversed(self.steps[self._observation_floor :]):
             # Even an uncertain/failed effect invalidates older UIA grounding.
             if step.tool in mutations:
                 return None
@@ -777,7 +866,7 @@ class Runner:
             return self._focus_observation(FocusApp.model_validate_json(action.payload)) is not None
         if "target" not in args or not action.tool.startswith(("browser.", "windows.")):
             return True
-        for step in reversed(self.steps):
+        for step in reversed(self.steps[self._observation_floor :]):
             if step.outcome.status is not Status.SUCCESS or not step.tool.startswith(
                 action.tool.split(".")[0] + "."
             ):
@@ -836,7 +925,7 @@ class Runner:
             "browser.press_key",
             "browser.trigger_1password_autofill",
         }
-        for step in reversed(self.steps):
+        for step in reversed(self.steps[self._observation_floor :]):
             if not step.tool.startswith("browser."):
                 continue
             result = BrowserResult.model_validate_json(step.outcome.result_json or "{}")

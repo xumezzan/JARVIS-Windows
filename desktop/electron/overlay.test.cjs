@@ -26,6 +26,7 @@ class Window extends EventEmitter {
 }
 function setup(shortcuts = true) {
   const screen = new EventEmitter();
+  screen.screenToDipRect = (_window, rect) => rect;
   screen.getDisplayMatching = () => ({ workArea: {x: -1920, y: 0, width: 1920, height: 1080}, bounds: {x: -1920, y: 0, width: 1920, height: 1080} });
   const handlers = new Map();
   const ipcMain = new EventEmitter();
@@ -34,7 +35,7 @@ function setup(shortcuts = true) {
   const globalShortcut = { register: (key, callback) => { keys.set(key, callback); return shortcuts; } };
   const main = new Window(); main.visible = true;
   const overlay = new Overlay({ BrowserWindow: Window, screen, ipcMain, globalShortcut }, main, 'file:///index.html');
-  return { overlay, main, keys, handlers };
+  return { overlay, main, keys, handlers, ipcMain, screen };
 }
 const working = (id = 'one') => ({ task: { id, state: 'working', mode: 'execute', phase: 'executing', steps: [], command: 'Check system' }, prompt: null });
 test('task/prompt/error transitions preserve an interactive escape route', async () => {
@@ -64,6 +65,65 @@ test('task/prompt/error transitions preserve an interactive escape route', async
   overlay.update(null);
   overlay.dispose();
   assert.doesNotThrow(() => overlay.update(working()));
+});
+
+test('ghost covers the desktop, paints exact target, yields and disappears at idle', async () => {
+  const {overlay, ipcMain, screen} = setup();
+  screen.getAllDisplays = () => [
+    {bounds: {x: -1920, y: 0, width: 1920, height: 1080}},
+    {bounds: {x: 0, y: 0, width: 1536, height: 1024}},
+  ];
+  await overlay.ready;
+  overlay.update(working());
+  assert.deepEqual(overlay.target.ignore, [true, {forward: true}]);
+  assert.equal(overlay.target.options.focusable, false);
+  assert.equal(overlay.target.options.transparent, true);
+  assert.equal(overlay.target.options.webPreferences.sandbox, true);
+  let rendered;
+  overlay.target.webContents.send = (channel, value) => {
+    if (channel !== 'jarvis-overlay:cursor' || !value) return;
+    rendered = value;
+    if (value.cursor_state === 'moving') {
+      // A workbench renderer cannot forge the display-only paint receipt.
+      ipcMain.emit('jarvis-overlay:painted', {sender: overlay.main.webContents,
+        senderFrame: overlay.main.webContents.mainFrame}, value.id);
+      assert.equal(overlay.pendingPaint.id, value.id);
+      ipcMain.emit('jarvis-overlay:painted', {sender: overlay.target.webContents,
+        senderFrame: overlay.target.webContents.mainFrame}, value.id);
+    }
+  };
+  await overlay.highlight({id: 'ghost-one', action: 'click', label: 'Отправить',
+    rectangle: {left: -1800, top: 200, right: -1600, bottom: 240}});
+  assert.deepEqual(overlay.target.bounds, {x: -1920, y: 0, width: 3456, height: 1080});
+  assert.equal(rendered.target_x, 220);
+  assert.equal(rendered.target_y, 220);
+  assert.deepEqual(rendered.bounding_box, {left: 120, top: 200, width: 200, height: 40});
+  overlay.cursorState('yielding');
+  assert.equal(rendered.cursor_state, 'yielding');
+  assert.equal(overlay.target.visible, true);
+  overlay.update({task: {state: 'finished', steps: []}});
+  assert.equal(overlay.target.visible, false);
+  assert.equal(overlay.ghost, null);
+  overlay.dispose();
+});
+
+test('ghost transforms native pixels into Electron DIP and refuses invalid targets', async () => {
+  const {overlay, ipcMain, screen} = setup();
+  screen.screenToDipRect = (_window, r) => ({x: r.x/2, y: r.y/2,
+    width: r.width/2, height: r.height/2});
+  screen.getDisplayMatching = () => ({bounds: {x: 0, y: 0, width: 1920, height: 1080},
+    workArea: {x: 0, y: 0, width: 1920, height: 1080}});
+  await overlay.ready;
+  overlay.update(working());
+  overlay.target.webContents.send = (_channel, value) => {
+    if (value) ipcMain.emit('jarvis-overlay:painted', {sender: overlay.target.webContents,
+      senderFrame: overlay.target.webContents.mainFrame}, value.id);
+  };
+  await overlay.highlight({id: 'dpi', rectangle: {left: 200, top: 400, right: 400, bottom: 600}});
+  assert.equal(overlay.ghost.target_x, 150);
+  assert.equal(overlay.ghost.target_y, 250);
+  await assert.rejects(overlay.highlight({id: 'bad', rectangle: {left: 1, top: 1, right: -1, bottom: 5}}));
+  overlay.dispose();
 });
 test('unregistered global escape keys keep the workbench reachable', async () => {
   const {overlay, main} = setup(false);

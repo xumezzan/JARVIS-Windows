@@ -429,6 +429,13 @@ try {
         throw 'Application setup was cancelled. Rerun to continue; user data is preserved.'
     }
     if ($LASTEXITCODE -ne 0) { throw 'Application setup did not pass. Resolve the reported step and rerun this script.' }
+    # The slot's real Electron startup must include the click-through Ghost surface
+    # before the stable desktop shortcut is refreshed. The installer already binds
+    # startup.json to the launched process; this is an additional feature check.
+    $startup = Get-Content -LiteralPath (Join-Path $jarvisRoot 'startup.json') -Raw | ConvertFrom-Json
+    if (-not ($startup.PSObject.Properties.Name -contains 'ghost_cursor') -or $startup.ghost_cursor -ne $true) {
+        throw 'The installed slot did not initialize Ghost Cursor. Rebuild desktop assets and reinstall.'
+    }
     Set-BootstrapPhase 'application_setup' 'passed'
     Set-BootstrapPhase 'launcher_shortcut' 'running'
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Launch-Jarvis.pyw') -Destination $jarvisRoot -Force
@@ -451,7 +458,7 @@ try {
         $shortcut.TargetPath = $target
         $shortcut.Arguments = $arguments
         $shortcut.WorkingDirectory = $jarvisRoot
-        $shortcut.Description = 'Jarvis - local assistant'
+        $shortcut.Description = 'Jarvis - local assistant with Ghost Cursor'
         $shortcut.IconLocation = $icon
         $shortcut.Save()
     }

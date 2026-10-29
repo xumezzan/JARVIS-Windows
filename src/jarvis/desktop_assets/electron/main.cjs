@@ -24,6 +24,7 @@ async function writeStartupReport(state) {
   await fs.writeFile(temporary, JSON.stringify({
     pid: process.pid, ppid: process.ppid, platform: "windows", visible: true,
     surface: "electron", backend_ready: true,
+    ghost_cursor: !!overlay && !overlay.target.isDestroyed(),
   }), { flag: "wx" });
   await fs.rename(temporary, startupReport);
 }
@@ -393,6 +394,10 @@ async function createWindow() {
             clipboard_text: runtime.state.settings?.watch_clipboard ? text : "",
           });
       })().catch(() => {});
+      return;
+    }
+    if (message.event === "cursor_state") {
+      overlay.cursorState(message.cursor_state);
       return;
     }
     if (message.event === "target") {

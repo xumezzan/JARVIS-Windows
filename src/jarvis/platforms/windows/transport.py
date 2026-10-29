@@ -7,13 +7,13 @@ from contextlib import suppress
 from typing import Literal
 
 from jarvis.observability.diagnostics import Reason
+from jarvis.platforms.windows.ghost import CursorTarget
 from jarvis.tools.base import ExecutionContext, ToolError, ToolModel
 from jarvis.tools.windows import MAX_REPLY_BYTES, NativeRequest, Rectangle, WindowsResult
 
 
-class TargetPreview(ToolModel):
+class TargetPreview(CursorTarget):
     event: Literal["target"]
-    rectangle: Rectangle
 
 
 class NativeReply(ToolModel):
@@ -44,11 +44,13 @@ class ProcessBackend:
         timeout_seconds: float = 8.0,
         *,
         before_click: Callable[[Rectangle], Awaitable[None]] | None = None,
+        before_action: Callable[[CursorTarget], Awaitable[None]] | None = None,
     ) -> None:
         if not 0 < timeout_seconds <= 10:
             raise ValueError("Invalid native timeout.")
         self.timeout_seconds = timeout_seconds
         self.before_click = before_click
+        self.before_action = before_action
 
     async def call(self, request: NativeRequest, context: ExecutionContext) -> WindowsResult:
         if not is_windows():
@@ -57,7 +59,12 @@ class ProcessBackend:
         return await self._exchange(request, context)
 
     async def _exchange(self, request: NativeRequest, context: ExecutionContext) -> WindowsResult:
-        preview = self.before_click is not None and request.operation == "click"
+        preview = (
+            self.before_action is not None
+            and request.operation in {"click", "type"}
+            or self.before_click is not None
+            and request.operation == "click"
+        )
         previewed = False
         # Shield creation so cancellation cannot orphan a process during startup.
         launch = asyncio.create_task(
@@ -99,11 +106,28 @@ class ProcessBackend:
                             right=request.x + 12,
                             bottom=request.y + 12,
                         )
+                    elif request.operation == "type":
+                        expected = target.rectangle
                     else:
                         raise ToolError("native_failure")
-                    if target.rectangle != expected or self.before_click is None:
+                    if target.rectangle != expected or (
+                        target.window_handle
+                        and (
+                            request.target is None or target.window_handle != request.target.handle
+                        )
+                    ):
                         raise ToolError("target_changed")
-                    await self.before_click(target.rectangle)
+                    if self.before_action is not None:
+                        await self.before_action(
+                            CursorTarget(
+                                rectangle=target.rectangle,
+                                action="type" if request.operation == "type" else "click",
+                                label=target.label,
+                                window_handle=request.target.handle if request.target else 0,
+                            )
+                        )
+                    elif self.before_click is not None:
+                        await self.before_click(target.rectangle)
                     previewed = True
                     await context.checkpoint()
                     process.stdin.write(b"presented\n")

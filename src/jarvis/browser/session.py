@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import sys
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -13,6 +14,7 @@ from playwright.async_api import (
     Browser,
     BrowserContext,
     ElementHandle,
+    FloatRect,
     JSHandle,
     Page,
     Playwright,
@@ -23,6 +25,7 @@ from playwright.async_api import (
 from jarvis.browser.inspection import INSPECT, LIVE_SELECTOR, SAFE_ELEMENT, STRICT_SELECTOR
 from jarvis.browser.live import LiveNetworkGuard
 from jarvis.browser.network import fetch
+from jarvis.platforms.windows.ghost import CursorTarget
 from jarvis.security.browser_policy import (
     BrowserMode,
     NetworkPolicy,
@@ -50,11 +53,30 @@ from jarvis.tools.browser import (
     TypeElement,
     browser_schemas,
 )
+from jarvis.tools.windows import Rectangle
 from jarvis.workspace.models import WorkspaceProfile
 
 
 def digest(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def screen_rectangle(
+    bounds: FloatRect,
+    viewport: Rectangle,
+    width: float,
+    height: float,
+) -> Rectangle:
+    """CSS viewport pixels -> physical screen pixels, including browser zoom."""
+    if width <= 0 or height <= 0 or bounds["width"] <= 0 or bounds["height"] <= 0:
+        raise ToolError("page_changed")
+    sx, sy = (viewport.right - viewport.left) / width, (viewport.bottom - viewport.top) / height
+    return Rectangle(
+        left=round(viewport.left + bounds["x"] * sx),
+        top=round(viewport.top + bounds["y"] * sy),
+        right=round(viewport.left + (bounds["x"] + bounds["width"]) * sx),
+        bottom=round(viewport.top + (bounds["y"] + bounds["height"]) * sy),
+    )
 
 
 @dataclass
@@ -67,6 +89,8 @@ class Grant:
 
 
 class BrowserSession:
+    before_action: Callable[[CursorTarget], Awaitable[None]] | None = None
+
     def __init__(
         self,
         policy: NetworkPolicy,
@@ -471,6 +495,9 @@ class BrowserSession:
 
     async def highlight_click(self, args: ClickElement) -> None:
         """Use viewport coordinates inside the browser, avoiding guessed browser chrome/DPI."""
+        if self.before_action is not None:
+            await self.ghost_element(args)
+            return
         if self.headless:
             return
         page = self.pages[args.target.tab_id]
@@ -513,6 +540,69 @@ class BrowserSession:
                 raise ToolError("page_changed")
         finally:
             await locator.dispose()
+
+    async def viewport_target(self, page: Page) -> tuple[Rectangle, int, float, float]:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-I",
+            "-m",
+            "jarvis.platforms.windows.ghost",
+            "--viewport",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            creationflags=0x08000000 if sys.platform == "win32" else 0,
+            limit=8192,
+        )
+        try:
+            async with asyncio.timeout(2):
+                assert process.stdout is not None
+                raw = await process.stdout.readuntil(b"\n")
+                await process.wait()
+                if process.returncode or len(raw) > 8192:
+                    raise ToolError("browser_failure")
+                import json
+
+                result = json.loads(raw)
+                rect = Rectangle.model_validate(result["rectangle"])
+                viewport = await page.evaluate("() => ({width: innerWidth, height: innerHeight})")
+                return rect, int(result["window_handle"]), viewport["width"], viewport["height"]
+        finally:
+            if process.returncode is None:
+                process.kill()
+            await process.wait()
+
+    async def ghost_element(self, args: ClickElement | TypeElement) -> None:
+        if self.headless or self.before_action is None:
+            return
+        page = self.pages[args.target.tab_id]
+        await page.bring_to_front()
+        element = await self._element(args)
+        try:
+            await element.scroll_into_view_if_needed(timeout=5000)
+            await self.check_element(args)
+            bounds = await element.bounding_box()
+            if bounds is None:
+                raise ToolError("page_changed")
+            viewport, hwnd, width, height = await self.viewport_target(page)
+            rect = screen_rectangle(bounds, viewport, width, height)
+            await self.before_action(
+                CursorTarget(
+                    rectangle=rect,
+                    window_handle=hwnd,
+                    action="click" if isinstance(args, ClickElement) else "type",
+                    label=args.element.name if args.element else "",
+                )
+            )
+            await self.check_element(args)
+            if await element.bounding_box() != bounds or (await self.viewport_target(page)) != (
+                viewport,
+                hwnd,
+                width,
+                height,
+            ):
+                raise ToolError("page_changed")
+        finally:
+            await element.dispose()
 
     async def navigate(
         self, page: Page, intent: RequestIntent, *, click: ElementTarget | None = None
@@ -709,6 +799,7 @@ class BrowserSession:
                 )
             case "type":
                 assert isinstance(args, TypeElement)
+                await self.ghost_element(args)
                 handle = await self._element(args)
                 try:
                     if not await handle.is_editable():
@@ -728,6 +819,17 @@ class BrowserSession:
                 assert isinstance(args, ScrollPage)
                 page = self.pages[args.target.tab_id]
                 await page.bring_to_front()
+                if not self.headless and self.before_action is not None:
+                    viewport, hwnd, _, _ = await self.viewport_target(page)
+                    await self.before_action(
+                        CursorTarget(
+                            rectangle=viewport,
+                            action="scroll",
+                            label="Прокрутка",
+                            window_handle=hwnd,
+                        )
+                    )
+                    await self.resolve(args.target)
                 x = (
                     args.amount * (1 if args.direction == "right" else -1)
                     if args.direction in ("left", "right")

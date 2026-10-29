@@ -14,7 +14,8 @@ export function TaskHud({ state, cancel, restore, moving }: {
         <strong>Jarvis</strong>
         <span>{task.mode === "simulation" ? "Симуляция" : "Выполнение"} · Шаг {task.steps.length + 1}</span>
         <p title={tool ? toolLabel(tool) : "Обдумываю следующий шаг"}>
-          {task.phase === "executing" && tool ? toolLabel(tool) : "Обдумываю следующий шаг"}
+          {task.phase === "yielding" ? "Пауза: жду ваших действий..."
+            : task.phase === "executing" && tool ? toolLabel(tool) : "Обдумываю следующий шаг"}
         </p>
       </div>
       <div className="task-hud-actions">
