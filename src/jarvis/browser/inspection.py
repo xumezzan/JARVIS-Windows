@@ -128,7 +128,8 @@ INSPECT = (
     const parent = node.parentElement;
     if (parent && safe(parent) && !parent.closest('script,style,noscript') &&
         parent.getClientRects().length && getComputedStyle(parent).visibility !== 'hidden') {
-      text += norm(node.textContent) + '\n';
+      const content = norm(node.textContent);
+      if (content) text += content + '\n';
     }
   }
   text = text.slice(0,12000);

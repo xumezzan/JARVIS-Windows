@@ -99,6 +99,21 @@ async def test_animation_attributes_do_not_invalidate_a_button(shop: WorkspaceHa
     assert await page.evaluate("window.cartClicks") == 1
 
 
+async def test_responsive_whitespace_does_not_change_the_page_identity(
+    shop: WorkspaceHarness,
+) -> None:
+    view = await opened(shop)
+    page = shop.session.pages[view.target.tab_id]
+    await page.evaluate("""() => {
+        const spacer = document.createElement('span');
+        spacer.id = 'layout-spacer'; spacer.textContent = '  \\n  ';
+        document.body.append(spacer);
+    }""")
+    view = await shop.session.observe(view.target.tab_id)
+    await page.locator("#layout-spacer").evaluate("el => el.style.display = 'none'")
+    assert (await shop.session.resolve(view.target)).target == view.target
+
+
 async def test_read_refreshes_changed_content_but_click_cannot_use_old_marks(
     shop: WorkspaceHarness,
 ) -> None:

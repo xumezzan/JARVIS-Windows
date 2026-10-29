@@ -10,6 +10,9 @@ executor. Strict Sandbox retains its existing isolated, non-JavaScript behavior.
 - CSS classes and inline styles do not contribute to Live element fingerprints.
   Names, links, form attributes, values, selection, visible text and focus still do.
   Replaced, renamed or retargeted controls still invalidate the action.
+- Whitespace-only text nodes do not contribute visible text. Responsive layout changes
+  on apple.com otherwise changed the snapshot during the click preview without changing
+  any actual content or control.
 - Reading a known Live document can refresh changed contents. It cannot follow a
   different document, URL or origin using the old target. Mutations still require the
   exact latest page snapshot and observed node.
@@ -30,10 +33,20 @@ Accounts, credentials, bot checks, unavailable variants and unsupported page str
 remain external limits. Public-site shopping has not been established merely by the
 local fixtures; a cart addition never authorizes checkout/payment.
 
-Validation on Windows, 2026-10-29: all eight new real-Chromium regression cases passed
+Validation on Windows, 2026-10-29: all ten new real-Chromium regression cases passed
 in both Live and Workspace modes. They cover colour/capacity selection, checkbox and
 native option selection, delayed cart confirmation, CSS animation changes, stale marks,
-document changes, and Runner recovery with exactly one actual cart click.
+document changes, responsive whitespace, and Runner recovery with exactly one actual
+cart click. The combined browser/Ghost Cursor/recovery selection passed all 75 tests.
+The real public Apple site passed open/read/click navigation to `/iphone/` using the
+fixed backend. No real cart addition or checkout was performed in this acceptance check.
+
+The full main-based suite returned 1,951 passed, 14 skipped and one Qt test failure
+(`test_theme_and_motion_controls_preserve_task`, unclosed asyncio subprocess pipes).
+The same isolated failure reproduced on unmodified `origin/main` (`f4b6845`), so the
+full-suite gate is not green. Lint, format, mypy, dependency checks, GUI smoke and the
+isolated sdist/wheel build passed locally. GitHub CI was not run: publishing the branch
+requires the owner's separate authorization in this session.
 
 ```powershell
 python -m pytest -q tests/integration/test_browser_shopping.py

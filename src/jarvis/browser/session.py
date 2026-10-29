@@ -551,7 +551,7 @@ class BrowserSession:
         finally:
             await locator.dispose()
 
-    async def _visual_element(self, args: ClickElement) -> ElementHandle:
+    async def _visual_element(self, args: ClickElement | TypeElement) -> ElementHandle:
         element = await self._element(args)
         if not await element.evaluate("el => el.tagName === 'OPTION'"):
             return element
