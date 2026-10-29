@@ -1,0 +1,40 @@
+html.ghost-surface, .ghost-surface body, .ghost-surface #root {
+  margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent !important;
+  pointer-events: none;
+}
+.ghost-layer { --ghost-color: #56e5ff; position: fixed; inset: 0; pointer-events: none; }
+.ghost-cursor {
+  position: absolute; left: 0; top: 0; display: flex; align-items: flex-start; gap: 8px;
+  transition: transform 280ms cubic-bezier(.22,.8,.25,1), opacity 200ms;
+  will-change: transform;
+  max-width: 300px;
+}
+.ghost-glyph {
+  width: 30px; height: 38px; flex-shrink: 0; overflow: visible;
+  fill: #123b4bcc; stroke: var(--ghost-color); stroke-width: 1.8;
+  filter: drop-shadow(0 0 5px var(--ghost-color));
+}
+.ghost-core { fill: var(--ghost-color); stroke: none; }
+.ghost-badge {
+  display: grid; gap: 4px; margin-top: 17px; padding: 8px 12px; border-radius: 11px;
+  color: #e9fbff; background: #0c2235e8; border: 1px solid #56e5ff66;
+  font: 12px/1.35 Inter Variable, system-ui, sans-serif; overflow-wrap: anywhere;
+  box-shadow: 0 4px 22px #0005; backdrop-filter: blur(12px);
+}
+.ghost-brand { color: var(--ghost-color); font-size: 9px; font-weight: 700; letter-spacing: .16em; }
+.ghost-badge small { font-size: 10px; color: #ffe0a9; }
+.ghost-box {
+  position: absolute; border: 1.5px solid #56e5ff99; border-radius: 6px; box-sizing: border-box;
+  background: #56e5ff0a; box-shadow: 0 0 12px #56e5ff55, inset 0 0 12px #56e5ff33;
+}
+.ghost-box.is-acting { animation: ghost-target-pulse 420ms ease-out; }
+.ghost-ripple {
+  position: absolute; width: 16px; height: 16px; margin: -8px; border-radius: 50%;
+  border: 2px solid var(--ghost-color); box-sizing: border-box;
+  box-shadow: 0 0 15px var(--ghost-color); animation: ghost-ripple 650ms ease-out both;
+}
+.is-yielding { --ghost-color: #ffc56b; }
+.is-yielding .ghost-cursor { opacity: .55; }
+.is-yielding .ghost-badge { border-color: #ffc56b88; background: #382718eb; }
+@keyframes ghost-ripple { to { transform: scale(5); opacity: 0; } }
+@keyframes ghost-target-pulse { 50% { background: #56e5ff33; box-shadow: 0 0 22px #56e5ff99; } }

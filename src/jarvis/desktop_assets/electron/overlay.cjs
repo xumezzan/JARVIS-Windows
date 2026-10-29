@@ -44,7 +44,7 @@ class Overlay {
     });
     this.ready = Promise.all([
       this.hud.loadURL(`${url}#hud`),
-      this.target.loadFile(path.join(__dirname, "target.html")),
+      this.target.loadURL(`${url}#ghost`),
     ]);
     // Hiding the workbench is safe only when both escape routes are registered.
     const restore = globalShortcut.register("CommandOrControl+Alt+J", () => this.restore(true));
@@ -107,7 +107,7 @@ class Overlay {
         this.hud.showInactive();
       } else this.hud.hide();
     }
-    if (!executing || state?.prompt || state?.cloud_review) this.target.hide();
+    if (!executing || state?.prompt || state?.cloud_review) this.cursorState("idle");
     if (!this.hud.isDestroyed()) this.hud.webContents.send("jarvis-overlay:state", this.presentation());
   }
   restore(focus = false) {
@@ -132,12 +132,28 @@ class Overlay {
     const { left, top, right, bottom } = message.rectangle;
     const physical = { x: left, y: top, width: right - left, height: bottom - top };
     const rect = process.platform === "win32" ? this.screen.screenToDipRect(null, physical) : physical;
-    const display = this.screen.getDisplayMatching(rect).bounds;
+    if (![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite) ||
+        rect.width <= 0 || rect.height <= 0) throw new Error("target_invalid");
+    const displays = this.screen.getAllDisplays?.().map(d => d.bounds) ||
+      [this.screen.getDisplayMatching(rect).bounds];
+    const display = {
+      x: Math.min(...displays.map(d => d.x)), y: Math.min(...displays.map(d => d.y)),
+    };
+    display.width = Math.max(...displays.map(d => d.x + d.width)) - display.x;
+    display.height = Math.max(...displays.map(d => d.y + d.height)) - display.y;
     const x = Math.max(rect.x, display.x), y = Math.max(rect.y, display.y);
     const rightEdge = Math.min(rect.x + rect.width, display.x + display.width);
     const bottomEdge = Math.min(rect.y + rect.height, display.y + display.height);
     if (rightEdge <= x || bottomEdge <= y) throw new Error("target_offscreen");
-    this.target.setBounds({ x, y, width: rightEdge - x, height: bottomEdge - y });
+    this.target.setBounds(display);
+    this.ghost = {
+      id: message.id, cursor_state: "moving", action: message.action || "click",
+      label: String(message.label || "").slice(0, 160),
+      target_x: rect.x + rect.width / 2 - display.x,
+      target_y: rect.y + rect.height / 2 - display.y,
+      bounding_box: {left: x - display.x, top: y - display.y,
+        width: rightEdge - x, height: bottomEdge - y},
+    };
     this.target.showInactive();
     let timer;
     try {
@@ -145,9 +161,8 @@ class Overlay {
         Object.assign(paint, { resolve, reject });
         this.pendingPaint = paint;
         timer = setTimeout(() => reject(new Error("target_paint_timeout")), 1500);
-        this.target.webContents.send("jarvis-overlay:target", message.id);
+        this.target.webContents.send("jarvis-overlay:cursor", this.ghost);
       });
-      await new Promise((resolve) => setTimeout(resolve, 300));
       if (this.disposed || this.state?.task?.id !== taskId ||
           this.state?.task?.state !== "working" || this.state?.prompt || this.state?.cloud_review)
         throw new Error("target_cancelled");
@@ -155,9 +170,17 @@ class Overlay {
       clearTimeout(timer);
       if (this.pendingPaint === paint) {
         this.pendingPaint = null;
-        if (!this.target.isDestroyed()) this.target.hide();
       }
     }
+  }
+  cursorState(cursor_state) {
+    if (this.disposed || this.target.isDestroyed()) return;
+    if (cursor_state === "idle") {
+      this.ghost = null;
+      this.target.hide();
+    } else if (!this.ghost || this.state?.task?.state !== "working") return;
+    else this.ghost = {...this.ghost, cursor_state};
+    this.target.webContents.send("jarvis-overlay:cursor", this.ghost);
   }
   dispose() {
     this.disposed = true;

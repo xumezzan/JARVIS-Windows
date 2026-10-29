@@ -2,12 +2,14 @@
 
 import json
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from tests.integration.test_desktop_service import request
 
 from jarvis.browser.host import BrowserHost
 from jarvis.config import AppConfig, load_config
+from jarvis.desktop.protocol import Request
 from jarvis.desktop.service import DesktopService
 from jarvis.desktop.settings import UiSettings, UiSettingsStore
 from jarvis.permissions.policies import Mode
@@ -16,6 +18,16 @@ from jarvis.security.browser_policy import BrowserMode
 from jarvis.tools.base import ExecutionContext
 from jarvis.tools.browser import BrowserCommand, BrowserResult
 from jarvis.workspace.store import WorkspaceFailure
+
+
+@pytest.mark.parametrize("mode", ["strict", "strict_sandbox", "invalid"])
+def test_managed_browser_mode_cannot_be_invalid_or_attached_to_another_operation(mode: str) -> None:
+    with pytest.raises(ValueError):
+        Request.model_validate(
+            {"id": uuid4(), "operation": "workspace_browser", "browser_mode": mode}
+        )
+    with pytest.raises(ValueError):
+        Request(id=uuid4(), operation="status", browser_mode="live")
 
 
 @pytest.mark.asyncio
@@ -66,9 +78,11 @@ def test_ui_settings_are_bounded_and_do_not_accept_authority(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["authenticated_workspace", "live"])
 async def test_browser_switch_rebuilds_catalog_and_preserves_authority(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    mode: str,
 ) -> None:
     service = DesktopService(AppConfig(tmp_path), lambda event: None)
     old_engine = service.engine
@@ -93,16 +107,25 @@ async def test_browser_switch_rebuilds_catalog_and_preserves_authority(
     )
     try:
         authority = service._authority
-        await service.handle(request("workspace_browser"))
+        await service.handle(request("workspace_browser", browser_mode=mode))
         assert service.workspace_browser["state"] == "connected"
         assert service.engine is not old_engine and service._authority is authority
-        assert (
-            service.host.cdp_endpoint == ENDPOINT
-            and service.config.browser_mode is BrowserMode.WORKSPACE
-        )
+        assert service.host.cdp_endpoint == ENDPOINT and service.config.browser_mode.value == mode
         assert "browser.open_workspace_app" in {row["name"] for row in service.registry.discover()}
         stored = UiSettingsStore(tmp_path).load()
-        assert stored.managed_browser and stored.browser_mode == "authenticated_workspace"
+        assert stored.managed_browser and stored.browser_mode == mode
+        restored = load_config({"JARVIS_DATA_DIR": str(tmp_path)})
+        assert restored.browser_mode.value == mode
+        if mode == "live":
+            assert (
+                service.host.policy.validate("https://www.apple.com/") == "https://www.apple.com/"
+            )
+            from jarvis.tools.base import ToolError
+
+            with pytest.raises(ToolError, match="network_denied"):
+                service.host.policy.validate("https://1password.com/")
+            with pytest.raises(ToolError, match="network_denied"):
+                service.host.policy.validate("http://127.0.0.1/")
         assert service.prompt is None and service.started_count == 0
         assert "browser.get_tabs" in " ".join(service.audit.recent())
         config = load_config({"JARVIS_DATA_DIR": str(tmp_path), "JARVIS_BROWSER_MODE": "strict"})

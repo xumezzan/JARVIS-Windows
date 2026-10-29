@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { JarvisOrb } from "./components/JarvisOrb";
 import { CompactHud } from "./components/CompactHud";
+import { GhostCursor } from "./components/GhostCursor";
 import { TaskHud } from "./components/TaskHud";
 import { WorkspacePanel } from "./components/WorkspacePanel";
 import { CloudConsentCard } from "./components/CloudConsentCard";
@@ -967,6 +968,6 @@ function formatResult(value: string) {
 }
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    {window.jarvisOverlay ? <CompactHud /> : <App />}
+    {location.hash === "#ghost" ? <GhostCursor /> : window.jarvisOverlay ? <CompactHud /> : <App />}
   </React.StrictMode>,
 );

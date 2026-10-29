@@ -29,7 +29,7 @@ contextBridge.exposeInMainWorld("jarvis", {
   open: (panel) => ipcRenderer.invoke("jarvis-app:open", panel),
   configure: (settings) => ipcRenderer.invoke("jarvis-app:configure", settings),
   workspace: (command) => ipcRenderer.invoke("jarvis-app:workspace", command),
-  workspaceBrowser: () => ipcRenderer.invoke("jarvis-app:workspace-browser"),
+  workspaceBrowser: (mode = "authenticated_workspace") => ipcRenderer.invoke("jarvis-app:workspace-browser", mode),
   answer: (id, answer) => ipcRenderer.invoke("jarvis-app:answer", id, answer),
   memory: (edit) => ipcRenderer.invoke("jarvis-app:memory", edit),
   mail: (command, mode) => ipcRenderer.invoke("jarvis-app:mail", command, mode),

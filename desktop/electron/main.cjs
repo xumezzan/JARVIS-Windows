@@ -24,6 +24,7 @@ async function writeStartupReport(state) {
   await fs.writeFile(temporary, JSON.stringify({
     pid: process.pid, ppid: process.ppid, platform: "windows", visible: true,
     surface: "electron", backend_ready: true,
+    ghost_cursor: !!overlay && !overlay.target.isDestroyed(),
   }), { flag: "wx" });
   await fs.rename(temporary, startupReport);
 }
@@ -130,9 +131,12 @@ ipcMain.handle("jarvis-app:run", (event, ...args) => {
 ipcMain.handle("jarvis-app:cancel", (event, ...args) =>
   protectedRequest(event, args, 0, "cancel"),
 );
-ipcMain.handle("jarvis-app:workspace-browser", (event, ...args) =>
-  protectedRequest(event, args, 0, "workspace_browser"),
-);
+ipcMain.handle("jarvis-app:workspace-browser", (event, ...args) => {
+  verifiedWindow(event, args, 1);
+  const mode = args[0];
+  if (!["live", "authenticated_workspace"].includes(mode)) throw new Error("invalid_browser_mode");
+  return protectedRequest(event, args, 1, "workspace_browser", {browser_mode: mode});
+});
 ipcMain.handle("jarvis-app:open", (event, ...args) => {
   verifiedWindow(event, args, 1);
   const panel = args[0];
@@ -393,6 +397,10 @@ async function createWindow() {
             clipboard_text: runtime.state.settings?.watch_clipboard ? text : "",
           });
       })().catch(() => {});
+      return;
+    }
+    if (message.event === "cursor_state") {
+      overlay.cursorState(message.cursor_state);
       return;
     }
     if (message.event === "target") {

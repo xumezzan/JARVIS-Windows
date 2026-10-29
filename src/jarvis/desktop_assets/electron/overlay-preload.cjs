@@ -7,8 +7,11 @@ contextBridge.exposeInMainWorld("jarvisOverlay", {
     return () => ipcRenderer.removeListener("jarvis-overlay:state", handler);
   },
 });
-ipcRenderer.on("jarvis-overlay:target", (_event, id) => {
-  requestAnimationFrame(() => requestAnimationFrame(() =>
-    ipcRenderer.send("jarvis-overlay:painted", id),
-  ));
+contextBridge.exposeInMainWorld("jarvisGhost", {
+  subscribe: (listener) => {
+    const handler = (_event, state) => listener(state);
+    ipcRenderer.on("jarvis-overlay:cursor", handler);
+    return () => ipcRenderer.removeListener("jarvis-overlay:cursor", handler);
+  },
+  painted: (id) => ipcRenderer.send("jarvis-overlay:painted", id),
 });

@@ -9,6 +9,10 @@ interface JarvisWindowControls {
   subscribeMode(listener: (mode: "normal" | "hud") => void): () => void;
 }
 interface Window {
+  jarvisGhost?: {
+    subscribe(listener: (state: import("./components/GhostCursor").GhostState | null) => void): () => void;
+    painted(id: string): void;
+  };
   jarvisOverlay?: {
     status(): Promise<import("./components/CompactHud").HudState | null>;
     subscribe(listener: (state: import("./components/CompactHud").HudState | null) => void): () => void;

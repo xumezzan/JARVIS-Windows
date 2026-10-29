@@ -20,6 +20,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Any, cast
 
 from jarvis.observability.diagnostics import Reason
+from jarvis.platforms.windows.ghost import CursorTarget
 from jarvis.tools.base import ToolError
 from jarvis.tools.windows import (
     MAX_ELEMENT_NAME,
@@ -66,6 +67,26 @@ HOTKEYS = {
     "Alt+F4": "%{F4}",
 }
 KEY_CHARACTERS = set(string.ascii_lowercase + string.digits + " ._+-")
+
+
+class _MouseInput(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("data", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("extra", ctypes.c_size_t),
+    ]
+
+
+class _InputValue(ctypes.Union):
+    _fields_ = [("mouse", _MouseInput)]
+
+
+class _Input(ctypes.Structure):
+    _fields_ = [("type", wintypes.DWORD), ("value", _InputValue)]
+
 
 # Script hosts and interpreters remain excluded. The owner's 2026-10-27 exception permits
 # cmd.exe itself from the installed catalog, with no arguments or command string.
@@ -155,6 +176,7 @@ class LaunchEntry:
 
 class NativeDesktop:
     before_click: Callable[[Rectangle], None] | None = None
+    before_action: Callable[[CursorTarget], None] | None = None
 
     def __init__(self) -> None:
         # These modules never load on macOS/Linux or in Simulation Mode.
@@ -162,6 +184,8 @@ class NativeDesktop:
         pywinauto = importlib.import_module("pywinauto")
         self.desktop = pywinauto.Desktop(backend="uia", allow_magic_lookup=False)
         self.user32 = importlib.import_module("ctypes").WinDLL("user32", use_last_error=True)
+        self.user32.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
+        self.user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
         self.user32.GetForegroundWindow.restype = wintypes.HWND
         self.user32.SetForegroundWindow.argtypes = [wintypes.HWND]
         self.user32.IsChild.argtypes = [wintypes.HWND, wintypes.HWND]
@@ -294,6 +318,8 @@ class NativeDesktop:
         wanted = normalize(app)
         alias = normalize(ALIASES.get(wanted, ""))
         found = self.windows(include_editor=False)
+        if entry.aumid:
+            return [item for item in found if entry.aumid in self.window_aumids(item)]
         for select in (
             lambda item: bool(entry.key) and item.app == entry.key,
             lambda item: normalize(item.app) in {wanted, alias} - {""},
@@ -303,6 +329,55 @@ class NativeDesktop:
             if matches:
                 return matches
         return []
+
+    def window_aumids(self, target: WindowTarget) -> set[str]:
+        """UWP frames belong to ApplicationFrameHost; their child owns the package."""
+        identities = {self.process_aumid(target.pid)} - {""}
+        pids = {target.pid}
+
+        def visit(handle: int, parameter: int) -> bool:
+            pid = wintypes.DWORD()
+            self.user32.GetWindowThreadProcessId(handle, ctypes.byref(pid))
+            if pid.value and pid.value not in pids:
+                pids.add(pid.value)
+                identity = self.process_aumid(pid.value)
+                if identity:
+                    identities.add(identity)
+            return len(pids) < 256
+
+        callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(visit)
+        self.user32.EnumChildWindows.argtypes = [wintypes.HWND, type(callback), wintypes.LPARAM]
+        self.user32.EnumChildWindows(target.handle, callback, 0)
+        return identities
+
+    @staticmethod
+    def process_aumid(pid: int) -> str:
+        """Read OS application identity; titles cannot identify a Store application."""
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel.GetApplicationUserModelId.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.UINT),
+            wintypes.LPWSTR,
+        ]
+        kernel.GetApplicationUserModelId.restype = wintypes.LONG
+        handle = kernel.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+        if not handle:
+            return ""
+        try:
+            size = wintypes.UINT()
+            if kernel.GetApplicationUserModelId(handle, ctypes.byref(size), None) != 122:
+                return ""
+            if not 1 < size.value <= 512:
+                return ""
+            value = ctypes.create_unicode_buffer(size.value)
+            if kernel.GetApplicationUserModelId(handle, ctypes.byref(size), value) != 0:
+                return ""
+            return value.value
+        finally:
+            kernel.CloseHandle(handle)
 
     @staticmethod
     def chrome_executable() -> Path:
@@ -663,12 +738,21 @@ class NativeDesktop:
                 known = {item.handle for item in self.windows(include_editor=False)}
                 opened = time.time() - 1
                 self.launch(entry)
-                deadline = time.monotonic() + 6
+                deadline = time.monotonic() + (12 if entry.aumid else 6)
                 while time.monotonic() < deadline:
+                    # Store apps can reuse an older background process. Its observed
+                    # AUMID, not its creation time or a coincidental new window, binds it.
+                    if entry.aumid:
+                        matched = self.candidates(request.app, entry, titles=False)
+                        if matched:
+                            return WindowsResult(target=self.with_editor(matched[0]))
+                        time.sleep(0.2)
+                        continue
                     fresh = [
                         item
                         for item in self.windows(include_editor=False)
-                        if item.handle not in known and item.process_started >= opened
+                        if item.handle not in known
+                        and (item.process_started >= opened or item.app == entry.key)
                     ]
                     matched = [item for item in fresh if entry.key and item.app == entry.key]
                     if matched or fresh:
@@ -713,6 +797,19 @@ class NativeDesktop:
                     raise ToolError("native_failure")
                 args = self.typing(request)
                 window, editor = self.resolve_editor(args)
+                if self.before_action is not None:
+                    bounds = self.rectangle(editor)
+                    self.before_action(
+                        CursorTarget(
+                            rectangle=bounds,
+                            action="type",
+                            label="Ввод текста...",
+                            window_handle=args.target.handle,
+                        )
+                    )
+                    window, editor = self.resolve_editor(args)
+                    if self.rectangle(editor) != bounds:
+                        raise ToolError("target_changed")
                 existing_text = self.read(editor) if not args.overwrite else ""
                 expected = existing_text + args.text
                 self.write(window, editor, args.text, args.overwrite, existing=existing_text)
@@ -1020,26 +1117,24 @@ class NativeDesktop:
                 raise ToolError("target_changed")
             control = matches[0]
             self.require_foreground(click_args.target)
+            if self.before_action is not None:
+                self.before_action(
+                    CursorTarget(
+                        rectangle=click_args.element.rectangle,
+                        label=click_args.element.name,
+                        window_handle=click_args.target.handle,
+                    )
+                )
             if self.before_click is not None:
                 self.before_click(click_args.element.rectangle)
+            if self.before_click is not None or self.before_action is not None:
                 self.require_foreground(click_args.target)
                 if (
                     self.element_snapshot(control, mark_id=click_args.element.mark_id)
                     != click_args.element
                 ):
                     raise ToolError("target_changed")
-            # Only fallback for absence of InvokePattern, never after a possibly issued invocation.
-            try:
-                invoke = control.iface_invoke
-            except importlib.import_module("pywinauto.uia_defines").NoPatternInterfaceError:
-                rect = self.rectangle(control)
-                self.check_point(
-                    click_args.target, (rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2
-                )
-                self.require_foreground(click_args.target)
-                control.click_input()
-            else:
-                invoke.Invoke()
+            self.phantom_click(window, control)
         else:
             rect = self.rectangle(window)
             if (
@@ -1051,21 +1146,114 @@ class NativeDesktop:
             ):
                 raise ToolError("target_changed")
             self.check_point(click_args.target, click_args.x, click_args.y)
-            if self.before_click is not None:
-                self.before_click(
-                    Rectangle(
-                        left=click_args.x - 12,
-                        top=click_args.y - 12,
-                        right=click_args.x + 12,
-                        bottom=click_args.y + 12,
+            bounds = Rectangle(
+                left=click_args.x - 12,
+                top=click_args.y - 12,
+                right=click_args.x + 12,
+                bottom=click_args.y + 12,
+            )
+            if self.before_action is not None:
+                self.before_action(
+                    CursorTarget(
+                        rectangle=bounds,
+                        window_handle=click_args.target.handle,
                     )
                 )
+            if self.before_click is not None:
+                self.before_click(bounds)
+            if self.before_click is not None or self.before_action is not None:
                 if self.rectangle(window) != rect:
                     raise ToolError("target_changed")
                 self.check_point(click_args.target, click_args.x, click_args.y)
             self.require_foreground(click_args.target)
-            importlib.import_module("pywinauto.mouse").click(coords=(click_args.x, click_args.y))
+            self.save_click_restore(click_args.x, click_args.y)
         return WindowsResult(target=click_args.target, performed=True)
+
+    def phantom_click(self, window: Any, control: Any) -> None:
+        missing = importlib.import_module("pywinauto.uia_defines").NoPatternInterfaceError
+        for attribute, operation in (
+            ("iface_invoke", "Invoke"),
+            ("iface_toggle", "Toggle"),
+            ("iface_selection_item", "Select"),
+        ):
+            try:
+                pattern = getattr(control, attribute)
+            except missing:
+                continue
+            # Once issued, an uncertain UIA effect must never be retried as another pattern.
+            getattr(pattern, operation)()
+            return
+        handle = self.native_handle(window, control)
+        if handle and str(control.element_info.class_name).casefold() == "button":
+            self.message(handle, 0x00F5, 0, ctypes.c_void_p())  # BM_CLICK
+            return
+        if handle:
+            point = wintypes.POINT(
+                (self.rectangle(control).left + self.rectangle(control).right) // 2,
+                (self.rectangle(control).top + self.rectangle(control).bottom) // 2,
+            )
+            self.user32.ScreenToClient.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+            if not self.user32.ScreenToClient(handle, ctypes.byref(point)):
+                raise ToolError("target_changed")
+            packed = (point.x & 0xFFFF) | ((point.y & 0xFFFF) << 16)
+            self.message(handle, 0x0201, 1, ctypes.c_void_p(packed))
+            self.message(handle, 0x0202, 0, ctypes.c_void_p(packed))
+            return
+        # A coordinate click keeps its existing explicit flag, observation and approval.
+        raise ToolError("control_unsupported")
+
+    def save_click_restore(self, x: int, y: int) -> None:
+        """Immediate, delay-free fallback, only for an explicitly approved coordinate click.
+
+        Windows scheduling cannot promise a hard <2ms deadline. Never use pywinauto's
+        click_input, which moves the mouse and adds configurable sleeps.
+        """
+        point = wintypes.POINT()
+        self.user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+        self.user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
+        self.user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(_Input), ctypes.c_int]
+        self.user32.SendInput.restype = wintypes.UINT
+        if not self.user32.GetCursorPos(ctypes.byref(point)):
+            raise ToolError("native_failure")
+        if any(self.user32.GetAsyncKeyState(key) & 0x8000 for key in (1, 2)):
+            raise ToolError("target_changed")
+        left, top = self.user32.GetSystemMetrics(76), self.user32.GetSystemMetrics(77)
+        width, height = self.user32.GetSystemMetrics(78), self.user32.GetSystemMetrics(79)
+        if width <= 1 or height <= 1:
+            raise ToolError("native_failure")
+
+        def move(px: int, py: int) -> _Input:
+            return _Input(
+                0,
+                _InputValue(
+                    mouse=_MouseInput(
+                        round((px - left) * 65535 / (width - 1)),
+                        round((py - top) * 65535 / (height - 1)),
+                        0,
+                        0x0001 | 0x8000 | 0x4000,
+                        0,
+                        0,
+                    )
+                ),
+            )
+
+        inputs = (_Input * 4)(
+            move(x, y),
+            _Input(0, _InputValue(mouse=_MouseInput(flags=0x0002))),
+            _Input(0, _InputValue(mouse=_MouseInput(flags=0x0004))),
+            move(point.x, point.y),
+        )
+        sent = 0
+        try:
+            # Windows inserts this entire sequence serially, without interleaving
+            # user input. Restore survives termination of the disposable helper.
+            sent = self.user32.SendInput(4, inputs, ctypes.sizeof(_Input))
+            if sent != 4:
+                raise ToolError("native_failure")
+        finally:
+            # A successful batch must not overwrite a newer human movement.
+            if sent != 4 and not self.user32.SetCursorPos(point.x, point.y):
+                raise ToolError("native_failure")
 
     def check_point(self, target: WindowTarget, x: int, y: int) -> None:
         self.user32.WindowFromPoint.argtypes = [wintypes.POINT]

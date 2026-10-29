@@ -166,9 +166,12 @@ class Request(ToolModel):
     workspace: WorkspaceCommand | None = None
     cloud_review: CloudReviewReply | None = None
     target_id: str = Field(default="", pattern=r"^(?:[a-f0-9]{32})?$")
+    browser_mode: Literal["live", "authenticated_workspace"] | None = None
 
     @model_validator(mode="after")
     def scoped_fields(self) -> "Request":
+        if self.operation != "workspace_browser" and self.browser_mode is not None:
+            raise ValueError("Browser mode outside browser connection.")
         if (self.operation == "clipboard_sample") != bool(self.sample_id):
             raise ValueError("Clipboard receipt outside sampling.")
         if self.operation != "clipboard_sample" and self.clipboard_text:

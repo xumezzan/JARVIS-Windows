@@ -93,6 +93,9 @@ class Runtime {
       } else if (message.event === "clipboard_poll") {
         if (!/^[a-f0-9]{32}$/.test(message.id)) return this.protocolFailure();
         this.notify(message);
+      } else if (message.event === "cursor_state") {
+        if (!["idle", "yielding"].includes(message.cursor_state)) return this.protocolFailure();
+        this.notify({event: "cursor_state", cursor_state: message.cursor_state});
       } else if (message.event === "target") {
         const rect = message.rectangle;
         if (!/^[a-f0-9]{32}$/.test(message.id) || !rect ||

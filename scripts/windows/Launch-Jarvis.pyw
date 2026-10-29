@@ -41,7 +41,16 @@ try:
     ):
         raise ValueError("Data directory must be an absolute path outside installation")
     env["PLAYWRIGHT_BROWSERS_PATH"] = str(slot / "browsers")
-    env["JARVIS_VOSK_MODEL"] = str(slot / "models" / active["model"])
+    model_path = slot / "models" / active["model"]
+    # Vosk's native Windows file APIs require an ASCII path on this profile.
+    # Reuse the existing NTFS name; verify that it names the same model directory.
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetShortPathNameW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
+    short_model = ctypes.create_unicode_buffer(32768)
+    length = kernel32.GetShortPathNameW(str(model_path), short_model, len(short_model))
+    if 0 < length < len(short_model) and Path(short_model.value).resolve() == model_path.resolve():
+        model_path = Path(short_model.value)
+    env["JARVIS_VOSK_MODEL"] = str(model_path)
     env["QT_QPA_PLATFORM"] = "windows"
     env.pop("ELECTRON_RUN_AS_NODE", None)
     executable = slot / "desktop" / "electron.exe"

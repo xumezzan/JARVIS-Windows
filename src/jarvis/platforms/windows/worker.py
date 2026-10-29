@@ -3,18 +3,19 @@
 import contextlib
 import sys
 
-from jarvis.platforms.windows.transport import NativeReply, is_windows
+from jarvis.platforms.windows.ghost import CursorTarget
+from jarvis.platforms.windows.transport import NativeReply, TargetPreview, is_windows
 from jarvis.tools.base import ToolError
-from jarvis.tools.windows import MAX_REPLY_BYTES, NativeRequest, Rectangle
+from jarvis.tools.windows import MAX_REPLY_BYTES, NativeRequest
 
 
 def main() -> None:
     output = sys.stdout.buffer
 
-    def preview(rectangle: Rectangle) -> None:
+    def preview(target: CursorTarget) -> None:
         # Parent bounds the wait and kills this helper on cancellation/disconnection.
         output.write(
-            ('{"event":"target","rectangle":' + rectangle.model_dump_json() + "}\n").encode()
+            (TargetPreview(event="target", **target.model_dump()).model_dump_json() + "\n").encode()
         )
         output.flush()
         if sys.stdin.buffer.readline(32) != b"presented\n":
@@ -32,8 +33,8 @@ def main() -> None:
             from jarvis.platforms.windows.native import NativeDesktop
 
             desktop = NativeDesktop()
-            if sys.argv[1:] == ["--visual-target"] and request.operation == "click":
-                desktop.before_click = preview
+            if sys.argv[1:] == ["--visual-target"] and request.operation in {"click", "type"}:
+                desktop.before_action = preview
             reply = NativeReply(result=desktop.dispatch(request))
     except ToolError as error:
         reply = NativeReply.model_validate({"error": error.code, "reason": error.reason})

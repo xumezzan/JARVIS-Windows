@@ -146,7 +146,8 @@ export function WorkspacePanel({ state, active, apply }: {
               <button type="button" className="outline-button" disabled={dirty} onClick={async () => {
                 setPending(true); setError("");
                 try {
-                  const next = await window.jarvis!.workspaceBrowser(); apply(next);
+                  const next = await window.jarvis!.workspaceBrowser(draft.browser_mode === "live"
+                    ? "live" : "authenticated_workspace"); apply(next);
                   if (next.workspace) { setSaved(next.workspace); setDraft(structuredClone(next.workspace.profile)); }
                 }
                 catch (error) { setError(readableError(error)); }
@@ -163,6 +164,7 @@ export function WorkspacePanel({ state, active, apply }: {
               <select value={draft.browser_mode} onChange={(e) => setDraft({ ...draft,
                 browser_mode: e.target.value as WorkspaceProfile["browser_mode"] })}>
                 <option value="strict_sandbox">Strict Sandbox</option>
+                <option value="live">Live/CDP — обычные HTTPS-сайты</option>
                 <option value="authenticated_workspace">Authenticated Workspace (Live/CDP)</option>
               </select>
             </label>

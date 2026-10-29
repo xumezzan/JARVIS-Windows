@@ -2,6 +2,7 @@
 
 import asyncio
 import concurrent.futures
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from threading import Event, Lock, Thread
 from typing import TYPE_CHECKING, cast
@@ -9,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from jarvis.browser.session import BrowserSession
+from jarvis.platforms.windows.ghost import CursorTarget
 from jarvis.security.browser_policy import BrowserMode, NetworkPolicy, validate_cdp_endpoint
 from jarvis.tools.base import ExecutionContext, ToolError
 from jarvis.tools.browser import BrowserCommand, BrowserResult
@@ -42,6 +44,7 @@ class BrowserHost:
         self._serial: asyncio.Lock | None = None
         self._closed = False
         self._ready = Event()
+        self.before_action: Callable[[CursorTarget], Awaitable[None]] | None = None
         self.operation_timeout = 30.0 if self.policy.mode is BrowserMode.WORKSPACE else 15.0
 
     @classmethod
@@ -87,6 +90,7 @@ class BrowserHost:
 
     async def call(self, command: BrowserCommand, context: ExecutionContext) -> BrowserResult:
         await context.checkpoint()
+        owner_loop = asyncio.get_running_loop()
         await asyncio.to_thread(self._start)
         assert self._loop is not None
         finished = Event()
@@ -94,6 +98,21 @@ class BrowserHost:
         async def perform() -> BrowserResult:
             assert self._serial is not None and self._session is not None
             async with self._serial:
+
+                async def preview(target: CursorTarget) -> None:
+                    async def present() -> None:
+                        if self.before_action is not None:
+                            await self.before_action(target)
+
+                    if self.before_action is not None:
+                        await asyncio.wrap_future(
+                            asyncio.run_coroutine_threadsafe(
+                                present(),
+                                owner_loop,
+                            )
+                        )
+
+                self._session.before_action = preview if self.before_action is not None else None
                 try:
                     async with asyncio.timeout(self.operation_timeout):
                         return await self._session.dispatch(command)

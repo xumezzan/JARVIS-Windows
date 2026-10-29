@@ -15,7 +15,7 @@ Description = Annotated[str, StringConstraints(max_length=2048)]
 Category = Literal[
     "productivity", "communication", "finance", "cloud_admin", "social", "custom_erp", "security"
 ]
-WorkspaceBrowserMode = Literal["strict_sandbox", "authenticated_workspace"]
+WorkspaceBrowserMode = Literal["strict_sandbox", "authenticated_workspace", "live"]
 MutationRisk = Literal["SAFE", "CONFIRM"]
 
 

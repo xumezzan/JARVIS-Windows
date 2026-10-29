@@ -127,10 +127,9 @@ def load_config(environ: Mapping[str, str] | None = None) -> AppConfig:
             raise ValueError(f"{key} must be an integer.") from None
 
     try:
+        selected_browser_mode = ui_settings.browser_mode or workspace.browser_mode
         default_browser_mode = (
-            "authenticated_workspace"
-            if (ui_settings.browser_mode or workspace.browser_mode) == "authenticated_workspace"
-            else "strict"
+            selected_browser_mode if selected_browser_mode != "strict_sandbox" else "strict"
         )
         browser_mode = BrowserMode(env.get("JARVIS_BROWSER_MODE", default_browser_mode))
     except ValueError:
