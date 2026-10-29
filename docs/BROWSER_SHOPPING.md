@@ -45,8 +45,8 @@ The full main-based suite returned 1,951 passed, 14 skipped and one Qt test fail
 (`test_theme_and_motion_controls_preserve_task`, unclosed asyncio subprocess pipes).
 The same isolated failure reproduced on unmodified `origin/main` (`f4b6845`), so the
 full-suite gate is not green. Lint, format, mypy, dependency checks, GUI smoke and the
-isolated sdist/wheel build passed locally. GitHub CI was not run: publishing the branch
-requires the owner's separate authorization in this session.
+isolated sdist/wheel build passed locally. GitHub CI is a separate acceptance gate;
+local checks do not establish its result.
 
 ```powershell
 python -m pytest -q tests/integration/test_browser_shopping.py
