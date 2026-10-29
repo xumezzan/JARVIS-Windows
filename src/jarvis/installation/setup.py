@@ -1,6 +1,7 @@
 """Per-user two-slot setup, invoked explicitly from the repository on Windows only."""
 
 import argparse
+import ctypes
 import hashlib
 import json
 import os
@@ -71,6 +72,17 @@ def clean_environment(source: Mapping[str, str]) -> dict[str, str]:
 
 def run(command: Sequence[str], env: Mapping[str, str], *, seconds: int = 600) -> str:
     """Bounded child with no shell or raw diagnostic persistence; kill tree on interruption."""
+    command = list(command)
+    if sys.platform == "win32" and len(command[0]) > 120 and Path(command[0]).is_file():
+        # Packaged hosts can resolve LOCALAPPDATA to a much longer physical path.
+        # The existing NTFS 8.3 executable name keeps Python's sys.prefix short,
+        # allowing pip to extract Qt's deep paths without changing OS policy.
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetShortPathNameW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = kernel32.GetShortPathNameW(command[0], buffer, len(buffer))
+        if 0 < length < len(buffer) and Path(buffer.value).resolve() == Path(command[0]).resolve():
+            command[0] = buffer.value
     with tempfile.TemporaryFile() as output:
         process = subprocess.Popen(
             list(command),
