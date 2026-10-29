@@ -344,9 +344,11 @@ class Runner:
     async def _ask(self, question: str) -> str | None:
         """Waiting for the owner's words is a state of the run, not a pause inside a step."""
         self._mark("waiting_input")
+        self.takeover.begin_prompt()
         try:
             return await self.clarify(question)
         finally:
+            self.takeover.end_prompt()
             self._mark("running")
 
     def _learn(self, command: str, result: PlanResult) -> None:
@@ -647,7 +649,11 @@ class Runner:
             token = None
             if action.risk is Risk.CONFIRM:
                 self._mark("waiting_approval")
-                token = await self.approve(action)
+                self.takeover.begin_prompt()
+                try:
+                    token = await self.approve(action)
+                finally:
+                    self.takeover.end_prompt()
                 self._mark("running")
             if self.cancelled.is_set():
                 raise asyncio.CancelledError

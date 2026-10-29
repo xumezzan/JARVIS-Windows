@@ -93,6 +93,22 @@ def test_other_window_proximity_and_injected_motion_do_not_yield() -> None:
     assert monitor.sample()
 
 
+def test_trusted_prompt_click_and_key_release_cannot_create_an_approval_loop() -> None:
+    value = [PhysicalInput(0, 0, 100)]
+    monitor = HumanTakeover(lambda: value[0])
+    monitor.start()
+    monitor.target = CursorTarget(rectangle=RECT, window_handle=100)
+    monitor.begin_prompt()
+    value[0] = PhysicalInput(0, 0, 999, buttons=True, typing=True, mouse_serial=1, key_serial=1)
+    assert not monitor.sample()
+    monitor.end_prompt()
+    assert not monitor.sample()  # The approval mouse button may still be held down.
+    value[0] = PhysicalInput(0, 0, 999, mouse_serial=1, key_serial=1)
+    assert not monitor.sample()
+    value[0] = PhysicalInput(0, 0, 100, buttons=True, mouse_serial=2, key_serial=1)
+    assert monitor.sample()  # A new human intervention is never suppressed.
+
+
 @pytest.mark.asyncio
 async def test_yield_cancels_old_action_and_refreshes_grounding_through_engine(
     tmp_path: Path,

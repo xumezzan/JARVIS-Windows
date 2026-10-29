@@ -203,6 +203,19 @@ class HumanTakeover:
         self.enabled = False
         self.generation = 0
         self._poller: _PhysicalPoller | None = None
+        self.suspended = False
+        self._ignore_buttons = False
+        self._ignore_typing = False
+
+    def begin_prompt(self) -> None:
+        self.suspended = True
+
+    def end_prompt(self) -> None:
+        if self.enabled and self.read is not None:
+            self.previous = self.read()
+            self._ignore_buttons = self.previous.buttons
+            self._ignore_typing = self.previous.typing
+        self.suspended = False
 
     def start(self) -> None:
         if self.read is None and sys.platform == "win32":
@@ -219,6 +232,10 @@ class HumanTakeover:
         previous, self.previous = self.previous, current
         if previous is None:
             return False
+        if self.suspended:
+            return False
+        self._ignore_buttons = self._ignore_buttons and current.buttons
+        self._ignore_typing = self._ignore_typing and current.typing
         if self.target is None and not self.pending:
             return False
         moved = (current.x, current.y) != (previous.x, previous.y) and (
@@ -236,8 +253,8 @@ class HumanTakeover:
         # Focus changes alone include Jarvis bringing a window forward. They are
         # human intervention only when accompanied by physical input/proximity.
         active = (
-            current.buttons
-            or current.typing
+            (current.buttons and not self._ignore_buttons)
+            or (current.typing and not self._ignore_typing)
             or near
             or current.mouse_serial != previous.mouse_serial
             or current.key_serial != previous.key_serial

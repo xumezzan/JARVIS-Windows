@@ -33,6 +33,8 @@ window. Low-level hooks filter injected events and retain counters for short tap
 between GetAsyncKeyState polls. Only transient button/key state and counters are
 held; no text or input history is recorded. Hooks are unregistered when the run
 ends. Simulation never starts the monitor.
+Input in Jarvis' trusted approval/clarification prompt is excluded until that
+gesture is released; confirming an action must not itself cancel its approval.
 
 An intervention latches Yield until two seconds without clicks, typing or continued
 mouse motion. Runner cancels an unissued prepared action and invalidates its
