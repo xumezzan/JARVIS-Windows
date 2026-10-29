@@ -193,7 +193,7 @@ def slot_environment(slot: Path, model: str) -> dict[str, str]:
     env = clean_environment(os.environ)
     slot = slot.resolve()
     env["PLAYWRIGHT_BROWSERS_PATH"] = str(slot / "browsers")
-    env["JARVIS_VOSK_MODEL"] = str(slot / "models" / model)
+    env["JARVIS_VOSK_MODEL"] = str(native_short_path(slot / "models" / model))
     if local := env.get("LOCALAPPDATA"):
         env["LOCALAPPDATA"] = str(Path(local).resolve())
         env["JARVIS_DATA_DIR"] = str(
