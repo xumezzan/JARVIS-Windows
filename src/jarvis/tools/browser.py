@@ -52,7 +52,18 @@ class PageTarget(ToolModel):
 
 
 class ElementTarget(ToolModel):
-    role: Literal["link", "button", "textbox", "searchbox", "tab", "menuitem", "combobox", "option"]
+    role: Literal[
+        "link",
+        "button",
+        "textbox",
+        "searchbox",
+        "tab",
+        "menuitem",
+        "combobox",
+        "option",
+        "radio",
+        "checkbox",
+    ]
     name: str = Field(min_length=1, max_length=300)
     fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
     value: str = Field(default="", max_length=4000)
@@ -105,7 +116,16 @@ class ClickElement(ReadPage):
             raise ValueError("Supply exactly one observed element or mark ID.")
         if self.element is None:
             return self
-        if self.element.role not in ("link", "button", "tab", "menuitem", "combobox", "option"):
+        if self.element.role not in (
+            "link",
+            "button",
+            "tab",
+            "menuitem",
+            "combobox",
+            "option",
+            "radio",
+            "checkbox",
+        ):
             raise ValueError("Only observed links and buttons are supported.")
         if self.element.role == "link" and self.element.request is None:
             raise ValueError("Links require an observed destination.")

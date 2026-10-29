@@ -2,7 +2,9 @@
 
 import asyncio
 import hashlib
+import json
 import sys
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -19,6 +21,7 @@ from playwright.async_api import (
     Route,
     async_playwright,
 )
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from jarvis.browser.inspection import INSPECT, LIVE_SELECTOR, SAFE_ELEMENT, STRICT_SELECTOR
 from jarvis.browser.live import LiveNetworkGuard
@@ -96,6 +99,7 @@ class BrowserSession:
         self.pages: dict[str, Page] = {}
         self.documents: dict[str, str] = {}
         self.observations: dict[str, PageView] = {}
+        self._materials: dict[str, str] = {}
         self.nodes: dict[str, JSHandle] = {}
         self.typed: dict[str, ElementHandle] = {}
         self.grant: Grant | None = None
@@ -120,6 +124,8 @@ class BrowserSession:
                 if not self.browser.contexts:
                     raise ToolError("browser_unavailable")
                 self.context = self.browser.contexts[0]
+                self.context.set_default_timeout(5000)
+                self.context.set_default_navigation_timeout(10000)
                 if self.policy.mode is BrowserMode.WORKSPACE:
                     await self.context.route("**/*", self._workspace_handler)
                     self._workspace_route_installed = True
@@ -228,6 +234,7 @@ class BrowserSession:
 
     async def _clear_nodes(self, tab_id: str) -> None:
         self.observations.pop(tab_id, None)
+        self._materials.pop(tab_id, None)
         handle = self.nodes.pop(tab_id, None)
         if handle is not None:
             await handle.dispose()
@@ -388,7 +395,8 @@ class BrowserSession:
                     )
                 elif item["role"] not in ("textbox", "searchbox") and not (
                     self.live
-                    and item["role"] in ("button", "tab", "menuitem", "combobox", "option")
+                    and item["role"]
+                    in ("button", "tab", "menuitem", "combobox", "option", "radio", "checkbox")
                 ):
                     continue  # Ambiguous button, popup, or unsupported form.
                 element = ElementTarget(
@@ -442,6 +450,10 @@ class BrowserSession:
                 await old.dispose()
             self.nodes[tab_id] = handles
             self.observations[tab_id] = view
+            if self.live:
+                self._materials[tab_id] = json.dumps(
+                    json.loads(raw["material"])[:-1], separators=(",", ":"), ensure_ascii=False
+                )
         return view
 
     async def resolve(self, target: PageTarget) -> PageView:
@@ -449,6 +461,31 @@ class BrowserSession:
         if current.target != target:
             raise ToolError("page_changed")
         return current
+
+    def readable_page(self, target: PageTarget) -> Page:
+        """Refresh a known document even when its contents changed; never follow navigation."""
+        page = self.pages.get(target.tab_id)
+        if (
+            page is None
+            or page.is_closed()
+            or self.documents.get(target.tab_id) != target.document_id
+            or self.policy.validate(page.url) != target.url
+            or origin(target.url) != target.origin
+        ):
+            raise ToolError("page_changed")
+        return page
+
+    async def wait_for_change(self, page: Page, target: PageTarget) -> None:
+        """Wait for a real DOM/form change after JS input, with a finite no-op bound."""
+        # Focus changing to the clicked control is not the requested JS result.
+        with suppress(PlaywrightTimeoutError):
+            await page.wait_for_function(
+                "previous => JSON.stringify(JSON.parse(("
+                + INSPECT
+                + ")(true).material).slice(0, -1)) !== previous",
+                arg=self._materials.get(target.tab_id, ""),
+                timeout=1500,
+            )
 
     async def check_element(self, args: ClickElement | TypeElement) -> None:
         current = await self.resolve(args.target)
@@ -475,7 +512,7 @@ class BrowserSession:
             return
         page = self.pages[args.target.tab_id]
         await page.bring_to_front()
-        locator = await self._element(args)
+        locator = await self._visual_element(args)
         try:
             await locator.scroll_into_view_if_needed(timeout=5000)
             await locator.click(trial=True, timeout=5000)
@@ -513,6 +550,18 @@ class BrowserSession:
                 raise ToolError("page_changed")
         finally:
             await locator.dispose()
+
+    async def _visual_element(self, args: ClickElement) -> ElementHandle:
+        element = await self._element(args)
+        if not await element.evaluate("el => el.tagName === 'OPTION'"):
+            return element
+        parent = await element.evaluate_handle("el => el.closest('select')")
+        await element.dispose()
+        select = parent.as_element()
+        if select is None or not await select.evaluate(SAFE_ELEMENT):
+            await parent.dispose()
+            raise ToolError("page_changed")
+        return select
 
     async def navigate(
         self, page: Page, intent: RequestIntent, *, click: ElementTarget | None = None
@@ -579,9 +628,14 @@ class BrowserSession:
                     assert args.element is not None and args.element.request is not None
                     if result.page.target.url != self.policy.validate(args.element.request.url):
                         raise ToolError("browser_failure")
-                current = await self.resolve(result.page.target)
-                if current != result.page:
-                    raise ToolError("page_changed")
+                if self.live:
+                    # A PageView is a point-in-time observation, not a promise that JS
+                    # stops afterwards. Actions still recheck the exact snapshot.
+                    self.readable_page(result.page.target)
+                else:
+                    current = await self.resolve(result.page.target)
+                    if current != result.page:
+                        raise ToolError("page_changed")
             if command.operation == "close":
                 assert isinstance(args, ReadPage)
                 if result.closed_tab != args.target.tab_id or args.target.tab_id in self.pages:
@@ -608,13 +662,19 @@ class BrowserSession:
                 if not result.autofill_requested or result.affected_tab != args.target.tab_id:
                     raise ToolError("browser_failure")
             if command.operation == "get_tabs":
-                tabs = [(await self.observe(key, publish=False)).target for key in self.pages]
-                if tabs != result.tabs:
+                if self.live:
+                    for target in result.tabs:
+                        self.readable_page(target)
+                elif [(await self.observe(key, publish=False)).target for key in self.pages] != (
+                    result.tabs
+                ):
                     raise ToolError("page_changed")
             return result
         if isinstance(args, (OpenPage, NavigatePage, SearchWeb)):
             self.policy.validate(args.url)
-        if isinstance(args, ReadPage):
+        if command.operation == "read" and isinstance(args, ReadPage) and self.live:
+            self.readable_page(args.target)
+        elif isinstance(args, ReadPage):
             await self.resolve(args.target)
         if isinstance(args, (ClickElement, TypeElement)):
             await self.check_element(args)
@@ -695,10 +755,21 @@ class BrowserSession:
                     page = self.pages[args.target.tab_id]
                     handle = await self._element(args)
                     try:
-                        await handle.click(timeout=5000)
+                        if await handle.evaluate("el => el.tagName === 'OPTION'"):
+                            parent = await handle.evaluate_handle("el => el.closest('select')")
+                            try:
+                                select = parent.as_element()
+                                if select is None or not await select.evaluate(SAFE_ELEMENT):
+                                    raise ToolError("page_changed")
+                                await select.select_option(element=handle, timeout=5000)
+                            finally:
+                                await parent.dispose()
+                        else:
+                            await handle.click(timeout=5000)
                     finally:
                         await handle.dispose()
                     await page.wait_for_load_state("domcontentloaded", timeout=10000)
+                    await self.wait_for_change(page, args.target)
                     return BrowserResult(page=await self.observe(args.target.tab_id))
                 assert args.element is not None and args.element.request is not None
                 status = await self.navigate(

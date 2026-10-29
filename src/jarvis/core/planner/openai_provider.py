@@ -46,6 +46,13 @@ Browser click/type accept a full element or mark_id from the latest observation 
 with its exact PageTarget. After input/navigation use fresh returned observations, never old
 marks. Enter requires UI approval. 1Password returns an attempt receipt, never sign-in proof;
 get_tabs/read afterwards. Never read password/OTP fields, vault pages or extension internals.
+For browser tasks use the configured browser tools to open/read/navigate and act on the site.
+After page_changed use the fresh browser.read observation supplied by the runner; if absent,
+get_tabs then read the matching tab. Never reuse an old mark or repeat an uncertain effect.
+Product options may be radio/checkbox controls. Select the requested model, colour and capacity
+from observed controls. Add-to-cart is complete only when a fresh cart/confirmation observation
+shows the requested item and options. Opening a shop or clicking a button alone is insufficient.
+If the exact product/variant is unavailable, clarify instead of substituting or claiming success.
 For calendar.create_event first create_draft_event, then copy its draft_id and full event.
 Use the observed Outlook account and only owner-supplied attendee addresses; a draft sends
 no invitations. Creation invites attendees and requires exact UI approval.
