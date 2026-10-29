@@ -72,7 +72,7 @@ def clean_environment(source: Mapping[str, str]) -> dict[str, str]:
 
 def native_short_path(path: Path) -> Path:
     """Use an existing, identity-checked NTFS alias; never create links or mappings."""
-    if sys.platform == "win32" and len(str(path)) > 120 and path.exists():
+    if sys.platform == "win32" and path.exists():
         # Packaged hosts can resolve LOCALAPPDATA to a much longer physical path.
         # The existing NTFS 8.3 executable name keeps Python's sys.prefix short,
         # allowing pip to extract Qt's deep paths without changing OS policy.

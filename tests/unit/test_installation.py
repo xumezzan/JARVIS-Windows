@@ -162,6 +162,15 @@ def test_inventory_detects_deleted_and_modified_components(tmp_path: Path) -> No
     assert not setup.healthy(slot, "source")
 
 
+def test_native_short_path_preserves_exact_directory_and_missing_path(tmp_path: Path) -> None:
+    directory = tmp_path / "Каталог с пробелами"
+    directory.mkdir()
+    alias = setup.native_short_path(directory)
+    assert alias.resolve() == directory.resolve()
+    missing = directory / "does-not-exist"
+    assert setup.native_short_path(missing) == missing
+
+
 @pytest.mark.parametrize("phase", ["prepare", "check", "launch", "success", "repeat"])
 def test_two_slot_failure_keeps_active_app_and_data(
     tmp_path: Path,
