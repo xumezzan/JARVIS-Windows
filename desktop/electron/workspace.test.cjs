@@ -17,6 +17,12 @@ test("workspace preload exposes one fixed settings channel without approval auth
   assert.deepEqual(calls, [["jarvis-app:workspace", command]]);
   assert.equal(exposed.jarvis.approve, undefined);
   assert.equal(exposed.jarvis.request, undefined);
+  exposed.jarvis.workspaceBrowser();
+  exposed.jarvis.workspaceBrowser("live");
+  assert.deepEqual(calls.slice(1), [
+    ["jarvis-app:workspace-browser", "authenticated_workspace"],
+    ["jarvis-app:workspace-browser", "live"],
+  ]);
 });
 
 test("workspace browser, calendar and dynamic MCP labels are readable", async () => {

@@ -55,7 +55,7 @@ export type WorkspaceProfile = {
     language: string; email_tone: string; social_comments_tone: string;
   };
   apps: WorkspaceApp[];
-  browser_mode: "strict_sandbox" | "authenticated_workspace";
+  browser_mode: "strict_sandbox" | "authenticated_workspace" | "live";
 };
 export type WorkspaceApp = {
   id: string; name: string;
@@ -166,7 +166,7 @@ export type RuntimeEvent =
   | { event: "ui_error"; error: string };
 export interface JarvisApi {
   workspace(command: WorkspaceCommand): Promise<RuntimeState>;
-  workspaceBrowser(): Promise<RuntimeState>;
+  workspaceBrowser(mode?: "live" | "authenticated_workspace"): Promise<RuntimeState>;
   watcher(id: string, dismiss?: boolean): Promise<RuntimeState>;
   status(): Promise<{ state: RuntimeState | null; error: string }>;
   run(command: string, mode: Mode, options?: RunOptions): Promise<RuntimeState>;

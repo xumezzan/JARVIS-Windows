@@ -5,7 +5,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 from threading import Event
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock
 
 import pytest
@@ -202,6 +202,36 @@ async def test_real_hung_helper_is_killed_and_reaped(
     else:
         with pytest.raises(ToolError, match="native_timeout"):
             await task
+    assert processes[0].returncode is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["open", "list"])
+async def test_cold_start_allowance_does_not_extend_other_native_calls(
+    monkeypatch: pytest.MonkeyPatch, operation: Literal["open", "list"]
+) -> None:
+    real_launch = asyncio.create_subprocess_exec
+    processes: list[asyncio.subprocess.Process] = []
+
+    async def launch(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+        process = await real_launch(
+            sys.executable,
+            "-I",
+            "-c",
+            "import time; time.sleep(0.25); print('{\"result\":{}}')",
+            **kwargs,
+        )
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", launch)
+    backend = ProcessBackend(0.05, open_timeout_seconds=2)
+    request = NativeRequest(operation=operation, app="calculator")
+    if operation == "open":
+        assert await backend._exchange(request, ExecutionContext(Event())) == WindowsResult()
+    else:
+        with pytest.raises(ToolError, match="native_timeout"):
+            await backend._exchange(request, ExecutionContext(Event()))
     assert processes[0].returncode is not None
 
 

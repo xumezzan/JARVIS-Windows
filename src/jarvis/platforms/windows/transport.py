@@ -43,12 +43,16 @@ class ProcessBackend:
         self,
         timeout_seconds: float = 8.0,
         *,
+        open_timeout_seconds: float = 20.0,
         before_click: Callable[[Rectangle], Awaitable[None]] | None = None,
         before_action: Callable[[CursorTarget], Awaitable[None]] | None = None,
     ) -> None:
         if not 0 < timeout_seconds <= 10:
             raise ValueError("Invalid native timeout.")
+        if not 0 < open_timeout_seconds <= 20:
+            raise ValueError("Invalid application startup timeout.")
         self.timeout_seconds = timeout_seconds
+        self.open_timeout_seconds = open_timeout_seconds
         self.before_click = before_click
         self.before_action = before_action
 
@@ -85,7 +89,10 @@ class ProcessBackend:
         try:
             process = await asyncio.shield(launch)
             await context.checkpoint()
-            async with asyncio.timeout(self.timeout_seconds):
+            timeout = (
+                self.open_timeout_seconds if request.operation == "open" else self.timeout_seconds
+            )
+            async with asyncio.timeout(timeout):
                 assert process.stdin is not None and process.stdout is not None
                 process.stdin.write(request.model_dump_json().encode() + b"\n")
                 await process.stdin.drain()

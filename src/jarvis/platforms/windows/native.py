@@ -318,6 +318,8 @@ class NativeDesktop:
         wanted = normalize(app)
         alias = normalize(ALIASES.get(wanted, ""))
         found = self.windows(include_editor=False)
+        if entry.aumid:
+            return [item for item in found if entry.aumid in self.window_aumids(item)]
         for select in (
             lambda item: bool(entry.key) and item.app == entry.key,
             lambda item: normalize(item.app) in {wanted, alias} - {""},
@@ -327,6 +329,55 @@ class NativeDesktop:
             if matches:
                 return matches
         return []
+
+    def window_aumids(self, target: WindowTarget) -> set[str]:
+        """UWP frames belong to ApplicationFrameHost; their child owns the package."""
+        identities = {self.process_aumid(target.pid)} - {""}
+        pids = {target.pid}
+
+        def visit(handle: int, parameter: int) -> bool:
+            pid = wintypes.DWORD()
+            self.user32.GetWindowThreadProcessId(handle, ctypes.byref(pid))
+            if pid.value and pid.value not in pids:
+                pids.add(pid.value)
+                identity = self.process_aumid(pid.value)
+                if identity:
+                    identities.add(identity)
+            return len(pids) < 256
+
+        callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(visit)
+        self.user32.EnumChildWindows.argtypes = [wintypes.HWND, type(callback), wintypes.LPARAM]
+        self.user32.EnumChildWindows(target.handle, callback, 0)
+        return identities
+
+    @staticmethod
+    def process_aumid(pid: int) -> str:
+        """Read OS application identity; titles cannot identify a Store application."""
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel.GetApplicationUserModelId.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(wintypes.UINT),
+            wintypes.LPWSTR,
+        ]
+        kernel.GetApplicationUserModelId.restype = wintypes.LONG
+        handle = kernel.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+        if not handle:
+            return ""
+        try:
+            size = wintypes.UINT()
+            if kernel.GetApplicationUserModelId(handle, ctypes.byref(size), None) != 122:
+                return ""
+            if not 1 < size.value <= 512:
+                return ""
+            value = ctypes.create_unicode_buffer(size.value)
+            if kernel.GetApplicationUserModelId(handle, ctypes.byref(size), value) != 0:
+                return ""
+            return value.value
+        finally:
+            kernel.CloseHandle(handle)
 
     @staticmethod
     def chrome_executable() -> Path:
@@ -687,12 +738,21 @@ class NativeDesktop:
                 known = {item.handle for item in self.windows(include_editor=False)}
                 opened = time.time() - 1
                 self.launch(entry)
-                deadline = time.monotonic() + 6
+                deadline = time.monotonic() + (12 if entry.aumid else 6)
                 while time.monotonic() < deadline:
+                    # Store apps can reuse an older background process. Its observed
+                    # AUMID, not its creation time or a coincidental new window, binds it.
+                    if entry.aumid:
+                        matched = self.candidates(request.app, entry, titles=False)
+                        if matched:
+                            return WindowsResult(target=self.with_editor(matched[0]))
+                        time.sleep(0.2)
+                        continue
                     fresh = [
                         item
                         for item in self.windows(include_editor=False)
-                        if item.handle not in known and item.process_started >= opened
+                        if item.handle not in known
+                        and (item.process_started >= opened or item.app == entry.key)
                     ]
                     matched = [item for item in fresh if entry.key and item.app == entry.key]
                     if matched or fresh:

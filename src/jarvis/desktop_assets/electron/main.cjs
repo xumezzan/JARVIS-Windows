@@ -131,9 +131,12 @@ ipcMain.handle("jarvis-app:run", (event, ...args) => {
 ipcMain.handle("jarvis-app:cancel", (event, ...args) =>
   protectedRequest(event, args, 0, "cancel"),
 );
-ipcMain.handle("jarvis-app:workspace-browser", (event, ...args) =>
-  protectedRequest(event, args, 0, "workspace_browser"),
-);
+ipcMain.handle("jarvis-app:workspace-browser", (event, ...args) => {
+  verifiedWindow(event, args, 1);
+  const mode = args[0];
+  if (!["live", "authenticated_workspace"].includes(mode)) throw new Error("invalid_browser_mode");
+  return protectedRequest(event, args, 1, "workspace_browser", {browser_mode: mode});
+});
 ipcMain.handle("jarvis-app:open", (event, ...args) => {
   verifiedWindow(event, args, 1);
   const panel = args[0];

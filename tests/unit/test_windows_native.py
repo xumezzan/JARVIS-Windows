@@ -1,9 +1,12 @@
 """Native adapter decision logic with fake UIA objects; not native Windows acceptance."""
 
+import ctypes
 import sys
+from ctypes import wintypes
 from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -573,3 +576,87 @@ def test_open_refuses_changed_selected_identity_before_reading_editor(
         desktop.dispatch(NativeRequest(operation="open", app="notepad"))
     old.descendants.assert_not_called()
     replacement.descendants.assert_not_called()
+
+
+@pytest.mark.parametrize("already_open", [False, True])
+def test_store_window_uses_aumid_even_with_an_old_background_process(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch, already_open: bool
+) -> None:
+    wanted = target().model_copy(update={"app": "calculatorapp", "process_started": 1.0})
+    entry = LaunchEntry("Calculator", Path("explorer.exe"), "", "Calculator!App")
+    monkeypatch.setattr(desktop, "resolve_app", lambda app: entry)
+    monkeypatch.setattr(desktop, "window_aumids", lambda window: {entry.aumid})
+    monkeypatch.setattr(desktop, "with_editor", lambda item: item)
+    windows = Mock(return_value=[wanted])
+    if not already_open:
+        windows.side_effect = [[], [], [wanted]]
+        # Cold Store activation can take more than the former six-second deadline.
+        ticks = iter((0.0, 7.0))
+        monkeypatch.setattr("jarvis.platforms.windows.native.time.monotonic", lambda: next(ticks))
+    monkeypatch.setattr(desktop, "windows", windows)
+    launch = Mock()
+    monkeypatch.setattr(desktop, "launch", launch)
+    result = desktop.dispatch(NativeRequest(operation="open", app="calculator"))
+    assert result.target == wanted
+    assert launch.call_count == (0 if already_open else 1)
+
+
+def test_store_launch_cannot_select_an_unrelated_window_with_the_same_title(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    imposter = target().model_copy(update={"title": "Calculator"})
+    monkeypatch.setattr(desktop, "windows", lambda **kwargs: [imposter])
+    monkeypatch.setattr(desktop, "window_aumids", lambda window: {"Other!App"})
+    monkeypatch.setattr(
+        desktop,
+        "resolve_app",
+        lambda app: LaunchEntry("Calculator", Path("explorer.exe"), "", "Calculator!App"),
+    )
+    monkeypatch.setattr(desktop, "launch", Mock())
+    ticks = iter((0.0, 13.0))
+    monkeypatch.setattr("jarvis.platforms.windows.native.time.monotonic", lambda: next(ticks))
+    with pytest.raises(ToolError, match="native_timeout"):
+        desktop.dispatch(NativeRequest(operation="open", app="calculator"))
+
+
+def test_uwp_frame_identity_comes_from_its_actual_child_process(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ctypes, "WINFUNCTYPE", lambda *a: lambda f: f, raising=False)
+    monkeypatch.setattr(
+        desktop, "process_aumid", lambda pid: "Calculator!App" if pid == 900 else ""
+    )
+
+    def owner(handle: int, pointer: Any) -> None:
+        ctypes.cast(pointer, ctypes.POINTER(wintypes.DWORD)).contents.value = 900
+
+    desktop.user32.GetWindowThreadProcessId.side_effect = owner
+    desktop.user32.EnumChildWindows.side_effect = lambda hwnd, visit, data: visit(101, data)
+    assert desktop.window_aumids(target()) == {"Calculator!App"}
+    assert desktop.user32.EnumChildWindows.call_args.args[0] == target().handle
+
+
+@pytest.mark.parametrize("failure", ["none", "denied", "no_identity", "oversize", "changed"])
+def test_process_aumid_bounds_read_and_closes_its_handle(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    kernel = Mock()
+    kernel.OpenProcess.return_value = 0 if failure == "denied" else 42
+
+    def get_id(handle: int, pointer: Any, value: Any) -> int:
+        size = ctypes.cast(pointer, ctypes.POINTER(wintypes.UINT))
+        if value is None:
+            size.contents.value = 9999 if failure == "oversize" else 15
+            return 15703 if failure == "no_identity" else 122
+        if failure == "changed":
+            return 122
+        value.value = "Calculator!App"
+        return 0
+
+    kernel.GetApplicationUserModelId.side_effect = get_id
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *a, **k: kernel, raising=False)
+    assert NativeDesktop.process_aumid(123) == ("Calculator!App" if failure == "none" else "")
+    if failure == "denied":
+        kernel.CloseHandle.assert_not_called()
+    else:
+        kernel.CloseHandle.assert_called_once_with(42)

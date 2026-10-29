@@ -852,7 +852,11 @@ class DesktopService:
             elif raw.operation == "workspace_browser":
                 if self.busy or self.voice.task is not None or self.prompt is not None:
                     raise ValueError("busy")
-                self.auxiliary = asyncio.create_task(self.connect_workspace_browser())
+                self.auxiliary = asyncio.create_task(
+                    self.connect_workspace_browser(
+                        BrowserMode(raw.browser_mode or "authenticated_workspace")
+                    )
+                )
                 try:
                     await self.auxiliary
                 finally:
@@ -990,8 +994,10 @@ class DesktopService:
             else ""
         )
 
-    async def connect_workspace_browser(self) -> None:
+    async def connect_workspace_browser(self, mode: BrowserMode = BrowserMode.WORKSPACE) -> None:
         """A visible owner's control replaces an idle runtime, never an in-flight action."""
+        if mode not in {BrowserMode.LIVE, BrowserMode.WORKSPACE}:
+            raise ValueError("Invalid managed browser mode.")
         await self.voice.stop_wake()
         self.workspace_browser = {"state": "connecting"}
         self.publish()
@@ -999,12 +1005,10 @@ class DesktopService:
         try:
             endpoint = await asyncio.to_thread(self.browser_launcher.launch)
             active = self.config.workspace_profile
-            active = type(active).model_validate(
-                active.model_dump() | {"browser_mode": "authenticated_workspace"}
-            )
+            active = type(active).model_validate(active.model_dump() | {"browser_mode": mode.value})
             config = replace(
                 self.config,
-                browser_mode=BrowserMode.WORKSPACE,
+                browser_mode=mode,
                 browser_cdp_endpoint=endpoint,
                 workspace_profile=active,
             )
@@ -1037,7 +1041,7 @@ class DesktopService:
             persisted = UiSettings.model_validate(
                 self.ui_settings.model_dump()
                 | {
-                    "browser_mode": "authenticated_workspace",
+                    "browser_mode": mode.value,
                     "managed_browser": True,
                 }
             )
@@ -1046,7 +1050,7 @@ class DesktopService:
             profile = type(profile).model_validate(
                 profile.model_dump()
                 | {
-                    "browser_mode": "authenticated_workspace",
+                    "browser_mode": mode.value,
                 }
             )
             await asyncio.to_thread(profile_store.save, profile)
@@ -1320,8 +1324,13 @@ async def serve() -> int:
     queue: asyncio.Queue[Request | None] = asyncio.Queue(maxsize=8)
     Thread(target=read_pipe, args=(sys.stdin.buffer, loop, queue), daemon=True).start()
     service.publish()
-    if service.ui_settings.managed_browser and service.config.browser_mode is BrowserMode.WORKSPACE:
-        service.auxiliary = asyncio.create_task(service.connect_workspace_browser())
+    if service.ui_settings.managed_browser and service.config.browser_mode in {
+        BrowserMode.WORKSPACE,
+        BrowserMode.LIVE,
+    }:
+        service.auxiliary = asyncio.create_task(
+            service.connect_workspace_browser(service.config.browser_mode)
+        )
         try:
             await service.auxiliary
         except (BrowserLaunchError, WorkspaceFailure, ToolError, ValueError):

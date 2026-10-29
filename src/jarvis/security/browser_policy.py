@@ -156,9 +156,9 @@ class NetworkPolicy:
             )
         )
         selected = (
-            BrowserMode.WORKSPACE
-            if profile.browser_mode == "authenticated_workspace"
-            else BrowserMode.STRICT
+            BrowserMode.STRICT
+            if profile.browser_mode == "strict_sandbox"
+            else BrowserMode(profile.browser_mode)
         )
         return cls(
             allowed_origins=tuple(origins),
