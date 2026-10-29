@@ -4,6 +4,7 @@
     "electron/clipboard.cjs": "748731324bfcd74c93bb9902f872e3d530b81dd7af07062ac64f473e8356c465",
     "electron/clipboard.test.cjs": "63f8dda1fa2ef8b064ef8c1bd16e253d354a269548c9fa4b2886afecbc57cdc9",
     "electron/environment.cjs": "9bc21c5a40cfb2899fe284b95f5a6e4bc8302df1ff728c57ace2e965264b12e8",
+    "electron/ghost-protocol.test.cjs": "3dda85aaacd3230887b5b9ae217c960463318816185658841bcfa8ddcc65f413",
     "electron/hud-mode.cjs": "011a509947334729a5cd3582061e433d4f9e59ad7906f364b5d59598135276ab",
     "electron/hud-mode.test.cjs": "f67aca5e77b697f9e6f9ecc7215784d6fef28ccd730b086bd98f39c2da77a7aa",
     "electron/main.cjs": "a32aaf2efbf6c26070a7e5c277d0362116e07706dd84d356f64ff5111b958376",
@@ -11,7 +12,7 @@
     "electron/overlay.cjs": "d22935fd90513a00a0bdfbf13d49ca79e2cf657d915dba13bcba7b3f22a21cc3",
     "electron/overlay.test.cjs": "8341813cd8efb497c02c224770d457b733602c7f758d086944ec9404649bd668",
     "electron/preload.cjs": "e96f7cce5e0c0940bac9ccd258c7de869dac4e2d972f8999f6419510dd319702",
-    "electron/runtime.cjs": "b8b51f1d3effa86098daf30b0c8313e29c642722b073c254adffb381c7f86732",
+    "electron/runtime.cjs": "776adc9822af0c8813fd81acb8b66320b7e211f4f67a01ca2ad8706f04fd6d2b",
     "electron/runtime.test.cjs": "40fe26c62ba6300167b77a0009cfa881743d60e1ecc694b80ec88234675e7488",
     "electron/target.html": "d77eb251730104ae0be213d1dd2edefbcb5880c23bae984ab5597d8ceccf9177",
     "electron/workspace.test.cjs": "84f758df3891650f89f67688ba2c3e9fbeed0e816533f3c11c077e51fea84ba8",
@@ -54,7 +55,7 @@
     "electron/overlay-preload.cjs": "419652513f305f6cfd03d206b9d5e045868123b19dd82510b97c27cad8e2663e",
     "electron/overlay.cjs": "d22935fd90513a00a0bdfbf13d49ca79e2cf657d915dba13bcba7b3f22a21cc3",
     "electron/preload.cjs": "e96f7cce5e0c0940bac9ccd258c7de869dac4e2d972f8999f6419510dd319702",
-    "electron/runtime.cjs": "b8b51f1d3effa86098daf30b0c8313e29c642722b073c254adffb381c7f86732",
+    "electron/runtime.cjs": "776adc9822af0c8813fd81acb8b66320b7e211f4f67a01ca2ad8706f04fd6d2b",
     "electron/target.html": "d77eb251730104ae0be213d1dd2edefbcb5880c23bae984ab5597d8ceccf9177",
     "package.json": "682cd4c8c8c488c2997bd7dc4dfd00ce287fb662bf42d8bbdaac1b515e6cf42d"
   }
