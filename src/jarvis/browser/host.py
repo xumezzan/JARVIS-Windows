@@ -42,7 +42,7 @@ class BrowserHost:
         self._serial: asyncio.Lock | None = None
         self._closed = False
         self._ready = Event()
-        self.operation_timeout = 30.0 if self.policy.mode is BrowserMode.WORKSPACE else 15.0
+        self.operation_timeout = 15.0 if self.policy.mode is BrowserMode.STRICT else 30.0
 
     @classmethod
     def from_config(cls, config: "AppConfig") -> "BrowserHost":

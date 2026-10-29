@@ -6,7 +6,8 @@ STRICT_SELECTOR = "a[href],button,input[type=submit],textarea,input[type=text],i
 LIVE_SELECTOR = (
     STRICT_SELECTOR + ",input[type=search],input[type=email],input[type=url],input[type=tel],"
     '[contenteditable="true"],[contenteditable="plaintext-only"],[role="textbox"],'
-    '[role="button"],[role="tab"],[role="menuitem"],[role="combobox"],[role="option"]'
+    '[role="button"],[role="tab"],[role="menuitem"],[role="combobox"],[role="option"],'
+    'input[type=radio],input[type=checkbox],[role="radio"],[role="checkbox"],select,option'
 )
 
 # Shared with the last actionability check. This reads metadata, never field values.
@@ -43,6 +44,12 @@ INSPECT = (
     });
     copy.querySelectorAll('script,style,noscript,input[type=hidden]')
       .forEach(node => node.remove());
+    // Animation/hover classes and inline styles are presentation, not action identity.
+    // Keep names, destinations, form values, selection and all other attributes.
+    if (live) for (const node of [copy, ...copy.querySelectorAll('*')]) {
+      node.removeAttribute('class');
+      node.removeAttribute('style');
+    }
     return copy;
   };
   const name = el => norm(el.getAttribute('aria-label') ||
@@ -52,7 +59,7 @@ INSPECT = (
         return label && safe(label) ? label.textContent : '';
       }).join(' ') : '') ||
     [...(el.labels || [])].filter(safe).map(x => x.textContent).join(' ') ||
-    (el.matches('button,a,[role=button],[role=tab],[role=menuitem],[role=option]')
+    (el.matches('button,a,option,[role=button],[role=tab],[role=menuitem],[role=option]')
       ? el.innerText : el.type === 'submit' ? el.value : '') ||
     (live ? el.getAttribute('placeholder') || el.getAttribute('data-placeholder') ||
       el.getAttribute('title') : ''));
@@ -87,14 +94,19 @@ INSPECT = (
   const all = [...document.querySelectorAll(selector)].slice(0,50000);
   const elements = [];
   for (const [index,el] of all.entries()) {
-    if (!safe(el) || !el.getClientRects().length || el.matches(':disabled') ||
+    const surface = el.matches('option') ? el.closest('select') : el;
+    if (!safe(el) || !surface?.getClientRects().length || el.matches(':disabled') ||
         el.getAttribute('aria-disabled') === 'true' ||
         el.getAttribute('aria-readonly') === 'true' ||
         getComputedStyle(el).visibility === 'hidden' || el.readOnly) continue;
     const role = el.getAttribute('role') || (el.matches('a') ? 'link' :
       el.matches('button,input[type=submit]') ? 'button' :
+      el.matches('input[type=radio]') ? 'radio' :
+      el.matches('input[type=checkbox]') ? 'checkbox' :
+      el.matches('select') ? 'combobox' : el.matches('option') ? 'option' :
       el.matches('input[type=search]') ? 'searchbox' : 'textbox');
-    if (!['link','button','textbox','searchbox','tab','menuitem','combobox','option']
+    if (!['link','button','textbox','searchbox','tab','menuitem','combobox','option',
+          'radio','checkbox']
         .includes(role))
       continue;
     const label = name(el) ||
@@ -116,7 +128,8 @@ INSPECT = (
     const parent = node.parentElement;
     if (parent && safe(parent) && !parent.closest('script,style,noscript') &&
         parent.getClientRects().length && getComputedStyle(parent).visibility !== 'hidden') {
-      text += norm(node.textContent) + '\n';
+      const content = norm(node.textContent);
+      if (content) text += content + '\n';
     }
   }
   text = text.slice(0,12000);
