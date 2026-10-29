@@ -412,7 +412,10 @@ try {
     $jarvisRuntimeReady = $true
     # Packaged hosts may virtualize LOCALAPPDATA. Persist real paths so a Start
     # menu launch outside that host reaches the same runtime and existing data.
-    $canonicalRoot = & $python -I -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' $jarvisRoot
+    # ASCII JSON survives Windows PowerShell 5.1's OEM stdout decoder even when
+    # Python uses UTF-8 and the Windows profile name contains Cyrillic characters.
+    $canonicalJson = & $python -I -c 'from pathlib import Path; import json, sys; print(json.dumps(str(Path(sys.argv[1]).resolve()), ensure_ascii=True))' $jarvisRoot
+    $canonicalRoot = $canonicalJson | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0 -or -not [IO.Path]::IsPathRooted($canonicalRoot)) {
         throw 'The physical installation path could not be resolved.'
     }
