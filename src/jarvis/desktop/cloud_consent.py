@@ -29,7 +29,9 @@ def review_reasons(command: str) -> tuple[str, ...]:
     text = command.casefold()
     rules = (
         (
-            r"оплат|плат[её]ж|покуп|\bкупи|деньг|банков|кредит|инвест|\bpay|purchase|transfer",
+            r"оплат|плат[её]ж|покуп|\bкупи|оформ\w*\s+заказ|деньг|банков|кредит|инвест|"
+            r"(?:добав|полож).{0,160}\bкорзин|\bpay|\bbuy\b|purchase|transfer|checkout|"
+            r"\b(?:add|put|place)\b.{0,160}\b(?:cart|bag)\b|\bshopping\s+(?:cart|bag)\b",
             "Деньги и покупки",
         ),
         (

@@ -23,7 +23,12 @@ import aiohttp
 
 from jarvis.browser.network import tls_context
 from jarvis.core.planner.contracts import PlannerInput, Proposal, ProviderError
-from jarvis.core.planner.openai_provider import INSTRUCTIONS, strict_schema, user_content
+from jarvis.core.planner.openai_provider import (
+    INSTRUCTIONS,
+    chrome_handoff_observation,
+    strict_schema,
+    user_content,
+)
 from jarvis.permissions.policies import proposable
 from jarvis.security.credentials import load_api_key
 
@@ -108,6 +113,9 @@ class DeepSeekProvider:
         self.transport = transport
 
     async def propose(self, data: PlannerInput) -> Proposal:
+        observation = chrome_handoff_observation(data)
+        if observation is not None:
+            return observation
         catalog = json.loads(data.catalog_json)
         names: dict[str, str] = {}
         tools = []

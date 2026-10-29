@@ -923,6 +923,10 @@ class NativeDesktop:
                 "Document",
                 "TabItem",
                 "ListItem",
+                "Hyperlink",
+                "RadioButton",
+                "CheckBox",
+                "ComboBox",
             }:
                 continue
             try:
@@ -938,7 +942,17 @@ class NativeDesktop:
             ):
                 candidates.append(element)
         # Prefer editors/actions/tabs to repeated document/list contents, then reading order.
-        priority = {"Edit": 0, "Button": 1, "TabItem": 2, "Document": 3, "ListItem": 4}
+        priority = {
+            "Edit": 0,
+            "ComboBox": 0,
+            "Button": 1,
+            "RadioButton": 1,
+            "CheckBox": 1,
+            "Hyperlink": 2,
+            "TabItem": 2,
+            "Document": 3,
+            "ListItem": 4,
+        }
         candidates.sort(
             key=lambda e: (
                 not bool(e.name.strip()),
