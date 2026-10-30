@@ -107,7 +107,9 @@ node --test desktop/electron/*.test.cjs
 Живой probe не вызывает модель и не входит в аккаунты. Он проходит через
 PermissionEngine, временно проверяет текстовый буфер и восстанавливает все его
 форматы, если владелец не изменил буфер, считает реальные окна и снимает только
-собственное временное тестовое окно. Без Accessibility проверяется реальный отказ.
+собственное временное тестовое окно. В нём проверяются фокус, AX-поле, буквальный
+ввод с независимым readback, Command+A и semantic click. Без Accessibility проверяется
+реальный отказ; exit code 2 означает, что разрешение не выдано, 1 — неполную приёмку.
 Для сохранения локального изображения добавьте `--image /tmp/jarvis-macos-smoke.jpg`.
 Изображения/clipboard/task text в отчёт и Git не входят. Fixture/CI не заменяют
 живую приёмку macOS, Windows, голоса или сервисов.
@@ -116,4 +118,32 @@ PermissionEngine, временно проверяет текстовый буф�
 [Apple AXUIElement](https://developer.apple.com/documentation/applicationservices/axuielement_h),
 [Apple Accessibility permissions](https://support.apple.com/guide/mac-help/allow-accessibility-apps-to-access-your-mac-mh43185/mac).
 
-Фактические результаты текущего прогона будут записаны после завершения проверок.
+## Фактическая проверка 30 октября 2026
+
+MacBook, macOS 27.2, Apple Silicon arm64, Python 3.12.7:
+
+- Полный pytest: **2096 passed, 24 skipped**. Пропущены явные live Windows/model/voice
+  сценарии и updater fixtures, для которых на этом Mac нет PowerShell.
+- Mypy: **366 файлов без ошибок**, отдельно обычная macOS-конфигурация и
+  `--platform win32`. Ruff check и format-check прошли; `pip check` — без конфликтов.
+- Production Electron build и **23 Node tests** прошли.
+- `.app` создана и проверена codesign. Реальный packaged E2E подтвердил
+  `app.isPackaged=true`, запуск установленного Chrome с отдельным профилем/CDP,
+  сохранение модели/голосовых настроек и повторное подключение к тому же browser PID
+  после перезапуска. Микрофон, аккаунты и модель в этом прогоне не использовались.
+- Живой native probe через PermissionEngine: **все 10 проверок SUCCESS**,
+  включая точный ввод, клавишу, клик и JPEG с 5 метками; изображение **1280×776**.
+  Содержимое clipboard восстановлено со всеми форматами. До выдачи доступа
+  отдельно наблюдался корректный `macos_accessibility_required`.
+- `python -m jarvis --smoke-test` — success в симуляции. `python -m build` собрал
+  sdist и wheel. Проверен состав: macOS workers и prebuilt UI присутствуют,
+  `.venv`, node_modules и локальные инструменты исключены. Для sdist включён
+  `skip-excluded-dirs`, чтобы Hatchling не обходил сохранённые окружения iCloud.
+
+[Санитизированный native-отчёт](macos-native-acceptance-20261030.json) ·
+[Разметка тестового окна](images/macos-native-fixture-20261030.jpg).
+
+Проверки CI на Windows и macOS запускаются в PR #71. Живые Windows-действия,
+голосовое оборудование, внешние аккаунты и полный продуктовый сценарий этим
+изменением не объявляются принятыми. HumanTakeover hardware hooks остаются
+Windows-реализацией; наличие Mac Ghost overlay не доказывает приёмку этого monitor.

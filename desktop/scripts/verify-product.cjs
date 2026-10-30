@@ -16,12 +16,23 @@ const { _electron } = require("playwright");
     "JARVIS_BROWSER_CDP_URL", "JARVIS_BROWSER_CDP_ENDPOINT"]) delete env[name];
   let running;
   const errors = [];
+  async function waitForState(page, predicate) {
+    const deadline = Date.now() + 45000;
+    while (Date.now() < deadline) {
+      // Await IPC in Node: an async predicate passed to the renderer poller can
+      // be treated as a truthy Promise before its status result has arrived.
+      const state = (await page.evaluate(() => window.jarvis?.status()))?.state;
+      if (state && predicate(state)) return state;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    throw new Error("runtime_state_timeout");
+  }
   async function launch() {
     const app = await _electron.launch({ executablePath: executable, args: [], env });
     running = app;
     const page = await app.firstWindow();
     page.on("pageerror", (e) => errors.push(e.message));
-    await page.waitForFunction(async () => (await window.jarvis?.status())?.state?.can_run, null, { timeout: 45000 });
+    await waitForState(page, state => state.can_run);
     return { app, page };
   }
   try {
@@ -39,7 +50,7 @@ const { _electron } = require("playwright");
     await page.getByRole("button", { name: "Добавить 14 приложений Omadli Group" }).click();
     await page.waitForFunction(() => document.querySelectorAll(".workspace-app").length === 14);
     await page.getByRole("button", { name: "Открыть рабочий браузер", exact: true }).click();
-    await page.waitForFunction(async () => (await window.jarvis.status()).state.workspace_browser?.state === "connected", null, { timeout: 45000 });
+    await waitForState(page, state => state.workspace_browser?.state === "connected");
     const receipt = JSON.parse(await fs.readFile(path.join(data, "workspace_browser.json"), "utf8"));
     const settings = JSON.parse(await fs.readFile(path.join(data, "ui_settings.json"), "utf8"));
     assert.equal(settings.planner_model, "test-model");
@@ -52,7 +63,7 @@ const { _electron } = require("playwright");
     await page.screenshot({ path: path.join(data, "product-workspace.png"), fullPage: true, animations: "disabled" });
     await app.close(); running = null;
     ({ app, page } = await launch());
-    await page.waitForFunction(async () => (await window.jarvis.status()).state.workspace_browser?.state === "connected", null, { timeout: 45000 });
+    await waitForState(page, state => state.workspace_browser?.state === "connected");
     const restored = (await page.evaluate(() => window.jarvis.status())).state;
     assert.equal(restored.model, "test-model");
     assert.equal(restored.settings.auto_start, true);

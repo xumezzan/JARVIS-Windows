@@ -15,7 +15,14 @@ from jarvis.observability.diagnostics import Reason
 from jarvis.platforms.macos import native
 from jarvis.platforms.macos.native import LaunchEntry, NativeDesktop, Node, command
 from jarvis.tools.base import ToolError
-from jarvis.tools.windows import NativeRequest, Rectangle, WindowTarget, text_digest
+from jarvis.tools.windows import (
+    MAX_SCREENSHOT_JPEG_BYTES,
+    NativeRequest,
+    Rectangle,
+    WindowTarget,
+    clipboard_digest,
+    text_digest,
+)
 
 
 class FakeAX:
@@ -70,7 +77,7 @@ def target() -> WindowTarget:
         handle=123,
         pid=42,
         process_started=1234.5,
-        executable="/System/Applications/TextEdit.app/Contents/MacOS/TextEdit",
+        executable=str(Path("/System/Applications/TextEdit.app/Contents/MacOS/TextEdit").resolve()),
         runtime_id=[42, 123],
         title="Document",
     )
@@ -342,10 +349,12 @@ def test_native_capture_redacts_secure_pixels_and_rejects_moved_password(
         result = desktop.capture("active_window")
         assert result.image_base64 is not None and result.image_format == "JPEG"
         data = base64.b64decode(result.image_base64)
-        assert len(data) <= native.MAX_SCREENSHOT_JPEG_BYTES
+        assert len(data) <= MAX_SCREENSHOT_JPEG_BYTES
         with Image.open(io.BytesIO(data)) as picture:
             x, y = round(picture.width * 150 / 800), round(picture.height * 115 / 600)
-            assert max(picture.getpixel((x, y))) < 20
+            pixel = picture.getpixel((x, y))
+            assert isinstance(pixel, tuple)
+            assert max(pixel) < 20
         assert [element.name for element in result.elements] == ["Save"]
         assert "secret" not in result.model_dump_json()
 
@@ -393,6 +402,7 @@ def test_jxa_fallback_code_is_fixed_and_uses_cg_window_ids(monkeypatch: pytest.M
     assert "CoreGraphics" in calls[0][-1]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="macOS utilities use POSIX pipe selectors")
 def test_bounded_utility_roundtrips_utf8_and_reaps_on_limit() -> None:
     data = "Русский текст\n".encode()
     assert (
@@ -411,6 +421,7 @@ def test_bounded_utility_roundtrips_utf8_and_reaps_on_limit() -> None:
         command([sys.executable, "-I", "-c", "print('x' * 10000)"], limit=20)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="macOS utilities use POSIX pipe selectors")
 def test_bounded_utility_timeout_is_finite() -> None:
     with pytest.raises(ToolError, match="native_timeout"):
         command([sys.executable, "-I", "-c", "import time; time.sleep(60)"], timeout=0.05)
@@ -453,7 +464,7 @@ def test_paste_rechecks_clipboard_digest_before_any_key_event(
                 operation="hotkey",
                 target=target(),
                 hotkey="Ctrl+V",
-                clipboard_sha256=native.clipboard_digest("observed"),
+                clipboard_sha256=clipboard_digest("observed"),
             )
         )
     desktop.quartz.CGEventCreateKeyboardEvent.assert_not_called()

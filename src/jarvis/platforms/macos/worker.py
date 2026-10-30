@@ -3,6 +3,7 @@
 import contextlib
 import sys
 
+from jarvis.platforms import is_macos
 from jarvis.platforms.windows.ghost import CursorTarget
 from jarvis.platforms.windows.transport import NativeReply, TargetPreview
 from jarvis.tools.base import ToolError
@@ -21,7 +22,7 @@ def main() -> None:
             raise ToolError("native_failure")
 
     try:
-        if sys.platform != "darwin":
+        if not is_macos():
             raise ToolError("unsupported_platform")
         raw = sys.stdin.buffer.readline(65537)
         if len(raw) > 65536 or not raw.endswith(b"\n"):

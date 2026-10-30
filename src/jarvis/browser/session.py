@@ -546,7 +546,11 @@ class BrowserSession:
             sys.executable,
             "-I",
             "-m",
-            "jarvis.platforms.windows.ghost",
+            (
+                "jarvis.platforms.macos.ghost"
+                if sys.platform == "darwin"
+                else "jarvis.platforms.windows.ghost"
+            ),
             "--viewport",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
@@ -563,6 +567,12 @@ class BrowserSession:
                 import json
 
                 result = json.loads(raw)
+                if result.get("error") is not None:
+                    from jarvis.platforms.windows.transport import NativeReply
+
+                    denied = NativeReply.model_validate_json(raw)
+                    assert denied.error is not None
+                    raise ToolError(denied.error, reason=denied.reason)
                 rect = Rectangle.model_validate(result["rectangle"])
                 viewport = await page.evaluate("() => ({width: innerWidth, height: innerHeight})")
                 return rect, int(result["window_handle"]), viewport["width"], viewport["height"]

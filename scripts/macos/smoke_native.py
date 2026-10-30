@@ -155,17 +155,46 @@ async def probe(image: Path | None) -> dict[str, object]:
                 if target is None:
                     report["fixture"] = "window_not_observed"
                     return report
+                report["fixture"] = "observed"
                 focused = await run("windows.focus_app", {"target": target.model_dump()})
                 if focused.status is not Status.SUCCESS:
                     return report
+                fields = await run("windows.get_text_fields", {"target": target.model_dump()})
+                observed_fields = WindowsResult.model_validate_json(fields.result_json or "{}")
+                if len(observed_fields.editors) == 1:
+                    await run(
+                        "windows.type_text",
+                        {
+                            "target": target.model_dump(),
+                            "editor": observed_fields.editors[0].model_dump(),
+                            "text": SAMPLE,
+                        },
+                    )
+                    await run(
+                        "windows.send_hotkey", {"target": target.model_dump(), "hotkey": "Ctrl+A"}
+                    )
                 captured = await run("windows.screenshot", {})
                 if captured.status is Status.SUCCESS:
                     result = WindowsResult.model_validate_json(captured.result_json or "{}")
+                    if result.target is None or result.target.identity != target.identity:
+                        report["fixture"] = "foreground_changed"
+                        return report
                     report["marked_elements"] = len(result.elements)
                     report["image_dimensions"] = [result.width, result.height]
                     if image is not None and captured.screenshot_b64:
                         # Explicit local destination, never part of the committed report.
                         image.write_bytes(base64.b64decode(captured.screenshot_b64, validate=True))
+                    button = next(
+                        (e for e in result.elements if e.name == "Jarvis test button"), None
+                    )
+                    if button is not None and result.target is not None:
+                        await run(
+                            "windows.click_element",
+                            {
+                                "target": result.target.model_dump(),
+                                "element": button.model_dump(),
+                            },
+                        )
             finally:
                 process.terminate()
                 try:
@@ -188,10 +217,35 @@ def main() -> None:
         fixture()
         return
     result = asyncio.run(probe(args.image))
+    required = {
+        "system.info",
+        "windows.clipboard_set",
+        "windows.clipboard_get",
+        "windows.get_open_windows",
+        "windows.focus_app",
+        "windows.get_text_fields",
+        "windows.type_text",
+        "windows.send_hotkey",
+        "windows.screenshot",
+        "windows.click_element",
+    }
+    checks = result.get("checks")
+    passed = (
+        isinstance(checks, dict)
+        and all(
+            isinstance(checks.get(name), dict)
+            and checks[name].get("status") == Status.SUCCESS.value
+            for name in required
+        )
+        and result.get("clipboard_roundtrip") is True
+    )
+    result["acceptance"] = "passed" if passed else "incomplete"
     text = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
     if args.report:
         args.report.write_text(text, encoding="utf-8")
     print(text, end="")
+    if not passed:
+        raise SystemExit(2 if not result.get("accessibility") else 1)
 
 
 if __name__ == "__main__":

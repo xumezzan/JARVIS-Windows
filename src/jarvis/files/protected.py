@@ -1,13 +1,14 @@
 """macOS system and secret-path exclusions shared by both file contracts."""
 
 import os
-import sys
 from pathlib import Path
+
+from jarvis.platforms import is_macos
 
 
 def macos_path_denied(path: Path) -> bool:
     """A configured document root never grants system folders or local secrets."""
-    if sys.platform != "darwin":
+    if not is_macos():
         return False
     if any(_secret_component(part) for part in path.parts):
         return True

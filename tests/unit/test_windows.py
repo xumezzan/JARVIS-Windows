@@ -15,7 +15,7 @@ from jarvis.observability.audit import AuditLog, ErrorCode
 from jarvis.permissions.approvals import Action, ApprovalStore
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Mode, Risk, Status
-from jarvis.platforms.windows.transport import NativeReply, ProcessBackend
+from jarvis.platforms.windows.transport import NativeReply, ProcessBackend, native_worker
 from jarvis.tools.base import ExecutionContext, ToolError
 from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.windows import NativeRequest, WindowsResult, register_windows
@@ -277,7 +277,7 @@ async def test_payload_not_in_process_argv(monkeypatch: pytest.MonkeyPatch) -> N
         NativeRequest(operation="type", text="PRIVATE_SENTINEL"), ExecutionContext(Event())
     )
     assert "PRIVATE_SENTINEL" not in str(launch.call_args)
-    assert "jarvis.platforms.windows.worker" in launch.call_args.args
+    assert native_worker() in launch.call_args.args
 
 
 @pytest.mark.asyncio

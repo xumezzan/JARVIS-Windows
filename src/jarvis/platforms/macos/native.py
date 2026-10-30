@@ -892,16 +892,14 @@ class NativeDesktop:
         )
         window = self.activate(args.target)
         if args.element is not None:
+            element = args.element
 
             def chosen() -> Node:
                 nodes, _ = self.walk(self.resolve(args.target), args.target)
                 matches = []
                 for node in nodes:
                     try:
-                        if (
-                            self.element_snapshot(node, mark_id=args.element.mark_id)
-                            == args.element
-                        ):
+                        if self.element_snapshot(node, mark_id=element.mark_id) == element:
                             matches.append(node)
                     except ToolError:
                         continue
@@ -910,7 +908,7 @@ class NativeDesktop:
                 return matches[0]
 
             chosen()
-            self.preview(args.target, args.element.rectangle, label=args.element.name)
+            self.preview(args.target, element.rectangle, label=element.name)
             node = chosen()
             self.require_foreground(args.target)
             if self.ax.AXUIElementPerformAction(node.value, "AXPress") != 0:

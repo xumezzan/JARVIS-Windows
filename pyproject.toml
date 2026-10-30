@@ -38,6 +38,9 @@ jarvis = "jarvis.app:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/jarvis"]
 
+[tool.hatch.build.targets.sdist]
+skip-excluded-dirs = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--strict-config --strict-markers --import-mode=importlib -ra"

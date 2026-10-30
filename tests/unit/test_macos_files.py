@@ -1,6 +1,7 @@
 """Portable macOS file-policy checks and synthetic, reversible file-adapter effects."""
 
 import os
+import platform
 import subprocess
 import sys
 from contextlib import closing
@@ -177,7 +178,7 @@ def test_macos_supported_host(
     monkeypatch: pytest.MonkeyPatch, machine: str, supported: bool
 ) -> None:
     monkeypatch.setattr(sys, "platform", "darwin")
-    monkeypatch.setattr(setup.platform, "machine", lambda: machine)
+    monkeypatch.setattr(platform, "machine", lambda: machine)
     assert setup.supported_host() is supported
 
 
@@ -186,7 +187,7 @@ def test_windows_supported_host_still_requires_windows_11(
     monkeypatch: pytest.MonkeyPatch, build: int, supported: bool
 ) -> None:
     monkeypatch.setattr(sys, "platform", "win32")
-    monkeypatch.setattr(setup.platform, "machine", lambda: "AMD64")
+    monkeypatch.setattr(platform, "machine", lambda: "AMD64")
     monkeypatch.setattr(
         sys, "getwindowsversion", lambda: SimpleNamespace(build=build), raising=False
     )

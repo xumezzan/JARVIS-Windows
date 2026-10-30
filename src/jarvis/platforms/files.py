@@ -11,12 +11,11 @@ import importlib
 import os
 import stat
 import subprocess
-import sys
 from ctypes import wintypes
 from pathlib import Path
 from uuid import uuid4
 
-from jarvis.platforms import is_windows
+from jarvis.platforms import is_macos, is_windows
 from jarvis.tools.base import ToolError
 
 POSIX_OS = importlib.import_module("os")
@@ -30,7 +29,7 @@ class LocalFiles:
 
     @staticmethod
     def _recycle(path: Path) -> None:
-        if sys.platform == "darwin":
+        if is_macos():
             LocalFiles._macos_recycle(path)
             return
         if not is_windows():
@@ -125,7 +124,7 @@ class LocalFiles:
         # ShellExecute on an exact resolved document path: no command line is parsed and no
         # argument is taken from the caller.
         try:
-            if sys.platform == "darwin":
+            if is_macos():
                 subprocess.run(
                     ["/usr/bin/open", str(path)],
                     check=True,

@@ -8,12 +8,16 @@ from collections.abc import Callable
 from ctypes import wintypes
 from dataclasses import dataclass
 from threading import Event, Thread
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import Field
 
 from jarvis.tools.base import ToolModel
 from jarvis.tools.windows import Rectangle
+
+
+def is_windows() -> bool:
+    return sys.platform == "win32"
 
 
 class CursorTarget(ToolModel):
@@ -59,8 +63,8 @@ class _PhysicalPoller:
     """
 
     def __init__(self) -> None:
-        self.user32: Any = ctypes.WinDLL("user32", use_last_error=True)
-        self.kernel32: Any = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.user32: Any = cast(Any, ctypes).WinDLL("user32", use_last_error=True)
+        self.kernel32: Any = cast(Any, ctypes).WinDLL("kernel32", use_last_error=True)
         self.user32.GetForegroundWindow.restype = wintypes.HWND
         self.user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
         self.user32.GetAsyncKeyState.restype = ctypes.c_short
@@ -96,7 +100,7 @@ class _PhysicalPoller:
                 ("extra", ctypes.c_size_t),
             ]
 
-        hook_type = ctypes.WINFUNCTYPE(
+        hook_type = cast(Any, ctypes).WINFUNCTYPE(
             ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM
         )
         self.user32.SetWindowsHookExW.argtypes = [
@@ -291,7 +295,7 @@ def browser_viewport() -> dict[str, object]:
     No screenX/outerHeight guesses: borders, browser chrome, zoom, negative
     monitor origins and mixed DPI are handled by the actual render widget.
     """
-    user32: Any = ctypes.WinDLL("user32", use_last_error=True)
+    user32: Any = cast(Any, ctypes).WinDLL("user32", use_last_error=True)
     user32.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
     user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
     user32.GetForegroundWindow.restype = wintypes.HWND
@@ -327,7 +331,7 @@ def browser_viewport() -> dict[str, object]:
                 )
         return True
 
-    callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(child)
+    callback = cast(Any, ctypes).WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(child)
     user32.EnumChildWindows.argtypes = [wintypes.HWND, type(callback), wintypes.LPARAM]
     user32.EnumChildWindows(handle, callback, 0)
     if not rectangles:
@@ -337,6 +341,6 @@ def browser_viewport() -> dict[str, object]:
 
 
 if __name__ == "__main__":
-    if sys.platform != "win32" or sys.argv[1:] != ["--viewport"]:
+    if not is_windows() or sys.argv[1:] != ["--viewport"]:
         raise SystemExit(1)
     print(json.dumps(browser_viewport()))

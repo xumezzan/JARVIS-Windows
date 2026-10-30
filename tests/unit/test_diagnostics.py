@@ -434,6 +434,9 @@ def test_tree_cleanup_failure_still_reaps_real_direct_child(
 
     monkeypatch.setattr(subprocess, "Popen", start)
     monkeypatch.setattr(subprocess, "run", failed_tree_cleanup)
+    # This test exercises failed tree cleanup, not the real NTFS path API.
+    # A simulated Windows branch on macOS still uses the host's real Python child.
+    monkeypatch.setattr(setup, "native_short_path", lambda path: path)
     monkeypatch.setenv("SYSTEMROOT", str(tmp_path / "Windows"))
     with monkeypatch.context() as platform_patch:
         platform_patch.setattr(sys, "platform", "win32")
