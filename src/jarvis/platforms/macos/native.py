@@ -22,6 +22,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
+from xml.parsers.expat import ExpatError
 
 from jarvis.observability.diagnostics import Reason
 from jarvis.platforms.windows.ghost import CursorTarget
@@ -53,6 +54,8 @@ from jarvis.tools.windows import (
 
 MAX_NODES = 2048
 MAX_FIELD_TEXT = 100_000
+MAX_APP_METADATA_BYTES = 1_000_000
+OPEN_WINDOW_TIMEOUT_SECONDS = 14.0
 ROLE_TYPES = {
     "AXButton": "Button",
     "AXTextField": "Edit",
@@ -425,15 +428,17 @@ class NativeDesktop:
                 time.sleep(0.03)
 
     @staticmethod
-    def catalog() -> list[LaunchEntry]:
+    def catalog(roots: tuple[Path, ...] | None = None) -> list[LaunchEntry]:
         result: dict[Path, LaunchEntry] = {}
         visited = 0
-        for base in (
-            Path("/Applications"),
-            Path.home() / "Applications",
-            Path("/System/Applications"),
-            Path("/System/Library/CoreServices"),
-        ):
+        if roots is None:
+            roots = (
+                Path("/Applications"),
+                Path.home() / "Applications",
+                Path("/System/Applications"),
+                Path("/System/Library/CoreServices"),
+            )
+        for base in roots:
             if not base.is_dir():
                 continue
             # Applications may be grouped one folder deep; do not scan arbitrary contents.
@@ -445,7 +450,12 @@ class NativeDesktop:
                 try:
                     bundle = candidate.resolve()
                     with (bundle / "Contents/Info.plist").open("rb") as stream:
-                        info = plistlib.load(stream)
+                        raw = stream.read(MAX_APP_METADATA_BYTES + 1)
+                    if len(raw) > MAX_APP_METADATA_BYTES:
+                        continue
+                    info = plistlib.loads(raw)
+                    if not isinstance(info, dict):
+                        continue
                     binary = info["CFBundleExecutable"]
                     if not isinstance(binary, str) or "/" in binary or "\\" in binary:
                         continue
@@ -463,7 +473,7 @@ class NativeDesktop:
                         if n
                     )
                     result[bundle] = LaunchEntry(bundle, executable, names)
-                except (OSError, ValueError, KeyError, plistlib.InvalidFileException):
+                except (OSError, ValueError, KeyError, plistlib.InvalidFileException, ExpatError):
                     continue
         return list(result.values())
 
@@ -486,7 +496,10 @@ class NativeDesktop:
     def open_app(self, name: str) -> WindowsResult:
         entry = self.resolve_app(name)
         command(["/usr/bin/open", "-a", str(entry.bundle)], limit=1024)
-        deadline = time.monotonic() + 6
+        # A cold application may have a live process before WindowServer publishes
+        # its first visible window. Observe longer within the transport's open budget;
+        # the launch itself is issued exactly once and is never retried.
+        deadline = time.monotonic() + OPEN_WINDOW_TIMEOUT_SECONDS
         while True:
             matches = [
                 target for target in self.windows() if Path(target.executable) == entry.executable
@@ -500,13 +513,21 @@ class NativeDesktop:
     def with_editor(self, target: WindowTarget) -> WindowTarget:
         # Launch/list must remain useful before Accessibility is granted. Operations
         # requiring fields obtain permission explicitly rather than implying it here.
+        bare = target.model_copy(update={"editor": None, "empty": False})
         self.frameworks()
         if self.ax is None or not self.ax.AXIsProcessTrusted():
-            return target
-        fields = self.editors(self.resolve(target), target)
+            return bare
+        try:
+            fields = self.editors(self.resolve(target), target)
+        except ToolError:
+            # AX can lag WindowServer while a new SwiftUI window is being built.
+            # Editor discovery is optional for opening an app. It never grants a
+            # typing target, and a changed CG/process identity must still fail.
+            fields = []
+        self.resolve_row(target)
         if len(fields) != 1:
-            return target
-        return target.model_copy(
+            return bare
+        return bare.model_copy(
             update={"editor": fields[0], "empty": fields[0].content_sha256 == text_digest("")}
         )
 
@@ -729,11 +750,24 @@ class NativeDesktop:
 
     def inspect(self, depth: int) -> WindowsResult:
         window, target = self.active()
+        window = self.prepared_window(window, target)
         result, _, _ = self.inspection(window, target, depth)
         self.require_foreground(target)
         if self.row_bounds(self.resolve_row(target)) != result.window_rectangle:
             raise ToolError("target_changed")
         return result
+
+    def prepared_window(self, window: Any, target: WindowTarget) -> Any:
+        # Chromium can expose only its toolbar until a trusted accessibility client
+        # requests its renderer tree. A toolbar alone cannot prove password redaction.
+        from jarvis.platforms.macos.ghost import chromium_executable
+
+        if chromium_executable(target.executable):
+            from jarvis.platforms.macos.ghost import prepare_viewport
+
+            prepare_viewport(self, window, target, self.row_bounds(self.resolve_row(target)))
+            return self.resolve(target)
+        return window
 
     def clipboard(self, text: str | None = None, *, plain_only: bool = False) -> str:
         if text is not None:
@@ -812,6 +846,7 @@ class NativeDesktop:
         if not self.quartz.CGPreflightScreenCaptureAccess():
             self.permission_error(screen=True)
         window, target = self.active()
+        window = self.prepared_window(window, target)
         observation, private, complete = self.inspection(window, target, MAX_UIA_DEPTH)
         if not complete:
             raise ToolError("control_unsupported")  # An incomplete tree cannot prove redaction.

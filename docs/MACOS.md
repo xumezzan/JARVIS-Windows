@@ -46,6 +46,12 @@ Finder, Terminal, Code, Cursor и другие приложения из сис�
 AX-действия требуют установленных нативных зависимостей; отсутствующая библиотека
 возвращает диагностическую причину, а не имитирует успех.
 
+Повреждённые или слишком большие Info.plist отдельного приложения пропускаются,
+а не ломают весь каталог. Холодный запуск ждёт реальное окно до 14 секунд в
+общем бюджете helper 20 секунд, без повторного `open`. Не готовое AX-поле не
+превращает успешное открытие окна в ошибку: возвращается заново проверенный
+WindowTarget без редактора, и право на ввод из такого результата не появляется.
+
 В «Системные настройки → Конфиденциальность и безопасность» пользователь разрешает:
 
 - **Универсальный доступ / Accessibility** — наблюдение и управление элементами.
@@ -76,6 +82,13 @@ Calculator пока отказывают на Mac; обычный Calculator д�
 
 HUD 360×120 и Ghost Cursor используют логические координаты и все macOS Spaces,
 включая fullscreen. Оверлей пропускает клики и не выдаёт approvals.
+
+Chromium лениво включает дерево страницы. Для известного executable и только при
+выданном Accessibility helper запрашивает AXRole/AXEnhancedUserInterface и ждёт
+реальный AXWebArea; ответ setter не доказывает готовность. Никакие системные
+разрешения или VoiceOver-настройки не меняются. Это поведение описано в
+[исходниках Chromium](https://raw.githubusercontent.com/chromium/chromium/main/chrome/browser/chrome_browser_application_mac.mm).
+Headed-контексты на Mac используют реальный viewport окна, а не эмуляцию его размера.
 
 ## Файлы и браузер
 
@@ -122,7 +135,7 @@ PermissionEngine, временно проверяет текстовый буф�
 
 MacBook, macOS 27.2, Apple Silicon arm64, Python 3.12.7:
 
-- Полный pytest: **2096 passed, 24 skipped**. Пропущены явные live Windows/model/voice
+- Полный pytest: **2116 passed, 24 skipped**. Пропущены явные live Windows/model/voice
   сценарии и updater fixtures, для которых на этом Mac нет PowerShell.
 - Mypy: **366 файлов без ошибок**, отдельно обычная macOS-конфигурация и
   `--platform win32`. Ruff check и format-check прошли; `pip check` — без конфликтов.
@@ -135,6 +148,10 @@ MacBook, macOS 27.2, Apple Silicon arm64, Python 3.12.7:
   включая точный ввод, клавишу, клик и JPEG с 5 метками; изображение **1280×776**.
   Содержимое clipboard восстановлено со всеми форматами. До выдачи доступа
   отдельно наблюдался корректный `macos_accessibility_required`.
+- Дополнительно подтверждён реальный запуск Calculator по имени и CG identity.
+  В отдельном Chrome for Testing с локальной страницей прошли native viewport,
+  inspect, снимок с **16 метками** и `browser.type` через PermissionEngine с
+  настоящей геометрией Ghost. Native/CSS viewport совпали: **1200×731** логических точек.
 - `python -m jarvis --smoke-test` — success в симуляции. `python -m build` собрал
   sdist и wheel. Проверен состав: macOS workers и prebuilt UI присутствуют,
   `.venv`, node_modules и локальные инструменты исключены. Для sdist включён

@@ -6,8 +6,9 @@ actions, target checks and approvals. Geometry is in macOS logical screen points
 
 import json
 import sys
+import time
 from collections import deque
-from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any
 
 from jarvis.platforms import is_macos
@@ -18,15 +19,34 @@ from jarvis.tools.windows import MAX_UIA_DEPTH, Rectangle, WindowTarget
 
 BROWSER_BUNDLES = {
     "Google Chrome.app": "Google Chrome",
+    "Google Chrome for Testing.app": "Google Chrome for Testing",
     "Microsoft Edge.app": "Microsoft Edge",
     "Brave Browser.app": "Brave Browser",
     "Chromium.app": "Chromium",
 }
+ACCESSIBILITY_ACTIVATION_SECONDS = 3.0
+
+
+class MissingWebArea(ToolError):
+    def __init__(self) -> None:
+        super().__init__("control_unsupported")
+
+
+def _request_renderer_accessibility(desktop: NativeDesktop, application: Any) -> None:
+    """Request Chromium's AX renderer, without changing OS accessibility grants."""
+    result = desktop.ax.AXUIElementSetAttributeValue(application, "AXEnhancedUserInterface", True)
+    if result == -25211:  # kAXErrorAPIDisabled: never try to work around TCC.
+        desktop.permission_error()
+    # Chrome handles this private attribute before forwarding to AppKit, which
+    # can still report Unsupported/NotImplemented. Neither zero nor these errors
+    # prove readiness: only a subsequently observed unique WebArea can do that.
+    if result not in (0, -25205, -25208):
+        raise ToolError("control_unsupported")
 
 
 def chromium_executable(value: str) -> bool:
     """Match the browser's own bundle executable, never a helper or a title."""
-    path = Path(value)
+    path = PurePosixPath(value)
     return (
         path.is_absolute()
         and path.parent.name == "MacOS"
@@ -86,9 +106,62 @@ def viewport_geometry(
             raise ToolError("control_unsupported")
         for index, child in enumerate(children):
             pending.append((child, (*path, index), depth + 1, clipped, scroll_viewport))
+    if not candidates:
+        raise MissingWebArea
     if len(candidates) != 1:
         raise ToolError("control_unsupported")
     return candidates[0]
+
+
+def _current_geometry(
+    desktop: NativeDesktop, target: WindowTarget, bounds: Rectangle
+) -> tuple[Rectangle, tuple[int, ...]]:
+    desktop.accessibility()
+    # active() observes the actual foreground application, not a remembered AX
+    # object. PID/start time/window identity and bounds must still match.
+    current_window, current = desktop.active()
+    current_bounds = desktop.row_bounds(desktop.resolve_row(current))
+    if current.identity != target.identity or current_bounds != bounds:
+        raise ToolError("target_changed")
+    return viewport_geometry(desktop, current_window, current, current_bounds)
+
+
+def prepare_viewport(
+    desktop: NativeDesktop, window: Any, target: WindowTarget, bounds: Rectangle
+) -> tuple[Rectangle, tuple[int, ...]]:
+    """Observe the real Chromium viewport, enabling its lazy AX tree if needed.
+
+    BrowserCrApplication first enables native accessibility on app AXRole reads.
+    AXEnhancedUserInterface additionally enables renderer accessibility, with a
+    two-second Chromium debounce. Only one request is sent, then a bounded wait
+    observes readiness. No TCC, focus, VoiceOver setting or page content changes.
+    """
+    if not chromium_executable(target.executable):
+        raise ToolError("control_unsupported")
+    desktop.accessibility()
+    try:
+        return viewport_geometry(desktop, window, target, bounds)
+    except MissingWebArea:
+        desktop.accessibility()
+        desktop.require_foreground(target)
+        desktop.resolve_row(target)
+        application = desktop.ax.AXUIElementCreateApplication(target.pid)
+        desktop.attr(application, "AXRole")
+        try:
+            return _current_geometry(desktop, target, bounds)
+        except MissingWebArea:
+            _request_renderer_accessibility(desktop, application)
+        deadline = time.monotonic() + ACCESSIBILITY_ACTIVATION_SECONDS
+        while True:
+            try:
+                return _current_geometry(desktop, target, bounds)
+            except MissingWebArea:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise ToolError("control_unsupported") from None
+                # Poll for the real observed AX tree; do not assume its readiness
+                # after a guessed startup delay or resend activation on each poll.
+                time.sleep(min(0.05, remaining))
 
 
 def browser_viewport(desktop: NativeDesktop | None = None) -> dict[str, object]:
@@ -98,7 +171,7 @@ def browser_viewport(desktop: NativeDesktop | None = None) -> dict[str, object]:
     if not chromium_executable(target.executable):
         raise ToolError("control_unsupported")
     bounds = desktop.row_bounds(desktop.resolve_row(target))
-    viewport, path = viewport_geometry(desktop, window, target, bounds)
+    viewport, path = prepare_viewport(desktop, window, target, bounds)
     desktop.require_foreground(target)
     current_window, current = desktop.active()
     current_bounds = desktop.row_bounds(desktop.resolve_row(current))

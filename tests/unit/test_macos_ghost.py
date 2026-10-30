@@ -3,6 +3,7 @@
 import json
 import sys
 from collections.abc import Callable
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -35,11 +36,36 @@ class FakeDesktop:
             title="Observed page",
         )
         self.on_foreground: Callable[[], None] | None = None
+        self.on_activation: Callable[[], None] | None = None
+        self.on_role: Callable[[], None] | None = None
+        self.activation_calls: list[tuple[str, bool]] = []
+        self.trusted = True
+        self.application = {"AXRole": "AXApplication"}
+        self.ax = SimpleNamespace(
+            AXUIElementCreateApplication=lambda pid: self.application,
+            AXUIElementSetAttributeValue=self.activate,
+        )
+
+    def activate(self, application: Any, attribute: str, value: bool) -> int:
+        assert application is self.application
+        self.activation_calls.append((attribute, value))
+        if self.on_activation is not None:
+            self.on_activation()
+        return 0
+
+    def accessibility(self) -> None:
+        if not self.trusted:
+            self.permission_error()
+
+    def permission_error(self) -> None:
+        raise ToolError("control_unsupported", reason=Reason.MACOS_ACCESSIBILITY_REQUIRED)
 
     def active(self) -> tuple[dict[str, Any], WindowTarget]:
         return self.root, self.target
 
     def attr(self, value: dict[str, Any], name: str, default: Any = None) -> Any:
+        if value is self.application and name == "AXRole" and self.on_role is not None:
+            self.on_role()
         return value.get(name, default)
 
     def password(self, value: dict[str, Any]) -> bool:
@@ -63,6 +89,12 @@ class FakeDesktop:
 
 def viewport(desktop: FakeDesktop) -> dict[str, object]:
     return ghost.browser_viewport(cast(NativeDesktop, desktop))
+
+
+@pytest.fixture(autouse=True)
+def immediate_activation_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Readiness is controlled by fake AX events; tests never wait for hardware.
+    monkeypatch.setattr(ghost, "ACCESSIBILITY_ACTIVATION_SECONDS", 0.0)
 
 
 @pytest.mark.parametrize("bundle,binary", list(ghost.BROWSER_BUNDLES.items()))
@@ -107,7 +139,9 @@ def test_document_children_and_iframes_are_never_traversed() -> None:
     root = element(
         "AXWindow", bounds, AXChildren=[element("AXScrollArea", content, AXChildren=[web])]
     )
-    assert viewport(FakeDesktop(root, bounds))["rectangle"] == content.model_dump()
+    desktop = FakeDesktop(root, bounds)
+    assert viewport(desktop)["rectangle"] == content.model_dump()
+    assert not desktop.activation_calls
 
 
 def test_hidden_background_tab_is_not_the_selected_viewport() -> None:
@@ -127,8 +161,111 @@ def test_missing_or_ambiguous_webarea_is_refused(count: int) -> None:
     root = element(
         "AXWindow", bounds, AXChildren=[element("AXWebArea", bounds) for _ in range(count)]
     )
+    desktop = FakeDesktop(root, bounds)
     with pytest.raises(ToolError, match="control_unsupported"):
-        viewport(FakeDesktop(root, bounds))
+        viewport(desktop)
+    assert len(desktop.activation_calls) == (1 if count == 0 else 0)
+
+
+def test_renderer_accessibility_is_requested_once_and_readiness_is_observed() -> None:
+    bounds = rect(0, 0, 1200, 900)
+    content = rect(0, 120, 1200, 900)
+    root = element("AXWindow", bounds, AXChildren=[])
+    desktop = FakeDesktop(root, bounds)
+    desktop.on_activation = lambda: root.update(AXChildren=[element("AXWebArea", content)])
+    assert viewport(desktop)["rectangle"] == content.model_dump()
+    assert desktop.activation_calls == [("AXEnhancedUserInterface", True)]
+
+
+def test_application_role_can_materialize_the_viewport_without_renderer_toggle() -> None:
+    bounds = rect(0, 0, 1200, 900)
+    content = rect(0, 120, 1200, 900)
+    root = element("AXWindow", bounds, AXChildren=[])
+    desktop = FakeDesktop(root, bounds)
+    desktop.on_role = lambda: root.update(AXChildren=[element("AXWebArea", content)])
+    assert viewport(desktop)["rectangle"] == content.model_dump()
+    assert not desktop.activation_calls
+
+
+@pytest.mark.parametrize("ready", [True, False])
+def test_accessibility_wait_observes_readiness_and_is_bounded(
+    ready: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bounds = rect(0, 0, 1200, 900)
+    content = rect(0, 120, 1200, 900)
+    root = element("AXWindow", bounds, AXChildren=[])
+    desktop = FakeDesktop(root, bounds)
+    now = [0.0]
+    sleeps: list[float] = []
+
+    def advance(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += seconds
+        if ready and len(sleeps) == 2:
+            root["AXChildren"] = [element("AXWebArea", content)]
+
+    monkeypatch.setattr(ghost, "ACCESSIBILITY_ACTIVATION_SECONDS", 0.2)
+    monkeypatch.setattr("jarvis.platforms.macos.ghost.time.monotonic", lambda: now[0])
+    monkeypatch.setattr("jarvis.platforms.macos.ghost.time.sleep", advance)
+    if ready:
+        assert viewport(desktop)["rectangle"] == content.model_dump()
+        assert len(sleeps) == 2
+    else:
+        with pytest.raises(ToolError, match="control_unsupported"):
+            viewport(desktop)
+        assert sum(sleeps) == pytest.approx(0.2)
+    assert desktop.activation_calls == [("AXEnhancedUserInterface", True)]
+
+
+def test_permission_is_rechecked_during_the_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    bounds = rect(0, 0, 1200, 900)
+    desktop = FakeDesktop(element("AXWindow", bounds), bounds)
+    monkeypatch.setattr(ghost, "ACCESSIBILITY_ACTIVATION_SECONDS", 0.2)
+    monkeypatch.setattr(
+        "jarvis.platforms.macos.ghost.time.sleep",
+        lambda seconds: setattr(desktop, "trusted", False),
+    )
+    with pytest.raises(ToolError) as caught:
+        viewport(desktop)
+    assert caught.value.reason is Reason.MACOS_ACCESSIBILITY_REQUIRED
+    assert len(desktop.activation_calls) == 1
+
+
+def test_untrusted_client_never_requests_accessibility_activation() -> None:
+    bounds = rect(0, 0, 1200, 900)
+    desktop = FakeDesktop(element("AXWindow", bounds), bounds)
+    desktop.trusted = False
+    with pytest.raises(ToolError) as caught:
+        viewport(desktop)
+    assert caught.value.reason is Reason.MACOS_ACCESSIBILITY_REQUIRED
+    assert not desktop.activation_calls
+
+
+def test_activation_must_not_move_the_target_window() -> None:
+    bounds = rect(0, 0, 1200, 900)
+    desktop = FakeDesktop(element("AXWindow", bounds), bounds)
+    desktop.on_activation = lambda: setattr(desktop, "window_bounds", rect(1, 0, 1201, 900))
+    with pytest.raises(ToolError, match="target_changed"):
+        viewport(desktop)
+    assert len(desktop.activation_calls) == 1
+
+
+@pytest.mark.parametrize("error", [0, -25205, -25208])
+def test_activation_return_is_never_substituted_for_observed_geometry(error: int) -> None:
+    bounds = rect(0, 0, 1200, 900)
+    desktop = FakeDesktop(element("AXWindow", bounds), bounds)
+    desktop.ax.AXUIElementSetAttributeValue = lambda *args: error
+    with pytest.raises(ToolError, match="control_unsupported"):
+        viewport(desktop)
+
+
+def test_permission_revoked_during_activation_is_explicit() -> None:
+    bounds = rect(0, 0, 1200, 900)
+    desktop = FakeDesktop(element("AXWindow", bounds), bounds)
+    desktop.ax.AXUIElementSetAttributeValue = lambda *args: -25211
+    with pytest.raises(ToolError) as caught:
+        viewport(desktop)
+    assert caught.value.reason is Reason.MACOS_ACCESSIBILITY_REQUIRED
 
 
 def test_outside_viewport_is_refused_instead_of_guessing_toolbar_height() -> None:

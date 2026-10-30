@@ -161,6 +161,7 @@ class BrowserSession:
                 self.context = await self.playwright.chromium.launch_persistent_context(
                     str(self.profile_dir.resolve()),
                     headless=self.headless,
+                    no_viewport=not self.headless and sys.platform == "darwin",
                     java_script_enabled=True,
                     service_workers="block",
                     accept_downloads=False,
@@ -193,6 +194,7 @@ class BrowserSession:
                 ],
             )
             self.context = await self.browser.new_context(
+                no_viewport=not self.headless and sys.platform == "darwin",
                 java_script_enabled=self.live,
                 service_workers="block",
                 accept_downloads=False,
@@ -558,7 +560,7 @@ class BrowserSession:
             limit=8192,
         )
         try:
-            async with asyncio.timeout(2):
+            async with asyncio.timeout(5 if sys.platform == "darwin" else 2):
                 assert process.stdout is not None
                 raw = await process.stdout.readuntil(b"\n")
                 await process.wait()

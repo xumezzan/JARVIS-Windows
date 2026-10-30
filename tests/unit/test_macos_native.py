@@ -3,7 +3,9 @@
 import base64
 import io
 import json
+import plistlib
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -370,6 +372,99 @@ def test_app_resolution_only_uses_observed_bundle_and_refuses_ambiguity(
     monkeypatch.setattr(desktop, "catalog", lambda: [entry, entry])
     with pytest.raises(ToolError, match="application_ambiguous"):
         desktop.resolve_app("notepad")
+
+
+@pytest.mark.parametrize(
+    "bad_metadata",
+    [
+        b"<?xml version='1.0'?><plist><dict>\x00</dict></plist>",
+        plistlib.dumps(["valid plist, but not an application metadata dictionary"]),
+        plistlib.dumps({"CFBundleExecutable": "Broken", "unused": "x" * 1_000_000}),
+    ],
+    ids=["malformed-xml", "non-dictionary-plist", "oversized-plist"],
+)
+def test_unrelated_bad_app_metadata_does_not_disable_installed_app_resolution(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, bad_metadata: bytes
+) -> None:
+    broken = tmp_path / "Broken.app" / "Contents"
+    broken.mkdir(parents=True)
+    (broken / "Info.plist").write_bytes(bad_metadata)
+    (broken / "MacOS").mkdir()
+    (broken / "MacOS/Broken").write_bytes(b"")
+    valid = tmp_path / "Calculator.app" / "Contents"
+    (valid / "MacOS").mkdir(parents=True)
+    executable = valid / "MacOS/Calculator"
+    executable.write_bytes(b"")
+    (valid / "Info.plist").write_bytes(
+        plistlib.dumps({"CFBundleExecutable": "Calculator", "CFBundleName": "Calculator"})
+    )
+    catalog = NativeDesktop.catalog((tmp_path,))
+    assert [entry.executable for entry in catalog] == [executable]
+    monkeypatch.setattr(desktop, "catalog", lambda: catalog)
+    assert desktop.resolve_app("calculator").executable == executable
+
+
+@pytest.mark.parametrize("appears", [True, False])
+def test_open_waits_for_observed_window_without_relaunching_after_six_seconds(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch, appears: bool
+) -> None:
+    entry = LaunchEntry(
+        Path("/System/Applications/TextEdit.app"), Path(target().executable), ("TextEdit",)
+    )
+    elapsed = [0.0]
+    calls: list[list[str]] = []
+    monkeypatch.setattr(desktop, "resolve_app", lambda app: entry)
+    monkeypatch.setattr(desktop, "with_editor", lambda observed: observed)
+    monkeypatch.setattr(
+        desktop, "windows", lambda: [target()] if appears and elapsed[0] >= 8 else []
+    )
+    monkeypatch.setattr(native, "command", lambda argv, **kwargs: calls.append(argv))
+    monkeypatch.setattr(time, "monotonic", lambda: elapsed[0])
+    monkeypatch.setattr(time, "sleep", lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds))
+    if appears:
+        assert desktop.open_app("notepad").target == target()
+        assert 8 <= elapsed[0] < 14
+    else:
+        with pytest.raises(ToolError, match="native_timeout"):
+            desktop.open_app("notepad")
+        assert 14 <= elapsed[0] < 14.1
+    assert calls == [["/usr/bin/open", "-a", str(entry.bundle)]]
+
+
+@pytest.mark.parametrize("failure_stage", ["resolve", "editors"])
+def test_optional_editor_ax_failure_keeps_only_revalidated_bare_window(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch, failure_stage: str
+) -> None:
+    old_editor = desktop.editor_target(
+        Node(node("AXTextArea", "Document", AXValue="", settable=True), (123, 0), 1), []
+    )
+    observed = target().model_copy(update={"editor": old_editor, "empty": True})
+
+    def unavailable(*args: Any) -> Any:
+        raise ToolError("target_changed", reason=Reason.STALE_ELEMENT)
+
+    monkeypatch.setattr(
+        desktop, "resolve", unavailable if failure_stage == "resolve" else lambda *args: object()
+    )
+    monkeypatch.setattr(desktop, "editors", unavailable)
+    current = desktop.with_editor(observed)
+    assert current.identity == observed.identity
+    assert current.editor is None and not current.empty
+
+
+def test_optional_editor_failure_cannot_hide_changed_window_identity(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(desktop, "resolve", lambda *args: object())
+
+    def unavailable(*args: Any) -> Any:
+        monkeypatch.setattr(desktop, "window_rows", lambda: [])
+        raise ToolError("target_changed", reason=Reason.STALE_ELEMENT)
+
+    monkeypatch.setattr(desktop, "editors", unavailable)
+    with pytest.raises(ToolError) as caught:
+        desktop.with_editor(target())
+    assert caught.value.reason is Reason.WINDOW_IDENTITY_CHANGED
 
 
 def test_chrome_url_is_a_literal_argument_and_has_no_shell(
