@@ -147,8 +147,12 @@ export function VoiceSettingsPanel({
   const [key, setKey] = useState("");
   const [voice, setVoice] = useState("");
   const [consent, setConsent] = useState(false);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const savingSettingsRef = useRef(false);
   useEffect(
-    () => setSettings(state.settings),
+    () => {
+      if (!savingSettingsRef.current) setSettings(state.settings);
+    },
     [
       state.settings.provider,
       state.settings.model,
@@ -162,10 +166,20 @@ export function VoiceSettingsPanel({
       state.settings.auto_stop_on_silence,
     ],
   );
-  const busy = !state.can_run;
+  const busy = !state.can_run || savingSettings;
   async function configure(next: VoiceSettings) {
+    // A configure request carries the entire settings snapshot. Serialize UI
+    // writes so a later checkbox cannot resend the previous provider/model.
+    if (savingSettingsRef.current || !state.can_run) return;
+    savingSettingsRef.current = true;
+    setSavingSettings(true);
     setSettings(next);
-    await perform(window.jarvis!.configure(next));
+    try {
+      await perform(window.jarvis!.configure(next));
+    } finally {
+      savingSettingsRef.current = false;
+      setSavingSettings(false);
+    }
   }
   return (
     <section className="glass-card settings-card runtime-form">

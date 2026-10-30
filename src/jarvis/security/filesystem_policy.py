@@ -4,6 +4,7 @@ from pathlib import Path
 
 from pydantic import Field
 
+from jarvis.files.protected import macos_path_denied
 from jarvis.tools.base import ToolError, ToolModel
 
 TEXT_EXTENSIONS = {".txt", ".md", ".json", ".csv", ".py"}
@@ -54,6 +55,8 @@ class FilePolicy(ToolModel):
                 raise ToolError("file_denied")
             path = Path(alias.path).joinpath(*rest)
         if ".." in path.parts or not path.is_absolute():
+            raise ToolError("file_denied")
+        if macos_path_denied(path):
             raise ToolError("file_denied")
         candidates = [Path(root.path) for root in self.roots if path.is_relative_to(root.path)]
         root = max(candidates, key=lambda value: len(value.parts)) if candidates else None

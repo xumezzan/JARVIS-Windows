@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from jarvis.browser.host import BrowserHost
 from jarvis.observability.audit import AuditLog
+from jarvis.observability.diagnostics import failure_message
 from jarvis.permissions.approvals import Action, ApprovalStore
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Mode, Risk, Status
@@ -85,12 +86,12 @@ class PermissionWorkbench(QDialog):
         outer.addWidget(scroll)
         layout = QVBoxLayout(content)
         intro = QLabel(
-            "Windows: открытие приложений, выбор окна "
+            "Рабочий стол Windows/macOS: открытие приложений, выбор окна "
             "и подтверждаемая замена текста в наблюдавшемся редакторе. "
             "Браузер: чтение разрешённых страниц и поиск с подтверждением переходов."
             + (
-                " На этой ОС доступна только симуляция Windows-инструментов."
-                if sys.platform != "win32"
+                " На этой ОС доступна только симуляция инструментов рабочего стола."
+                if sys.platform not in ("win32", "darwin")
                 else ""
             )
         )
@@ -105,10 +106,10 @@ class PermissionWorkbench(QDialog):
         self.tool_choice.addItem("CRITICAL — отключено", "local.critical_test")
         self.tool_choice.addItem("BLOCKED — запрещено", "local.blocked_test")
         for title, tool in (
-            ("Windows — список окон", "windows.get_open_windows"),
-            ("Windows — открыть приложение", "windows.open_app"),
-            ("Windows — фокус на окно", "windows.focus_app"),
-            ("Windows — текст в выбранный редактор (SAFE)", "windows.type_text"),
+            ("Рабочий стол — список окон", "windows.get_open_windows"),
+            ("Рабочий стол — открыть приложение", "windows.open_app"),
+            ("Рабочий стол — фокус на окно", "windows.focus_app"),
+            ("Рабочий стол — текст в выбранный редактор (SAFE)", "windows.type_text"),
         ):
             self.tool_choice.addItem(title, tool)
         for title, operation in (
@@ -130,9 +131,10 @@ class PermissionWorkbench(QDialog):
         # Editable: any installed application can be named, not only these shortcuts.
         self.app_choice.setEditable(True)
         self.app_choice.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        for title, app in (("Блокнот", "notepad"), ("Chrome", "chrome"), ("VS Code", "code")):
+        editor = "TextEdit" if sys.platform == "darwin" else "Блокнот"
+        for title, app in ((editor, "notepad"), ("Chrome", "chrome"), ("VS Code", "code")):
             self.app_choice.addItem(title, app)
-        form.addRow("Приложение Windows", self.app_choice)
+        form.addRow("Приложение", self.app_choice)
         self.target_choice = QComboBox()
         self.target_choice.setMinimumContentsLength(20)
         self.target_choice.setSizeAdjustPolicy(
@@ -216,7 +218,7 @@ class PermissionWorkbench(QDialog):
         self.target_choice.setToolTip(
             "<pre>"
             + escape(
-                f"{target.title}\n{target.executable}\nPID {target.pid} · HWND {target.handle}"
+                f"{target.title}\n{target.executable}\nPID {target.pid} · Window ID {target.handle}"
             )
             + "</pre>"
             if isinstance(target, WindowTarget)
@@ -390,17 +392,13 @@ class PermissionWorkbench(QDialog):
                 else:
                     text = "SUCCESS — выбранное окно получило фокус."
             elif result.status not in (Status.SUCCESS, Status.SIMULATED):
-                reasons = {
-                    "unsupported_platform": "Реальный запуск требует Windows 11.",
-                    "application_missing": "Приложение не найдено в поддерживаемых каталогах.",
-                    "target_changed": "Окно, вкладка или содержимое изменились. Обновите список.",
-                    "control_unsupported": "Редактор этой версии приложения не поддерживается.",
-                    "native_timeout": "Windows-адаптер превысил время ожидания.",
-                    "native_failure": "Windows-адаптер недоступен или завершился с ошибкой.",
-                }
-                reason = reasons.get(result.error.value, messages[result.status])
+                reason = failure_message(result.error.value, result.reason, result.may_have_effects)
                 text = f"{result.status.value} — {reason}"
-        if result.may_have_effects and result.status is not Status.SUCCESS:
+        if (
+            result.may_have_effects
+            and result.status is not Status.SUCCESS
+            and not self._result_tool.startswith("windows.")
+        ):
             text += " Adapter уже был вызван; отсутствие изменений не гарантируется."
         if self._result_tool.startswith("browser."):
             if result.status is Status.SUCCESS and result.result_json is not None:

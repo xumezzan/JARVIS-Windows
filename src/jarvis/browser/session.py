@@ -161,6 +161,7 @@ class BrowserSession:
                 self.context = await self.playwright.chromium.launch_persistent_context(
                     str(self.profile_dir.resolve()),
                     headless=self.headless,
+                    no_viewport=not self.headless and sys.platform == "darwin",
                     java_script_enabled=True,
                     service_workers="block",
                     accept_downloads=False,
@@ -193,6 +194,7 @@ class BrowserSession:
                 ],
             )
             self.context = await self.browser.new_context(
+                no_viewport=not self.headless and sys.platform == "darwin",
                 java_script_enabled=self.live,
                 service_workers="block",
                 accept_downloads=False,
@@ -546,7 +548,11 @@ class BrowserSession:
             sys.executable,
             "-I",
             "-m",
-            "jarvis.platforms.windows.ghost",
+            (
+                "jarvis.platforms.macos.ghost"
+                if sys.platform == "darwin"
+                else "jarvis.platforms.windows.ghost"
+            ),
             "--viewport",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
@@ -554,7 +560,7 @@ class BrowserSession:
             limit=8192,
         )
         try:
-            async with asyncio.timeout(2):
+            async with asyncio.timeout(5 if sys.platform == "darwin" else 2):
                 assert process.stdout is not None
                 raw = await process.stdout.readuntil(b"\n")
                 await process.wait()
@@ -563,6 +569,12 @@ class BrowserSession:
                 import json
 
                 result = json.loads(raw)
+                if result.get("error") is not None:
+                    from jarvis.platforms.windows.transport import NativeReply
+
+                    denied = NativeReply.model_validate_json(raw)
+                    assert denied.error is not None
+                    raise ToolError(denied.error, reason=denied.reason)
                 rect = Rectangle.model_validate(result["rectangle"])
                 viewport = await page.evaluate("() => ({width: innerWidth, height: innerHeight})")
                 return rect, int(result["window_handle"]), viewport["width"], viewport["height"]

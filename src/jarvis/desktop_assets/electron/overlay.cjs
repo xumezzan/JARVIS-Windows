@@ -2,11 +2,13 @@ const path = require("node:path");
 
 // Owned display-only windows. No task/approval/voice APIs are exposed to them.
 class Overlay {
-  constructor({ BrowserWindow, screen, ipcMain, globalShortcut }, main, url, {taskHud = false} = {}) {
+  constructor({ BrowserWindow, screen, ipcMain, globalShortcut }, main, url,
+    {taskHud = false, platform = process.platform} = {}) {
     this.main = main;
     this.screen = screen;
     this.state = null;
     this.taskHud = taskHud;
+    this.platform = platform;
     this.active = false;
     this.hintActive = false;
     this.restoredTask = "";
@@ -15,6 +17,7 @@ class Overlay {
       frame: false, transparent: true, backgroundColor: "#00000000",
       show: false, alwaysOnTop: true, focusable: false, skipTaskbar: true,
       resizable: false, maximizable: false, minimizable: false, hasShadow: false,
+      ...(platform === "darwin" ? {type: "panel"} : {}),
       webPreferences: {
         preload: path.join(__dirname, "overlay-preload.cjs"),
         partition: "jarvis-desktop", contextIsolation: true, nodeIntegration: false,
@@ -26,6 +29,10 @@ class Overlay {
     for (const window of [this.hud, this.target]) {
       window.setIgnoreMouseEvents(true, { forward: true });
       window.setAlwaysOnTop(true, "screen-saver");
+      if (platform === "darwin") {
+        window.setVisibleOnAllWorkspaces(true, {visibleOnFullScreen: true});
+        window.setHiddenInMissionControl(true);
+      }
       window.setMenu(null);
       window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
       for (const name of ["will-navigate", "will-redirect", "will-attach-webview"])
@@ -130,8 +137,10 @@ class Overlay {
     if (this.pendingPaint) this.pendingPaint.reject(new Error("target_superseded"));
     const paint = { id: message.id };
     const { left, top, right, bottom } = message.rectangle;
-    const physical = { x: left, y: top, width: right - left, height: bottom - top };
-    const rect = process.platform === "win32" ? this.screen.screenToDipRect(null, physical) : physical;
+    const native = { x: left, y: top, width: right - left, height: bottom - top };
+    // Windows UIA returns physical pixels; macOS AX/CGWindow rectangles already use
+    // logical screen points, including Retina and displays with a negative origin.
+    const rect = this.platform === "win32" ? this.screen.screenToDipRect(null, native) : native;
     if (![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite) ||
         rect.width <= 0 || rect.height <= 0) throw new Error("target_invalid");
     const displays = this.screen.getAllDisplays?.().map(d => d.bounds) ||

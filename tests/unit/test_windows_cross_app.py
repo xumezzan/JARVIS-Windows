@@ -148,6 +148,7 @@ async def test_screenshot_engine_handoff_excludes_image_from_text_result(
         ("clipboard_get", {}, Risk.SAFE),
         ("clipboard_set", {"text": "PRIVATE_CLIPBOARD"}, Risk.SAFE),
         ("send_hotkey", {"target": target().model_dump(), "hotkey": "Enter"}, Risk.CONFIRM),
+        ("send_hotkey", {"target": target().model_dump(), "hotkey": "Ctrl+Z"}, Risk.CONFIRM),
         (
             "click_element",
             {"target": target().model_dump(), "element": ELEMENT.model_dump()},

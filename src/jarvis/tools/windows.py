@@ -1,4 +1,4 @@
-"""Portable Windows schemas and registered operations. No native imports here."""
+"""Portable desktop schemas with legacy windows.* names. No native imports here."""
 
 import json
 from collections.abc import Callable
@@ -123,7 +123,7 @@ class OpenApp(ToolModel):
     app: AppId = Field(
         description=(
             "Installed application's spoken name, for example 'Блокнот' or 'Notepad'. "
-            "Windows resolves the name and returns an observed window target. "
+            "The host OS resolves the name and returns an observed window target. "
             "Do not supply a path, arguments or native window identifiers."
         )
     )
@@ -358,7 +358,7 @@ class ClipboardSet(ToolModel):
 
 class SendHotkey(ToolModel):
     target: WindowTarget
-    hotkey: Literal["Ctrl+C", "Ctrl+V", "Ctrl+A", "Enter", "Tab", "Alt+F4"]
+    hotkey: Literal["Ctrl+C", "Ctrl+V", "Ctrl+A", "Ctrl+Z", "Enter", "Tab", "Alt+F4"]
     clipboard_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
     @model_validator(mode="after")
@@ -795,7 +795,7 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
     def hotkey_risk(args: ToolModel) -> Risk:
         assert isinstance(args, SendHotkey)
         # Enter may submit; Alt+F4 may discard unsaved work. No focused-control snapshot.
-        return Risk.CONFIRM if args.hotkey in ("Enter", "Alt+F4") else Risk.SAFE
+        return Risk.CONFIRM if args.hotkey in ("Enter", "Alt+F4", "Ctrl+Z") else Risk.SAFE
 
     def click_risk(args: ToolModel) -> Risk:
         assert isinstance(args, ClickElement)
