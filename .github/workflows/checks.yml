@@ -56,7 +56,8 @@ jobs:
         run: node --test desktop/electron/*.test.cjs
 
       - name: Verify the Electron runtime starts
-        run: node -e "require('node:child_process').execFileSync(require('./desktop/node_modules/electron'), ['--version'], {stdio: 'inherit'})"
+        run: >-
+          node -e "require('node:child_process').execFileSync(require('./desktop/node_modules/electron'), ['--version'], {stdio: 'inherit'})"
 
       - name: Install the browser the integration tests drive
         run: python -m playwright install chromium
