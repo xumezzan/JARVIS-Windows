@@ -8,7 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const target = path.join(root, "../src/jarvis/desktop_assets");
 const files = ["package.json", "electron/main.cjs", "electron/preload.cjs", "electron/runtime.cjs",
   "electron/environment.cjs", "electron/overlay.cjs", "electron/overlay-preload.cjs",
-  "electron/hud-mode.cjs", "electron/clipboard.cjs", "electron/target.html"];
+  "electron/hud-mode.cjs", "electron/clipboard.cjs", "electron/window-options.cjs", "electron/target.html"];
 async function tree(directory) {
   const result = [];
   for (const entry of await fs.readdir(directory, { withFileTypes: true })) {

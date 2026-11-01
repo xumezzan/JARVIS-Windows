@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, session, dialog, screen, globalShortcut, clipboard } = require("electron");
 const { Overlay } = require("./overlay.cjs");
 const { TaskHudWindow } = require("./hud-mode.cjs");
+const { mainWindowOptions } = require("./window-options.cjs");
 const { clipboardSample } = require("./clipboard.cjs");
 const path = require("node:path");
 const fs = require("node:fs/promises");
@@ -326,13 +327,7 @@ async function createWindow() {
   });
 
   mainWindow = new BrowserWindow({
-    width: 1536,
-    height: 1024,
-    useContentSize: true,
-    enableLargerThanScreen: true,
-    minWidth: 1024,
-    minHeight: 720,
-    frame: false,
+    ...mainWindowOptions(screen),
     show: false,
     backgroundColor: "#060c12",
     title: "Jarvis",

@@ -240,6 +240,12 @@ svg {
 .window-close:hover:not(:disabled) {
   color: var(--error);
 }
+.app-shell[data-native-window-controls="true"] .sidebar {
+  padding-top: var(--titlebar-height);
+}
+.app-shell[data-native-window-controls="true"] .window-controls {
+  display: none;
+}
 .dashboard {
   height: calc(100dvh - var(--titlebar-height));
   min-height: 830px;

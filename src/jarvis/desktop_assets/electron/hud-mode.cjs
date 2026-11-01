@@ -1,9 +1,10 @@
 // Main-process window presentation only. Runtime owns tasks; no approval authority here.
 class TaskHudWindow {
-  constructor(window, screen, notify) {
+  constructor(window, screen, notify, {platform = process.platform} = {}) {
     this.window = window;
     this.screen = screen;
     this.notify = notify;
+    this.platform = platform;
     this.saved = null;
     this.restoredTask = "";
     this.state = null;
@@ -37,6 +38,7 @@ class TaskHudWindow {
       this.window.setMaximumSize(0, 0);
       this.window.setResizable(false);
       this.window.setAlwaysOnTop(true, "floating");
+      if (this.platform === "darwin") this.window.setWindowButtonVisibility(false);
       this.notify("hud");
       this.position();
       this.window.showInactive();
@@ -63,6 +65,7 @@ class TaskHudWindow {
         y: Math.max(area.y, Math.min(bounds.y, area.y + area.height - height))};
     }
     this.window.setBounds(bounds);
+    if (this.platform === "darwin") this.window.setWindowButtonVisibility(true);
     this.window.setMinimumSize(...saved.minimum);
     this.window.setMaximumSize(...saved.maximum);
     if (saved.maximized) this.window.maximize();

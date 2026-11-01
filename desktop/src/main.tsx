@@ -301,7 +301,10 @@ function App() {
   );
   return (
     <MotionConfig reducedMotion="user">
-      <div className="app-shell">
+      <div
+        className="app-shell"
+        data-native-window-controls={window.jarvisWindow?.nativeWindowControls || undefined}
+      >
         <a
           className="skip-link"
           href="#main-content"

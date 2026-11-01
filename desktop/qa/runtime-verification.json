@@ -4,11 +4,23 @@
     "pass": true
   },
   {
-    "check": "isolated renderer, fixed window and no exposed approval API",
+    "check": "isolated renderer, display-fitting window and no exposed approval API",
     "size": [
-      1536,
-      1024
+      1512,
+      859
     ],
+    "bounds": {
+      "x": 0,
+      "y": 33,
+      "width": 1512,
+      "height": 859
+    },
+    "workArea": {
+      "x": 0,
+      "y": 33,
+      "width": 1512,
+      "height": 859
+    },
     "contextIsolation": true,
     "nodeIntegration": false,
     "sandbox": true

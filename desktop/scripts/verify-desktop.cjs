@@ -6,7 +6,9 @@ const { _electron } = require("playwright");
 (async () => {
   const root = path.resolve(__dirname, "..");
   const data = await fs.mkdtemp(path.join(os.tmpdir(), "jarvis-desktop-e2e-"));
-  const environment = { ...process.env, JARVIS_DATA_DIR: data };
+  const environment = { ...process.env, JARVIS_DATA_DIR: data,
+    JARVIS_PYTHON: process.env.JARVIS_PYTHON || path.join(root, "..", ".venv",
+      process.platform === "win32" ? "Scripts/python.exe" : "bin/python") };
   delete environment.ELECTRON_RUN_AS_NODE;
   const application = await _electron.launch({
     executablePath: require("electron"),
@@ -60,17 +62,33 @@ const { _electron } = require("playwright");
         "clean session is real backend state; no seeded data or test tools",
       pass: true,
     });
-    const security = await application.evaluate(({ BrowserWindow }) => {
+    const security = await application.evaluate(({ BrowserWindow, screen }) => {
       const w = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith("/index.html")),
         p = w.webContents.getLastWebPreferences();
       return {
         size: w.getContentSize(),
+        bounds: w.getBounds(),
+        workArea: screen.getDisplayMatching(w.getBounds()).workArea,
         contextIsolation: p.contextIsolation,
         nodeIntegration: p.nodeIntegration,
         sandbox: p.sandbox,
       };
     });
-    assert.deepEqual(security.size, [1536, 1024]);
+    assert.deepEqual([security.bounds.width, security.bounds.height],
+      [Math.min(1536, security.workArea.width), Math.min(1024, security.workArea.height)]);
+    assert.ok(security.bounds.x >= security.workArea.x);
+    assert.ok(security.bounds.y >= security.workArea.y);
+    assert.ok(security.bounds.x + security.bounds.width <= security.workArea.x + security.workArea.width);
+    assert.ok(security.bounds.y + security.bounds.height <= security.workArea.y + security.workArea.height);
+    if (process.platform === "darwin") {
+      assert.equal(await page.evaluate(() => window.jarvisWindow.nativeWindowControls), true);
+      assert.equal(await page.locator(".window-controls").isVisible(), false);
+      const position = await application.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith("/index.html")).getWindowButtonPosition());
+      assert.deepEqual(position, { x: 16, y: 18 });
+      const safeArea = await page.locator(".wordmark").boundingBox();
+      assert.ok(safeArea.y >= 48, JSON.stringify(safeArea));
+    }
     assert.equal(security.contextIsolation, true);
     assert.equal(security.nodeIntegration, false);
     assert.equal(security.sandbox, true);
@@ -80,7 +98,7 @@ const { _electron } = require("playwright");
     );
     assert.equal(await page.evaluate(() => typeof window.require), "undefined");
     checks.push({
-      check: "isolated renderer, fixed window and no exposed approval API",
+      check: "isolated renderer, display-fitting window and no exposed approval API",
       ...security,
     });
     await page.screenshot({
@@ -324,14 +342,26 @@ const { _electron } = require("playwright");
       const w = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith("/index.html"));
       w.setContentSize(1536, 1024);
     });
-    await page.getByRole("button", { name: "Развернуть окно" }).click();
+    await page.evaluate(() => window.jarvisWindow.minimize());
+    await application.evaluate(({ BrowserWindow }) => new Promise(resolve => {
+      const w = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith("/index.html"));
+      if (w.isMinimized()) resolve(); else w.once("minimize", resolve);
+    }));
+    await application.evaluate(({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith("/index.html"));
+      w.restore(); w.show(); w.focus();
+    });
+    if (process.platform === "darwin") await page.evaluate(() => window.jarvisWindow.maximize());
+    else await page.getByRole("button", { name: "Развернуть окно" }).click();
     assert.equal(
       await page.evaluate(() => window.jarvisWindow.isMaximized()),
       true,
     );
-    await page.getByRole("button", { name: "Развернуть окно" }).click();
+    if (process.platform === "darwin") await page.evaluate(() => window.jarvisWindow.maximize());
+    else await page.getByRole("button", { name: "Развернуть окно" }).click();
     const closing = page.waitForEvent("close");
-    await page.getByRole("button", { name: "Закрыть окно" }).click();
+    if (process.platform === "darwin") await page.evaluate(() => window.jarvisWindow.close());
+    else await page.getByRole("button", { name: "Закрыть окно" }).click();
     await closing;
     checks.push({
       check: "native custom window controls and owned runtime shutdown",

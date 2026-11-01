@@ -26,19 +26,33 @@ class Window {
   setMaximumSize(...size) { this.maximum = size; }
   setResizable(value) { this.resizable = value; }
   setAlwaysOnTop(value) { this.top = value; }
+  setWindowButtonVisibility(value) { this.nativeButtons = value; }
   showInactive() { this.visible = true; }
   show() { this.visible = true; }
   focus() { this.focused = true; }
 }
-function setup() {
+function setup(platform = 'win32') {
   const screen = new EventEmitter();
   screen.getDisplayMatching = () => ({workArea: {x:-1920, y:0, width:1920, height:1080}});
   const window = new Window();
   const modes = [];
-  const hud = new TaskHudWindow(window, screen, mode => modes.push(mode));
+  const hud = new TaskHudWindow(window, screen, mode => modes.push(mode), {platform});
   return {window, screen, hud, modes};
 }
 const active = {task: {id: "task", state: "working", phase: "executing"}, prompt: null};
+test("macOS native buttons return for confirmations and completed tasks", () => {
+  const { window, hud } = setup('darwin');
+  hud.update(active);
+  assert.equal(window.nativeButtons, false);
+  assert.deepEqual([window.bounds.width, window.bounds.height], [360, 120]);
+  hud.update({...active, prompt: {id: 'approve', kind: 'approval'}});
+  assert.equal(window.nativeButtons, true);
+  hud.update(active);
+  assert.equal(window.nativeButtons, false);
+  hud.update({task: {id: 'task', state: 'finished'}});
+  assert.equal(window.nativeButtons, true);
+  hud.dispose();
+});
 
 test("an inline cloud-data question restores the full window before transmission", () => {
   const {window, hud} = setup();

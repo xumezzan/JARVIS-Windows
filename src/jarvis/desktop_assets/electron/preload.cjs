@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 // Expose only fixed, argument-free window controls; no generic IPC or OS access.
 contextBridge.exposeInMainWorld("jarvisWindow", {
+  nativeWindowControls: process.platform === "darwin",
   minimize: () => ipcRenderer.invoke("jarvis-window:minimize"),
   maximize: () => ipcRenderer.invoke("jarvis-window:maximize"),
   close: () => ipcRenderer.invoke("jarvis-window:close"),
