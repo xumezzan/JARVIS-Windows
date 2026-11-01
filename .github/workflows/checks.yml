@@ -43,13 +43,20 @@ jobs:
           cache: npm
           cache-dependency-path: desktop/package-lock.json
 
-      - name: Build and verify the desktop runtime
-        run: |
-          npm --prefix desktop ci
-          node desktop/node_modules/electron/install.js
-          npm --prefix desktop run build
-          node --test desktop/electron/*.test.cjs
-          node -e "require('node:child_process').execFileSync(require('./desktop/node_modules/electron'), ['--version'], {stdio: 'inherit'})"
+      - name: Install desktop dependencies
+        run: npm --prefix desktop ci
+
+      - name: Install the reviewed Electron binary
+        run: node desktop/node_modules/electron/install.js
+
+      - name: Build the desktop
+        run: npm --prefix desktop run build
+
+      - name: Test desktop native contracts
+        run: node --test desktop/electron/*.test.cjs
+
+      - name: Verify the Electron runtime starts
+        run: node -e "require('node:child_process').execFileSync(require('./desktop/node_modules/electron'), ['--version'], {stdio: 'inherit'})"
 
       - name: Install the browser the integration tests drive
         run: python -m playwright install chromium
