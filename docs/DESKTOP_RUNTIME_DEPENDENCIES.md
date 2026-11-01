@@ -21,6 +21,7 @@ All other registry records and package constraints are unchanged.
 ```sh
 npm --prefix desktop ci
 npm --prefix desktop audit --audit-level=high
+node desktop/node_modules/electron/install.js
 npm --prefix desktop run build
 node --test desktop/electron/*.test.cjs
 git diff --check
@@ -34,8 +35,23 @@ Windows explicitly and restores the original property after the test, including
 on failure. Its original coordinate and invalid-target assertions remain intact;
 production overlay behavior is unchanged.
 
+The explicit binary-install command prepares Electron before direct Python packaging.
+`npm ci` installs the JavaScript package; current Electron releases otherwise fetch
+their binary lazily when the module is first used. See the official
+[binary download instructions](https://www.electronjs.org/docs/latest/tutorial/installation#binary-download-step).
+
 This change is based directly on main `5792446586ced17fa9b0ea19f27745c3fc9da564`.
 The separate native macOS implementation remains in PR #71. A local acceptance
 checkout of that PR with the updated dependency lock also passed its 23 Node tests.
+Its 124 focused Python checks passed, and the real PermissionEngine native probe
+passed all 10 operations: window observation, exact field input, hotkey, semantic
+click and a marked 1280×776 window capture. Clipboard formats were restored. The
+sanitized result is [recorded separately](macos-native-recheck-20261101.json).
+
+The development environment had pointed into a missing `Caches/JarvisDev` directory.
+It was rebuilt under `~/Library/Application Support/JarvisDev`, with direct local
+development links, and a fresh acceptance checkout there avoids waiting for iCloud
+to hydrate the existing repository. The original feature branch was not edited.
+
 These results do not establish Windows hardware, live accounts or microphone
 acceptance. Python and hosted Windows gates are tracked with the pull request.
