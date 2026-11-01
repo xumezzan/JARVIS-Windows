@@ -5,9 +5,13 @@ desktop (Retina logical points, excluding the menu bar and Dock). Its right-hand
 HTML controls could be outside the screen, and native macOS controls were disabled.
 
 The main process now chooses the display under the pointer and fits the initial
-outer window to its work area, including displays with negative origins. Minimum
+outer window to its work area with a 16-point edge inset, including displays with
+negative origins. The inset also tolerates small Dock-area changes during startup. Minimum
 sizes shrink when necessary. macOS uses native close/minimize/zoom buttons at the
-top left with space above the sidebar wordmark; Windows keeps its HTML controls.
+top left with space above the sidebar wordmark. Persistent high-contrast HTML
+controls at the top right remain available when macOS shows its window-sharing
+indicator in place of traffic lights. Windows keeps its existing HTML controls.
+The title bar stays at the top when a short window or a long panel is scrolled.
 The green Mac button zooms the window instead of entering a separate fullscreen
 Space, so the same window can still become the task HUD. Native buttons hide only
 in the existing 360×120 HUD and return when it restores for a result or prompt.
@@ -28,9 +32,9 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q \
 ```
 
 On the MacBook, 27 Node tests and 84 focused Python tests passed. Real Electron E2E
-observed outer bounds `{x:0,y:33,width:1512,height:859}` inside the exact work area,
-native button position `{x:16,y:18}`, a clear wordmark safe area and hidden duplicate
-HTML controls. Minimize/restore, zoom/restore, close, owned runtime shutdown,
+observed the window inside the work area with its edge inset,
+native button position `{x:16,y:18}`, a clear wordmark safe area and all three HTML
+controls inside the viewport. Minimize/restore, zoom/restore, close, owned runtime shutdown,
 simulation, cancellation and renderer isolation passed. Ruff, format, win32 mypy,
 Qt simulated startup and Python source/wheel builds passed. The sanitized existing
 `desktop/qa/runtime-verification.json` records this run.

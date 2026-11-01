@@ -189,8 +189,15 @@ svg {
 }
 .workspace {
   margin-left: var(--sidebar-width);
+  padding-top: var(--titlebar-height);
 }
 .titlebar {
+  position: fixed;
+  top: 0;
+  left: var(--sidebar-width);
+  right: 0;
+  z-index: 4;
+  background: var(--background-deep);
   height: var(--titlebar-height);
   display: flex;
   align-items: center;
@@ -243,8 +250,15 @@ svg {
 .app-shell[data-native-window-controls="true"] .sidebar {
   padding-top: var(--titlebar-height);
 }
-.app-shell[data-native-window-controls="true"] .window-controls {
-  display: none;
+.app-shell[data-native-window-controls="true"] .window-controls button {
+  color: var(--foreground);
+  background: var(--glass-raised);
+}
+.app-shell[data-native-window-controls="true"] .window-controls svg {
+  stroke-width: 1.75;
+}
+.app-shell[data-native-window-controls="true"] .window-close:hover:not(:disabled) {
+  color: var(--error);
 }
 .dashboard {
   height: calc(100dvh - var(--titlebar-height));

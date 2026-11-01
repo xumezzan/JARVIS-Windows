@@ -1,8 +1,8 @@
 // Display geometry and native chrome are trusted main-process decisions.
 function mainWindowOptions(screen, platform = process.platform) {
   const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-  const width = Math.min(1536, workArea.width);
-  const height = Math.min(1024, workArea.height);
+  const width = Math.min(1536, Math.max(1, workArea.width - 32));
+  const height = Math.min(1024, Math.max(1, workArea.height - 32));
   return {
     x: workArea.x + Math.floor((workArea.width - width) / 2),
     y: workArea.y + Math.floor((workArea.height - height) / 2),

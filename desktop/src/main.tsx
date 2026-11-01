@@ -357,6 +357,7 @@ function App() {
               <button
                 disabled={!window.jarvisWindow}
                 aria-label="Свернуть окно"
+                title="Свернуть"
                 onClick={() => window.jarvisWindow?.minimize()}
               >
                 <Minus />
@@ -364,6 +365,7 @@ function App() {
               <button
                 disabled={!window.jarvisWindow}
                 aria-label="Развернуть окно"
+                title="Развернуть / восстановить"
                 onClick={() => window.jarvisWindow?.maximize()}
               >
                 <Square />
@@ -372,6 +374,7 @@ function App() {
                 disabled={!window.jarvisWindow}
                 className="window-close"
                 aria-label="Закрыть окно"
+                title="Закрыть"
                 onClick={() => window.jarvisWindow?.close()}
               >
                 <X />

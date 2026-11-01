@@ -15,7 +15,7 @@ function options(workArea, platform = "darwin") {
 
 test("MacBook startup fits the usable Retina work area in logical points", () => {
   const window = options({ x: 0, y: 33, width: 1512, height: 859 });
-  assert.deepEqual([window.x, window.y, window.width, window.height], [0, 33, 1512, 859]);
+  assert.deepEqual([window.x, window.y, window.width, window.height], [16, 49, 1480, 827]);
   assert.equal(window.useContentSize, false);
   assert.equal(window.enableLargerThanScreen, false);
   assert.equal(window.frame, true);
@@ -34,10 +34,10 @@ test("larger Windows displays retain the preferred size and custom controls", ()
 
 test("a secondary display with a negative origin keeps the whole window reachable", () => {
   const window = options({ x: -1920, y: 40, width: 1440, height: 860 });
-  assert.deepEqual([window.x, window.y, window.width, window.height], [-1920, 40, 1440, 860]);
+  assert.deepEqual([window.x, window.y, window.width, window.height], [-1904, 56, 1408, 828]);
 });
 
 test("minimum size never forces a small desktop window beyond its work area", () => {
   const window = options({ x: 0, y: 20, width: 800, height: 580 }, "linux");
-  assert.deepEqual([window.width, window.height, window.minWidth, window.minHeight], [800, 580, 800, 580]);
+  assert.deepEqual([window.width, window.height, window.minWidth, window.minHeight], [768, 548, 768, 548]);
 });

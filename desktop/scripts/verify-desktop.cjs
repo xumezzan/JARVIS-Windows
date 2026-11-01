@@ -74,15 +74,21 @@ const { _electron } = require("playwright");
         sandbox: p.sandbox,
       };
     });
-    assert.deepEqual([security.bounds.width, security.bounds.height],
-      [Math.min(1536, security.workArea.width), Math.min(1024, security.workArea.height)]);
+    // The Dock can change workArea during startup; containment is the invariant.
+    assert.ok(security.bounds.width > 0 && security.bounds.width <= 1536);
+    assert.ok(security.bounds.height > 0 && security.bounds.height <= 1024);
     assert.ok(security.bounds.x >= security.workArea.x);
     assert.ok(security.bounds.y >= security.workArea.y);
     assert.ok(security.bounds.x + security.bounds.width <= security.workArea.x + security.workArea.width);
     assert.ok(security.bounds.y + security.bounds.height <= security.workArea.y + security.workArea.height);
     if (process.platform === "darwin") {
       assert.equal(await page.evaluate(() => window.jarvisWindow.nativeWindowControls), true);
-      assert.equal(await page.locator(".window-controls").isVisible(), false);
+      assert.equal(await page.locator(".window-controls").isVisible(), true);
+      for (const name of ["Свернуть окно", "Развернуть окно", "Закрыть окно"]) {
+        const bounds = await page.getByRole("button", { name, exact: true }).boundingBox();
+        assert.ok(bounds && bounds.x >= 0 && bounds.y >= 0 &&
+          bounds.x + bounds.width <= security.size[0] && bounds.y + bounds.height <= security.size[1], name);
+      }
       const position = await application.evaluate(({ BrowserWindow }) =>
         BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith("/index.html")).getWindowButtonPosition());
       assert.deepEqual(position, { x: 16, y: 18 });
@@ -339,6 +345,18 @@ const { _electron } = require("playwright");
     assert.deepEqual(errors, []);
     checks.push({ check: "renderer errors", errors });
     await application.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith("/index.html")).setContentSize(1280, 720);
+    });
+    await page.waitForFunction(() => innerWidth === 1280 && innerHeight === 720);
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    const chrome = await page.locator(".titlebar").boundingBox();
+    assert.equal(chrome.y, 0);
+    for (const name of ["Свернуть окно", "Развернуть окно", "Закрыть окно"]) {
+      const bounds = await page.getByRole("button", { name, exact: true }).boundingBox();
+      assert.ok(bounds && bounds.y >= 0 && bounds.y + bounds.height <= 720, name);
+    }
+    checks.push({check: "window controls remain visible after scrolling a short desktop", pass: true});
+    await application.evaluate(({ BrowserWindow }) => {
       const w = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith("/index.html"));
       w.setContentSize(1536, 1024);
     });
@@ -351,17 +369,14 @@ const { _electron } = require("playwright");
       const w = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith("/index.html"));
       w.restore(); w.show(); w.focus();
     });
-    if (process.platform === "darwin") await page.evaluate(() => window.jarvisWindow.maximize());
-    else await page.getByRole("button", { name: "Развернуть окно" }).click();
+    await page.getByRole("button", { name: "Развернуть окно" }).click();
     assert.equal(
       await page.evaluate(() => window.jarvisWindow.isMaximized()),
       true,
     );
-    if (process.platform === "darwin") await page.evaluate(() => window.jarvisWindow.maximize());
-    else await page.getByRole("button", { name: "Развернуть окно" }).click();
+    await page.getByRole("button", { name: "Развернуть окно" }).click();
     const closing = page.waitForEvent("close");
-    if (process.platform === "darwin") await page.evaluate(() => window.jarvisWindow.close());
-    else await page.getByRole("button", { name: "Закрыть окно" }).click();
+    await page.getByRole("button", { name: "Закрыть окно" }).click();
     await closing;
     checks.push({
       check: "native custom window controls and owned runtime shutdown",
