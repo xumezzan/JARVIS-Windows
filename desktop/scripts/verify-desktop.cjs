@@ -365,10 +365,11 @@ const { _electron } = require("playwright");
       const w = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith("/index.html"));
       if (w.isMinimized()) resolve(); else w.once("minimize", resolve);
     }));
-    await application.evaluate(({ BrowserWindow }) => {
+    await application.evaluate(({ app }) => app.emit("activate"));
+    await application.evaluate(({ BrowserWindow }) => new Promise(resolve => {
       const w = BrowserWindow.getAllWindows().find(w => w.webContents.getURL().endsWith("/index.html"));
-      w.restore(); w.show(); w.focus();
-    });
+      if (!w.isMinimized()) resolve(); else w.once("restore", resolve);
+    }));
     await page.getByRole("button", { name: "Развернуть окно" }).click();
     assert.equal(
       await page.evaluate(() => window.jarvisWindow.isMaximized()),

@@ -22,4 +22,12 @@ function mainWindowOptions(screen, platform = process.platform) {
   };
 }
 
-module.exports = { mainWindowOptions };
+function showMainWindow(window, taskHud) {
+  if (!window || window.isDestroyed()) return;
+  taskHud?.restore(true, true);
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+}
+
+module.exports = { mainWindowOptions, showMainWindow };

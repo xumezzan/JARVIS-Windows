@@ -1,7 +1,7 @@
 const { app, BrowserWindow, ipcMain, session, dialog, screen, globalShortcut, clipboard } = require("electron");
 const { Overlay } = require("./overlay.cjs");
 const { TaskHudWindow } = require("./hud-mode.cjs");
-const { mainWindowOptions } = require("./window-options.cjs");
+const { mainWindowOptions, showMainWindow } = require("./window-options.cjs");
 const { clipboardSample } = require("./clipboard.cjs");
 const path = require("node:path");
 const fs = require("node:fs/promises");
@@ -42,6 +42,9 @@ const rendererUrl = development
 let mainWindow;
 let overlay;
 let taskHud;
+app.on("activate", () => {
+  if (!quitting) showMainWindow(mainWindow, taskHud);
+});
 
 function verifiedWindow(event, args, count = 0) {
   if (

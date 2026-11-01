@@ -12,6 +12,7 @@ top left with space above the sidebar wordmark. Persistent high-contrast HTML
 controls at the top right remain available when macOS shows its window-sharing
 indicator in place of traffic lights. Windows keeps its existing HTML controls.
 The title bar stays at the top when a short window or a long panel is scrolled.
+Activating the app through the Dock restores a minimized window and its workbench.
 The green Mac button zooms the window instead of entering a separate fullscreen
 Space, so the same window can still become the task HUD. Native buttons hide only
 in the existing 360×120 HUD and return when it restores for a result or prompt.
@@ -31,7 +32,7 @@ QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q \
   tests/integration/test_desktop_workspace.py
 ```
 
-On the MacBook, 27 Node tests and 84 focused Python tests passed. Real Electron E2E
+On the MacBook, 30 Node tests and 84 focused Python tests passed. Real Electron E2E
 observed the window inside the work area with its edge inset,
 native button position `{x:16,y:18}`, a clear wordmark safe area and all three HTML
 controls inside the viewport. Minimize/restore, zoom/restore, close, owned runtime shutdown,

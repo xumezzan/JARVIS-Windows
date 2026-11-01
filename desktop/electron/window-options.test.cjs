@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { mainWindowOptions } = require("./window-options.cjs");
+const { mainWindowOptions, showMainWindow } = require("./window-options.cjs");
 
 function options(workArea, platform = "darwin") {
   const cursor = { x: workArea.x + 100, y: workArea.y + 100 };
@@ -40,4 +40,33 @@ test("a secondary display with a negative origin keeps the whole window reachabl
 test("minimum size never forces a small desktop window beyond its work area", () => {
   const window = options({ x: 0, y: 20, width: 800, height: 580 }, "linux");
   assert.deepEqual([window.width, window.height, window.minWidth, window.minHeight], [768, 548, 768, 548]);
+});
+
+test("Dock activation restores a minimized window and explicitly restores its workbench", () => {
+  const calls = [];
+  showMainWindow({
+    isDestroyed: () => false,
+    isMinimized: () => true,
+    restore: () => calls.push("restore"),
+    show: () => calls.push("show"),
+    focus: () => calls.push("focus"),
+  }, {restore: (...args) => calls.push(args)});
+  assert.deepEqual(calls, [[true, true], "restore", "show", "focus"]);
+});
+
+test("activating an existing normal window keeps its geometry", () => {
+  const calls = [];
+  showMainWindow({
+    isDestroyed: () => false,
+    isMinimized: () => false,
+    restore: () => { throw new Error("normal window must not be restored"); },
+    show: () => calls.push("show"),
+    focus: () => calls.push("focus"),
+  });
+  assert.deepEqual(calls, ["show", "focus"]);
+});
+
+test("activation never creates or revives a missing window", () => {
+  assert.doesNotThrow(() => showMainWindow(undefined));
+  assert.doesNotThrow(() => showMainWindow({isDestroyed: () => true}));
 });
