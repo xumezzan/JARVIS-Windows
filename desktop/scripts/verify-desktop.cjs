@@ -6,7 +6,9 @@ const { _electron } = require("playwright");
 (async () => {
   const root = path.resolve(__dirname, "..");
   const data = await fs.mkdtemp(path.join(os.tmpdir(), "jarvis-desktop-e2e-"));
-  const environment = { ...process.env, JARVIS_DATA_DIR: data };
+  const environment = { ...process.env, JARVIS_DATA_DIR: data,
+    JARVIS_PYTHON: process.env.JARVIS_PYTHON || path.join(root, "..", ".venv",
+      process.platform === "win32" ? "Scripts/python.exe" : "bin/python") };
   delete environment.ELECTRON_RUN_AS_NODE;
   const application = await _electron.launch({
     executablePath: require("electron"),

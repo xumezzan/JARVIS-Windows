@@ -35,6 +35,13 @@ Windows explicitly and restores the original property after the test, including
 on failure. Its original coordinate and invalid-target assertions remain intact;
 production overlay behavior is unchanged.
 
+The desktop E2E script also selects the prepared project `.venv` by default, while
+preserving an explicit `JARVIS_PYTHON` override, as the workspace E2E already does.
+Previously it selected an older global development runtime that existed but lacked
+`psutil`, causing `runtime_disconnected` before readiness. The complete Electron
+scenario then passed with the prepared runtime, including a real system observation,
+simulation, cancellation, renderer isolation, bounded layouts and owned shutdown.
+
 The explicit binary-install command prepares Electron before direct Python packaging.
 `npm ci` installs the JavaScript package; current Electron releases otherwise fetch
 their binary lazily when the module is first used. See the official
@@ -47,6 +54,9 @@ Its 124 focused Python checks passed, and the real PermissionEngine native probe
 passed all 10 operations: window observation, exact field input, hotkey, semantic
 click and a marked 1280×776 window capture. Clipboard formats were restored. The
 sanitized result is [recorded separately](macos-native-recheck-20261101.json).
+The full macOS-feature suite passed **2116 tests, 24 skipped**. Ruff, format checks,
+both native/macOS and `--platform win32` mypy configurations (366 files), dependency
+consistency, the simulated Qt smoke and Python source/wheel builds passed.
 
 The development environment had pointed into a missing `Caches/JarvisDev` directory.
 It was rebuilt under `~/Library/Application Support/JarvisDev`, with direct local
@@ -55,3 +65,7 @@ to hydrate the existing repository. The original feature branch was not edited.
 
 These results do not establish Windows hardware, live accounts or microphone
 acceptance. Python and hosted Windows gates are tracked with the pull request.
+The separately reviewed Windows installer asset in `scripts/windows/assets.json`
+still selects Electron 44.7.2; changing the development lock does not update that
+installer or claim a Windows deployment. Its asset update needs its own Windows
+installation verification.
