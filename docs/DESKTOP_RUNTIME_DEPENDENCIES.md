@@ -63,6 +63,14 @@ It was rebuilt under `~/Library/Application Support/JarvisDev`, with direct loca
 development links, and a fresh acceptance checkout there avoids waiting for iCloud
 to hydrate the existing repository. The original feature branch was not edited.
 
+A full run of the main-based change on macOS was stopped at the existing
+`test_tree_cleanup_failure_still_reaps_real_direct_child[timeout]` fixture:
+797 tests passed and 7 were skipped before it called Windows-only `ctypes.WinDLL`.
+The full macOS-feature result above uses PR #71's platform adaptations. This
+dependency change preserves the main branch's Windows target; its workflow now
+also installs the reviewed Electron binary, builds the UI, runs the Node tests
+and starts the binary with `--version`, in addition to the existing Python gates.
+
 These results do not establish Windows hardware, live accounts or microphone
 acceptance. Python and hosted Windows gates are tracked with the pull request.
 The separately reviewed Windows installer asset in `scripts/windows/assets.json`
