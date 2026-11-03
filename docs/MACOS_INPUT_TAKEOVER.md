@@ -34,6 +34,12 @@ CGWindowNumber без использования заголовков или с�
 диагностика и данные пользователя не попадают в результат. Запись экрана и микрофон
 для самого монитора не нужны.
 
+Дополнительно читается системный флаг `IsSecureEventInputEnabled`: при защищённом
+вводе macOS может не передавать клавиатурные события tap. Это состояние останавливает
+задачу, а не считается отсутствием активности. Jarvis не включает, не выключает и не
+обходит Secure Event Input. Нативные ошибки при освобождении run-loop source также
+не оставляют tap без попытки закрытия и не печатают необработанные детали потока.
+
 ## Проверка
 
 Обычные pytest используют тихий fixture poller, не устанавливают глобальные hooks и
@@ -89,8 +95,8 @@ python -m build
 ## Состояние на 3 ноября 2026
 
 - Работа ведётся в `fix/macos-human-takeover` от `main` 5792446.
-- Финальный локальный pytest: **2019 passed, 24 skipped**. Пропущены opt-in Windows,
-  model/voice и updater fixtures без PowerShell. Последний focused прогон: **117 passed**.
+- Финальный локальный pytest: **2022 passed, 24 skipped**. Пропущены opt-in Windows,
+  model/voice и updater fixtures без PowerShell. Последний focused прогон: **120 passed**.
 - Оба mypy (host и win32), Ruff, format-check, `pip check`, Qt simulated smoke,
   sdist/wheel build, production Electron build и **22 Node tests** прошли.
 - Реальный Electron E2E с отдельным venv подтвердил `system.info` SUCCESS на Darwin,
@@ -122,4 +128,5 @@ python -I -c 'import jarvis; print(jarvis.__file__)'
 
 Источники API: [Apple CGEvent tapCreate](https://developer.apple.com/documentation/coregraphics/cgevent/tapcreate(tap:place:options:eventsofinterest:callback:userinfo:)),
 [Apple CGEventSource](https://developer.apple.com/documentation/coregraphics/cgeventsource),
-[Apple CGPreflightListenEventAccess](https://developer.apple.com/documentation/coregraphics/cgpreflightlisteneventaccess()).
+[Apple CGPreflightListenEventAccess](https://developer.apple.com/documentation/coregraphics/cgpreflightlisteneventaccess()),
+[Apple TN2150: Using Secure Event Input Fairly](https://developer.apple.com/library/archive/technotes/tn2007/tn2150.html).

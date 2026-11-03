@@ -310,7 +310,8 @@ def written(result: PlanResult) -> tuple[str, ...]:
     if result.error == "input_monitor_unavailable":
         lines.append(
             "Недоступен монитор вмешательства пользователя. Проверьте системные разрешения "
-            "Jarvis; на macOS — «Конфиденциальность и безопасность → Мониторинг ввода»."
+            "Jarvis; на macOS завершите защищённый ввод и проверьте "
+            "«Конфиденциальность и безопасность → Мониторинг ввода»."
         )
     if result.status == "simulated":
         lines.append(f"Шагов в плане: {len(result.steps)}.")

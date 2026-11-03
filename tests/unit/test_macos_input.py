@@ -35,6 +35,7 @@ class FakeQuartz:
     kCFRunLoopDefaultMode = "default"
 
     def __init__(self) -> None:
+        self.input_secure = False
         self.tap, self.source, self.loop = object(), object(), object()
         self.CGPreflightListenEventAccess = Mock(return_value=True)
         self.CGRequestListenEventAccess = Mock(side_effect=AssertionError("No permission prompts"))
@@ -74,6 +75,7 @@ def quartz(monkeypatch: pytest.MonkeyPatch) -> FakeQuartz:
     )
     appkit = SimpleNamespace(NSWorkspace=SimpleNamespace(sharedWorkspace=lambda: workspace))
     real_import = importlib.import_module
+    monkeypatch.setattr(mac_input, "secure_input_reader", lambda: lambda: bool(q.input_secure))
     monkeypatch.setattr(
         importlib,
         "import_module",
@@ -285,3 +287,38 @@ def test_starting_with_command_and_caps_lock_does_not_leave_typing_stuck(
         assert not poller.read().typing
     finally:
         poller.close()
+
+
+def test_secure_input_at_start_or_during_a_task_is_never_treated_as_inactivity(
+    quartz: FakeQuartz,
+) -> None:
+    quartz.input_secure = True
+    with pytest.raises(OSError, match="input_monitor_unavailable"):
+        MacPhysicalPoller()
+    quartz.CGEventTapCreate.assert_not_called()
+    quartz.input_secure = False
+    poller = MacPhysicalPoller()
+    try:
+        quartz.input_secure = True
+        with pytest.raises(OSError, match="input_monitor_unavailable"):
+            poller.read()
+    finally:
+        poller.close()
+
+
+@pytest.mark.parametrize("failure", ["remove_source", "invalidate_tap"])
+def test_cleanup_failure_still_ends_the_thread_without_native_exception_text(
+    quartz: FakeQuartz,
+    failure: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    function = (
+        quartz.CFRunLoopRemoveSource if failure == "remove_source" else quartz.CFMachPortInvalidate
+    )
+    function.side_effect = RuntimeError("private native detail")
+    poller = MacPhysicalPoller()
+    poller.close()
+    assert not poller.thread.is_alive()
+    assert poller.failed.is_set()
+    quartz.CFMachPortInvalidate.assert_called_once_with(quartz.tap)
+    assert capsys.readouterr() == ("", "")

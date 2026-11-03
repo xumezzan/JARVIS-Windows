@@ -1,6 +1,8 @@
 """Task-scoped, passive physical input monitor. No text or input history is kept."""
 
+import ctypes
 import importlib
+from collections.abc import Callable
 from threading import Event, Lock, Thread
 from typing import Any
 
@@ -9,6 +11,23 @@ from jarvis.platforms.windows.ghost import PhysicalInput
 # HIToolbox Events.h kVK_RightCommand through kVK_Function. Modifiers are tracked
 # by flagsChanged; Caps Lock is latched, rather than a permanently held key.
 MODIFIER_KEYCODES = frozenset(range(0x36, 0x40))
+_SECURE_INPUT_LOCK = Lock()  # Carbon documents this query as non-thread-safe.
+
+
+def secure_input_reader() -> Callable[[], bool]:
+    """Read the system's protection state; never enable or disable secure input."""
+    library = ctypes.CDLL(
+        "/System/Library/Frameworks/Carbon.framework/Frameworks/HIToolbox.framework/HIToolbox"
+    )
+    read = library.IsSecureEventInputEnabled
+    read.argtypes = []
+    read.restype = ctypes.c_bool
+
+    def enabled() -> bool:
+        with _SECURE_INPUT_LOCK:
+            return bool(read())
+
+    return enabled
 
 
 class MacPhysicalPoller:
@@ -24,7 +43,8 @@ class MacPhysicalPoller:
         try:
             self.q: Any = importlib.import_module("Quartz")
             appkit: Any = importlib.import_module("AppKit")
-            if not self.q.CGPreflightListenEventAccess():
+            self.secure_input = secure_input_reader()
+            if not self.q.CGPreflightListenEventAccess() or self.secure_input():
                 raise OSError("input_monitor_unavailable")
             self.workspace = appkit.NSWorkspace.sharedWorkspace()
             self.modifier_mask = (
@@ -154,15 +174,24 @@ class MacPhysicalPoller:
             self.failed.set()
         finally:
             self.ready.set()
-            if source is not None and loop is not None:
-                q.CFRunLoopRemoveSource(loop, source, q.kCFRunLoopDefaultMode)
-            if tap is not None:
-                q.CFMachPortInvalidate(tap)
+            try:
+                if source is not None and loop is not None:
+                    q.CFRunLoopRemoveSource(loop, source, q.kCFRunLoopDefaultMode)
+            except Exception:
+                self.failed.set()
+            finally:
+                try:
+                    if tap is not None:
+                        q.CFMachPortInvalidate(tap)
+                except Exception:
+                    self.failed.set()
 
     def read(self) -> PhysicalInput:
         if self.closed.is_set() or self.failed.is_set() or not self.thread.is_alive():
             raise OSError("input_monitor_unavailable")
         try:
+            if self.secure_input():
+                raise OSError("input_monitor_unavailable")
             q = self.q
             event = q.CGEventCreate(None)
             if event is None:
