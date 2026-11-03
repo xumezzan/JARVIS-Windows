@@ -1,0 +1,17 @@
+{
+  "platform": "darwin",
+  "date": "2026-11-03",
+  "scope": "native input monitor with a disposable Qt window",
+  "monitor_ready": true,
+  "window_shown": true,
+  "acceptance": "passed",
+  "shift_presses_seen_by_window": 1,
+  "yield_observed": true,
+  "quiet_observed": true,
+  "physical_key_events": 2,
+  "physical_mouse_events": 0,
+  "modifier_source_counts": {
+    "0": 2
+  },
+  "monitor_thread_stopped": true
+}
