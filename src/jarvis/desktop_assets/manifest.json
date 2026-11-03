@@ -10,7 +10,7 @@
     "electron/main.cjs": "f1bac0071ad9f0105c0faecddd1ca55370c826b6a0ea584aedbba033fb73ee5d",
     "electron/overlay-preload.cjs": "419652513f305f6cfd03d206b9d5e045868123b19dd82510b97c27cad8e2663e",
     "electron/overlay.cjs": "d22935fd90513a00a0bdfbf13d49ca79e2cf657d915dba13bcba7b3f22a21cc3",
-    "electron/overlay.test.cjs": "8341813cd8efb497c02c224770d457b733602c7f758d086944ec9404649bd668",
+    "electron/overlay.test.cjs": "68e87de4d76d66c9959525ee299cc34ce6f5e42982ac6d6965f6dbfd73c43d69",
     "electron/preload.cjs": "c4a507c52510ad94ce493b04e6c72a0c44da91478f7ba415b79b027751d8ff75",
     "electron/runtime.cjs": "776adc9822af0c8813fd81acb8b66320b7e211f4f67a01ca2ad8706f04fd6d2b",
     "electron/runtime.test.cjs": "40fe26c62ba6300167b77a0009cfa881743d60e1ecc694b80ec88234675e7488",

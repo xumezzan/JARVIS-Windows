@@ -8,12 +8,16 @@ from collections.abc import Callable
 from ctypes import wintypes
 from dataclasses import dataclass
 from threading import Event, Thread
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, cast
 
 from pydantic import Field
 
 from jarvis.tools.base import ToolModel
 from jarvis.tools.windows import Rectangle
+
+
+def is_windows() -> bool:
+    return sys.platform == "win32"
 
 
 class CursorTarget(ToolModel):
@@ -50,6 +54,16 @@ class PhysicalInput:
     move_serial: int | None = None
 
 
+class _InputPoller(Protocol):
+    def read(self) -> PhysicalInput: ...
+
+    def close(self) -> None: ...
+
+
+class InputMonitorUnavailable(OSError):
+    """The task lost its physical input monitor, rather than a tool failing."""
+
+
 class _PhysicalPoller:
     """Non-blocking LL hooks distinguish hardware from Jarvis' tagged injected input.
 
@@ -59,8 +73,8 @@ class _PhysicalPoller:
     """
 
     def __init__(self) -> None:
-        self.user32: Any = ctypes.WinDLL("user32", use_last_error=True)
-        self.kernel32: Any = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.user32: Any = cast(Any, ctypes).WinDLL("user32", use_last_error=True)
+        self.kernel32: Any = cast(Any, ctypes).WinDLL("kernel32", use_last_error=True)
         self.user32.GetForegroundWindow.restype = wintypes.HWND
         self.user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
         self.user32.GetAsyncKeyState.restype = ctypes.c_short
@@ -96,7 +110,7 @@ class _PhysicalPoller:
                 ("extra", ctypes.c_size_t),
             ]
 
-        hook_type = ctypes.WINFUNCTYPE(
+        hook_type = cast(Any, ctypes).WINFUNCTYPE(
             ctypes.c_ssize_t, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM
         )
         self.user32.SetWindowsHookExW.argtypes = [
@@ -202,7 +216,7 @@ class HumanTakeover:
         self.last_activity = 0.0
         self.enabled = False
         self.generation = 0
-        self._poller: _PhysicalPoller | None = None
+        self._poller: _InputPoller | None = None
         self.suspended = False
         self._ignore_buttons = False
         self._ignore_typing = False
@@ -210,17 +224,31 @@ class HumanTakeover:
     def begin_prompt(self) -> None:
         self.suspended = True
 
+    def _physical_input(self) -> PhysicalInput:
+        if self.read is None:
+            raise InputMonitorUnavailable("input_monitor_unavailable")
+        try:
+            return self.read()
+        except OSError:
+            raise InputMonitorUnavailable("input_monitor_unavailable") from None
+
     def end_prompt(self) -> None:
         if self.enabled and self.read is not None:
-            self.previous = self.read()
+            self.previous = self._physical_input()
             self._ignore_buttons = self.previous.buttons
             self._ignore_typing = self.previous.typing
         self.suspended = False
 
     def start(self) -> None:
-        if self.read is None and sys.platform == "win32":
-            self._poller = _PhysicalPoller()
-            self.read = self._poller.read
+        if self.read is None:
+            if sys.platform == "win32":
+                self._poller = _PhysicalPoller()
+            elif sys.platform == "darwin":
+                from jarvis.platforms.macos.input import MacPhysicalPoller
+
+                self._poller = MacPhysicalPoller()
+            if self._poller is not None:
+                self.read = self._poller.read
         self.enabled = self.read is not None
         if self.enabled:
             self.sample()
@@ -228,7 +256,7 @@ class HumanTakeover:
     def sample(self) -> bool:
         if not self.enabled or self.read is None:
             return False
-        current = self.read()
+        current = self._physical_input()
         previous, self.previous = self.previous, current
         if previous is None:
             return False
@@ -291,7 +319,7 @@ def browser_viewport() -> dict[str, object]:
     No screenX/outerHeight guesses: borders, browser chrome, zoom, negative
     monitor origins and mixed DPI are handled by the actual render widget.
     """
-    user32: Any = ctypes.WinDLL("user32", use_last_error=True)
+    user32: Any = cast(Any, ctypes).WinDLL("user32", use_last_error=True)
     user32.SetThreadDpiAwarenessContext.argtypes = [ctypes.c_void_p]
     user32.SetThreadDpiAwarenessContext(ctypes.c_void_p(-4))
     user32.GetForegroundWindow.restype = wintypes.HWND
@@ -327,7 +355,7 @@ def browser_viewport() -> dict[str, object]:
                 )
         return True
 
-    callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(child)
+    callback = cast(Any, ctypes).WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(child)
     user32.EnumChildWindows.argtypes = [wintypes.HWND, type(callback), wintypes.LPARAM]
     user32.EnumChildWindows(handle, callback, 0)
     if not rectangles:
@@ -337,6 +365,6 @@ def browser_viewport() -> dict[str, object]:
 
 
 if __name__ == "__main__":
-    if sys.platform != "win32" or sys.argv[1:] != ["--viewport"]:
+    if not is_windows() or sys.argv[1:] != ["--viewport"]:
         raise SystemExit(1)
     print(json.dumps(browser_viewport()))
