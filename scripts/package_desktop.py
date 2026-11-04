@@ -136,9 +136,10 @@ def main() -> None:
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     repository = Path(__file__).resolve().parents[1]
-    # Applications is outside commonly synchronized Documents folders, whose Finder
-    # metadata can reappear while codesign is sealing a generated bundle.
-    output = (args.output or Path.home() / "Applications/Jarvis.app").absolute()
+    # Keep the same Finder/Dock identity as the explicit permanent installation.
+    system_app = Path("/Applications/Jarvis.app")
+    default = system_app if _owned(system_app) else Path.home() / "Applications/Jarvis.app"
+    output = (args.output or default).absolute()
     package(repository, output)
     print(output)
 

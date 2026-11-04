@@ -25,10 +25,12 @@ from jarvis.tools.browser import register_browser
 from jarvis.tools.registry import ToolRegistry
 
 
-def test_live_is_explicit_and_visible() -> None:
-    assert load_config({}).browser_mode is BrowserMode.STRICT
+def test_live_is_explicit_and_visible(tmp_path: Path) -> None:
+    fresh = {"JARVIS_DATA_DIR": str(tmp_path)}
+    assert load_config(fresh).browser_mode is BrowserMode.STRICT
     config = load_config(
         {
+            **fresh,
             "JARVIS_BROWSER_MODE": "live",
             "JARVIS_BROWSER_CDP_ENDPOINT": "http://localhost:9222",
         }
@@ -37,11 +39,11 @@ def test_live_is_explicit_and_visible() -> None:
     assert not host.headless and host.cdp_endpoint == "http://localhost:9222"
     assert BrowserHost().headless
     with pytest.raises(ValueError):
-        load_config({"JARVIS_BROWSER_CDP_ENDPOINT": "http://localhost:9222"})
+        load_config({**fresh, "JARVIS_BROWSER_CDP_ENDPOINT": "http://localhost:9222"})
     with pytest.raises(ValueError):
         BrowserHost(cdp_endpoint="http://localhost:9222")
     with pytest.raises(ValueError) as error:
-        load_config({"JARVIS_BROWSER_MODE": "SECRET"})
+        load_config({**fresh, "JARVIS_BROWSER_MODE": "SECRET"})
     assert "SECRET" not in str(error.value)
 
 
