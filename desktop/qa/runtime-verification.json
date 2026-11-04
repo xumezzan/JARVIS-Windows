@@ -7,19 +7,19 @@
     "check": "isolated renderer, display-fitting window and no exposed approval API",
     "size": [
       1480,
-      827
+      830
     ],
     "bounds": {
       "x": 16,
       "y": 49,
       "width": 1480,
-      "height": 827
+      "height": 830
     },
     "workArea": {
       "x": 0,
       "y": 33,
       "width": 1512,
-      "height": 859
+      "height": 862
     },
     "contextIsolation": true,
     "nodeIntegration": false,

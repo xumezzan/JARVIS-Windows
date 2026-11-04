@@ -25,10 +25,13 @@ from jarvis.tools.browser import register_browser
 from jarvis.tools.registry import ToolRegistry
 
 
-def test_live_is_explicit_and_visible() -> None:
-    assert load_config({}).browser_mode is BrowserMode.STRICT
+def test_live_is_explicit_and_visible(tmp_path: Path) -> None:
+    # The default is a fresh profile, not the developer's persisted browser choice.
+    fresh = {"JARVIS_DATA_DIR": str(tmp_path)}
+    assert load_config(fresh).browser_mode is BrowserMode.STRICT
     config = load_config(
         {
+            **fresh,
             "JARVIS_BROWSER_MODE": "live",
             "JARVIS_BROWSER_CDP_ENDPOINT": "http://localhost:9222",
         }
@@ -37,11 +40,11 @@ def test_live_is_explicit_and_visible() -> None:
     assert not host.headless and host.cdp_endpoint == "http://localhost:9222"
     assert BrowserHost().headless
     with pytest.raises(ValueError):
-        load_config({"JARVIS_BROWSER_CDP_ENDPOINT": "http://localhost:9222"})
+        load_config({**fresh, "JARVIS_BROWSER_CDP_ENDPOINT": "http://localhost:9222"})
     with pytest.raises(ValueError):
         BrowserHost(cdp_endpoint="http://localhost:9222")
     with pytest.raises(ValueError) as error:
-        load_config({"JARVIS_BROWSER_MODE": "SECRET"})
+        load_config({**fresh, "JARVIS_BROWSER_MODE": "SECRET"})
     assert "SECRET" not in str(error.value)
 
 
@@ -65,6 +68,44 @@ async def test_unavailable_cdp_never_launches_a_fallback(monkeypatch: pytest.Mon
     playwright.chromium.launch.assert_not_called()
     playwright.stop.assert_awaited_once()
     assert session.browser is None and session.context is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", [BrowserMode.LIVE, BrowserMode.WORKSPACE])
+async def test_external_cdp_preserves_default_context_and_disconnects_without_closing_browser(
+    monkeypatch: pytest.MonkeyPatch, mode: BrowserMode
+) -> None:
+    from unittest.mock import Mock
+
+    context = Mock(pages=[])
+    context.route = AsyncMock()
+    context.unroute = AsyncMock()
+    browser = Mock(contexts=[context], close=AsyncMock())
+
+    async def attach(endpoint: str, *, timeout: int, no_defaults: bool = False) -> object:
+        assert endpoint == "http://localhost:9222" and timeout == 10000
+        if not no_defaults:
+            raise RuntimeError("Browser context management is not supported.")
+        return browser
+
+    playwright = Mock()
+    playwright.chromium.connect_over_cdp = AsyncMock(side_effect=attach)
+    playwright.chromium.launch = AsyncMock()
+    playwright.stop = AsyncMock()
+    monkeypatch.setattr(
+        "jarvis.browser.session.async_playwright",
+        lambda: Mock(start=AsyncMock(return_value=playwright)),
+    )
+    session = BrowserSession(NetworkPolicy(mode=mode), cdp_endpoint="http://localhost:9222")
+    await session.start()
+    assert session.context is context
+    context.set_default_timeout.assert_not_called()
+    context.set_default_navigation_timeout.assert_not_called()
+    playwright.chromium.launch.assert_not_called()
+    await session.close()
+    browser.close.assert_not_called()
+    context.close.assert_not_called()
+    playwright.stop.assert_awaited_once()
 
 
 @pytest.mark.parametrize(

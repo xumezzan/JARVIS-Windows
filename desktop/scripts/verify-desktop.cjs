@@ -202,12 +202,16 @@ const { _electron } = require("playwright");
     );
     await page.getByRole("button", { name: "Настройки", exact: true }).click();
     await page.getByLabel("Цветовая тема").selectOption("Graphite");
+    await until((state) => state.settings.theme === "Graphite");
+    await page.waitForFunction(() => document.documentElement.dataset.theme === "Graphite");
     assert.equal(
       await page.locator("html").getAttribute("data-theme"),
       "Graphite",
     );
     await page.getByLabel("Цветовая тема").selectOption("Midnight");
+    await until((state) => state.settings.theme === "Midnight");
     await page.getByRole("switch", { name: "Анимация сферы" }).click();
+    await until((state) => !state.settings.motion_enabled);
     await page.getByRole("button", { name: "Ассистент", exact: true }).click();
     const mic = page.getByRole("button", {
       name: "Удерживайте для голосового ввода",
