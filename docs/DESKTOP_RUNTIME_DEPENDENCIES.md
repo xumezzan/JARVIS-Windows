@@ -1,0 +1,79 @@
+# Desktop runtime dependency check — 1 November 2026
+
+The clean desktop install exposed two high-severity dependency findings. The lockfile
+now resolves Electron **44.10.1** and its downloader's Undici **7.30.1**, within the
+existing package ranges. No new dependency or exact package constraint was added.
+
+Official advisories describe the affected and patched releases:
+
+- [Electron certificate mitigation](https://github.com/electron/electron/security/advisories/GHSA-jr5w-w6x2-84p9).
+- [Undici TLS verification correction](https://github.com/nodejs/undici/security/advisories/GHSA-2m5v-pch6-74hx).
+
+The previous lock also contained 194 records under the former temporary development
+directory `../../private/tmp/jarvis-ui-runtime-20261015/node_modules/`. Those records
+were not the registry packages selected by `npm ci`: they included a second, older
+Electron, Undici and Vite. The package manifest has no dependencies on that directory.
+Removing these stale records makes the audit describe the actual dependency tree.
+All other registry records and package constraints are unchanged.
+
+## Verification on Apple Silicon / macOS 27.2
+
+```sh
+npm --prefix desktop ci
+npm --prefix desktop audit --audit-level=high
+node desktop/node_modules/electron/install.js
+npm --prefix desktop run build
+node --test desktop/electron/*.test.cjs
+git diff --check
+```
+
+The clean install, production build and diff check passed; the audit returned
+**0 vulnerabilities** and all **21 Node tests passed**. The first Node run exposed
+an existing Windows DPI test that used the host platform: on macOS it expected
+Windows pixel conversion despite receiving logical points. The test now selects
+Windows explicitly and restores the original property after the test, including
+on failure. Its original coordinate and invalid-target assertions remain intact;
+production overlay behavior is unchanged.
+
+The desktop E2E script also selects the prepared project `.venv` by default, while
+preserving an explicit `JARVIS_PYTHON` override, as the workspace E2E already does.
+Previously it selected an older global development runtime that existed but lacked
+`psutil`, causing `runtime_disconnected` before readiness. The complete Electron
+scenario then passed with the prepared runtime, including a real system observation,
+simulation, cancellation, renderer isolation, bounded layouts and owned shutdown.
+
+The explicit binary-install command prepares Electron before direct Python packaging.
+`npm ci` installs the JavaScript package; current Electron releases otherwise fetch
+their binary lazily when the module is first used. See the official
+[binary download instructions](https://www.electronjs.org/docs/latest/tutorial/installation#binary-download-step).
+
+This change is based directly on main `5792446586ced17fa9b0ea19f27745c3fc9da564`.
+The separate native macOS implementation remains in PR #71. A local acceptance
+checkout of that PR with the updated dependency lock also passed its 23 Node tests.
+Its 124 focused Python checks passed, and the real PermissionEngine native probe
+passed all 10 operations: window observation, exact field input, hotkey, semantic
+click and a marked 1280×776 window capture. Clipboard formats were restored. The
+sanitized result is [recorded separately](macos-native-recheck-20261101.json).
+The full macOS-feature suite passed **2116 tests, 24 skipped**. Ruff, format checks,
+both native/macOS and `--platform win32` mypy configurations (366 files), dependency
+consistency, the simulated Qt smoke and Python source/wheel builds passed.
+
+The development environment had pointed into a missing `Caches/JarvisDev` directory.
+It was rebuilt under `~/Library/Application Support/JarvisDev`, with direct local
+development links, and a fresh acceptance checkout there avoids waiting for iCloud
+to hydrate the existing repository. The original feature branch was not edited.
+
+A full run of the main-based change on macOS was stopped at the existing
+`test_tree_cleanup_failure_still_reaps_real_direct_child[timeout]` fixture:
+797 tests passed and 7 were skipped before it called Windows-only `ctypes.WinDLL`.
+The full macOS-feature result above uses PR #71's platform adaptations. This
+dependency change preserves the main branch's Windows target; its workflow now
+also installs the reviewed Electron binary, builds the UI, runs the Node tests
+and starts the binary with `--version`, in addition to the existing Python gates.
+
+These results do not establish Windows hardware, live accounts or microphone
+acceptance. Python and hosted Windows gates are tracked with the pull request.
+The separately reviewed Windows installer asset in `scripts/windows/assets.json`
+still selects Electron 44.7.2; changing the development lock does not update that
+installer or claim a Windows deployment. Its asset update needs its own Windows
+installation verification.

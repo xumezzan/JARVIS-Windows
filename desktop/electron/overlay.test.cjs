@@ -110,7 +110,10 @@ test('ghost covers the desktop, paints exact target, yields and disappears at id
   overlay.dispose();
 });
 
-test('ghost transforms native pixels into Electron DIP and refuses invalid targets', async () => {
+test('ghost transforms Windows pixels into Electron DIP and refuses invalid targets', async (t) => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  t.after(() => Object.defineProperty(process, 'platform', platform));
   const {overlay, ipcMain, screen} = setup();
   screen.screenToDipRect = (_window, r) => ({x: r.x/2, y: r.y/2,
     width: r.width/2, height: r.height/2});
