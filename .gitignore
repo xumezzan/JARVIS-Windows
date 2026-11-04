@@ -1,4 +1,5 @@
 .venv
+/.venv [0-9]*
 .venv-*/
 __pycache__/
 *.py[cod]
@@ -35,6 +36,6 @@ node_modules/
 
 # Local UI verification runtime and preserved dependency caches
 desktop/node_modules
-desktop/node_modules 2/
+/desktop/node_modules [0-9]*
 desktop/.node_modules-preserved-*/
 desktop/release/
