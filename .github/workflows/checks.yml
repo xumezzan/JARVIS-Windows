@@ -19,6 +19,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Install desktop dependencies
+        run: npm --prefix desktop ci
+      - name: Build the desktop
+        run: npm --prefix desktop run build
+      - name: Test desktop window contracts
+        run: node --test desktop/electron/*.test.cjs
+
   windows:
     name: checks (${{ matrix.os }})
     strategy:
@@ -48,11 +68,21 @@ jobs:
           cache: npm
           cache-dependency-path: desktop/package-lock.json
 
-      - name: Build the desktop and check its native window contracts
-        run: |
-          npm --prefix desktop ci
-          npm --prefix desktop run build
-          node --test desktop/electron/*.test.cjs
+      - name: Install desktop dependencies
+        run: npm --prefix desktop ci
+
+      - name: Install the reviewed Electron binary
+        run: node desktop/node_modules/electron/install.js
+
+      - name: Build the desktop
+        run: npm --prefix desktop run build
+
+      - name: Test desktop native contracts
+        run: node --test desktop/electron/*.test.cjs
+
+      - name: Verify the Electron runtime starts
+        run: >-
+          node -e "require('node:child_process').execFileSync(require('./desktop/node_modules/electron'), ['--version'], {stdio: 'inherit'})"
 
       - name: Install the browser the integration tests drive
         run: python -m playwright install chromium

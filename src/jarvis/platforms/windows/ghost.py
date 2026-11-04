@@ -8,7 +8,7 @@ from collections.abc import Callable
 from ctypes import wintypes
 from dataclasses import dataclass
 from threading import Event, Thread
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 
 from pydantic import Field
 
@@ -52,6 +52,16 @@ class PhysicalInput:
     mouse_serial: int = 0
     key_serial: int = 0
     move_serial: int | None = None
+
+
+class _InputPoller(Protocol):
+    def read(self) -> PhysicalInput: ...
+
+    def close(self) -> None: ...
+
+
+class InputMonitorUnavailable(OSError):
+    """The task lost its physical input monitor, rather than a tool failing."""
 
 
 class _PhysicalPoller:
@@ -206,7 +216,7 @@ class HumanTakeover:
         self.last_activity = 0.0
         self.enabled = False
         self.generation = 0
-        self._poller: _PhysicalPoller | None = None
+        self._poller: _InputPoller | None = None
         self.suspended = False
         self._ignore_buttons = False
         self._ignore_typing = False
@@ -214,17 +224,31 @@ class HumanTakeover:
     def begin_prompt(self) -> None:
         self.suspended = True
 
+    def _physical_input(self) -> PhysicalInput:
+        if self.read is None:
+            raise InputMonitorUnavailable("input_monitor_unavailable")
+        try:
+            return self.read()
+        except OSError:
+            raise InputMonitorUnavailable("input_monitor_unavailable") from None
+
     def end_prompt(self) -> None:
         if self.enabled and self.read is not None:
-            self.previous = self.read()
+            self.previous = self._physical_input()
             self._ignore_buttons = self.previous.buttons
             self._ignore_typing = self.previous.typing
         self.suspended = False
 
     def start(self) -> None:
-        if self.read is None and sys.platform == "win32":
-            self._poller = _PhysicalPoller()
-            self.read = self._poller.read
+        if self.read is None:
+            if sys.platform == "win32":
+                self._poller = _PhysicalPoller()
+            elif sys.platform == "darwin":
+                from jarvis.platforms.macos.input import MacPhysicalPoller
+
+                self._poller = MacPhysicalPoller()
+            if self._poller is not None:
+                self.read = self._poller.read
         self.enabled = self.read is not None
         if self.enabled:
             self.sample()
@@ -232,7 +256,7 @@ class HumanTakeover:
     def sample(self) -> bool:
         if not self.enabled or self.read is None:
             return False
-        current = self.read()
+        current = self._physical_input()
         previous, self.previous = self.previous, current
         if previous is None:
             return False

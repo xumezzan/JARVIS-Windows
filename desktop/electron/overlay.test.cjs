@@ -110,7 +110,10 @@ test('ghost covers the desktop, paints exact target, yields and disappears at id
   overlay.dispose();
 });
 
-test('ghost transforms native pixels into Electron DIP and refuses invalid targets', async () => {
+test('ghost transforms Windows pixels into Electron DIP and refuses invalid targets', async (t) => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+  Object.defineProperty(process, 'platform', { value: 'win32' });
+  t.after(() => Object.defineProperty(process, 'platform', platform));
   const {overlay, ipcMain, screen} = setup();
   screen.screenToDipRect = (_window, r) => ({x: r.x/2, y: r.y/2,
     width: r.width/2, height: r.height/2});
@@ -126,6 +129,23 @@ test('ghost transforms native pixels into Electron DIP and refuses invalid targe
   assert.equal(overlay.ghost.target_x, 150);
   assert.equal(overlay.ghost.target_y, 250);
   await assert.rejects(overlay.highlight({id: 'bad', rectangle: {left: 1, top: 1, right: -1, bottom: 5}}));
+  overlay.dispose();
+});
+test('Mac ghost preserves logical screen points without a second Retina conversion', async () => {
+  const {overlay, ipcMain, screen} = setup(true, 'darwin');
+  screen.screenToDipRect = () => { throw new Error('macOS coordinates are already logical'); };
+  screen.getDisplayMatching = () => ({bounds: {x: 0, y: 0, width: 1920, height: 1080},
+    workArea: {x: 0, y: 0, width: 1920, height: 1080}});
+  await overlay.ready;
+  overlay.update(working());
+  overlay.target.webContents.send = (_channel, value) => {
+    if (value) ipcMain.emit('jarvis-overlay:painted', {sender: overlay.target.webContents,
+      senderFrame: overlay.target.webContents.mainFrame}, value.id);
+  };
+  await overlay.highlight({id: 'mac-points', rectangle: {left: 200, top: 400, right: 400, bottom: 600}});
+  assert.equal(overlay.ghost.target_x, 300);
+  assert.equal(overlay.ghost.target_y, 500);
+  assert.deepEqual(overlay.ghost.bounding_box, {left: 200, top: 400, width: 200, height: 200});
   overlay.dispose();
 });
 test('unregistered global escape keys keep the workbench reachable', async () => {

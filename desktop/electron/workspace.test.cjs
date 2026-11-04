@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 
-test("workspace preload exposes one fixed settings channel without approval authority", () => {
+for (const platform of ["win32", "darwin"]) test(`workspace preload keeps fixed channels and native chrome metadata (${platform})`, () => {
   const exposed = {}, calls = [];
   vm.runInNewContext(fs.readFileSync(require.resolve("./preload.cjs"), "utf8"), {
     require: () => ({
@@ -11,7 +11,9 @@ test("workspace preload exposes one fixed settings channel without approval auth
       ipcRenderer: { on() {}, invoke: (...args) => { calls.push(args); } },
     }),
     window: { addEventListener() {} },
+    process: { platform },
   });
+  assert.equal(exposed.jarvisWindow.nativeWindowControls, platform === "darwin");
   const command = { operation: "read" };
   exposed.jarvis.workspace(command);
   assert.deepEqual(calls, [["jarvis-app:workspace", command]]);

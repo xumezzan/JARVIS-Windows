@@ -307,6 +307,12 @@ def _looked(result: PlanResult) -> bool:
 def written(result: PlanResult) -> tuple[str, ...]:
     """The report for the screen: the owner's own addresses, paths and names are fine here."""
     lines = [_variant(HEADLINE.get(result.status, HEADLINE["error"]), result)]
+    if result.error == "input_monitor_unavailable":
+        lines.append(
+            "Недоступен монитор вмешательства пользователя. Проверьте системные разрешения "
+            "Jarvis; на macOS завершите защищённый ввод и проверьте "
+            "«Конфиденциальность и безопасность → Мониторинг ввода»."
+        )
     if result.status == "simulated":
         lines.append(f"Шагов в плане: {len(result.steps)}.")
         return tuple(lines)

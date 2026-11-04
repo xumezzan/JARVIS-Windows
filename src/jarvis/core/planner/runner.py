@@ -35,7 +35,7 @@ from jarvis.observability.diagnostics import Reason
 from jarvis.permissions.approvals import Action, ApprovalToken
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Mode, Risk, Status
-from jarvis.platforms.windows.ghost import HumanTakeover
+from jarvis.platforms.windows.ghost import HumanTakeover, InputMonitorUnavailable
 from jarvis.tools.browser import (
     BrowserResult,
     PageTarget,
@@ -277,7 +277,12 @@ class Runner:
                 timeout=self.limits.total_seconds,
                 return_when=asyncio.FIRST_COMPLETED,
             )
-            if job in done:
+            monitor_failed = (
+                watcher in done
+                and not watcher.cancelled()
+                and isinstance(watcher.exception(), InputMonitorUnavailable)
+            )
+            if job in done and not monitor_failed:
                 result = await job
                 self._learn(command, result)
                 return self._settle(result)
@@ -285,7 +290,9 @@ class Runner:
             job.cancel()
             await asyncio.gather(job, return_exceptions=True)
             return self._settle(
-                PlanResult("cancelled" if watcher in done else "timeout", tuple(self.steps))
+                PlanResult("error", tuple(self.steps), "input_monitor_unavailable")
+                if monitor_failed
+                else PlanResult("cancelled" if watcher in done else "timeout", tuple(self.steps))
             )
         except asyncio.CancelledError:
             self.cancel()
@@ -296,6 +303,8 @@ class Runner:
             return self._settle(PlanResult("timeout", tuple(self.steps)))
         except ProviderError as error:
             return self._settle(PlanResult("error", tuple(self.steps), error.code))
+        except InputMonitorUnavailable:
+            return self._settle(PlanResult("error", tuple(self.steps), "input_monitor_unavailable"))
         except Exception:
             return self._settle(PlanResult("error", tuple(self.steps), "planner_failed"))
         finally:

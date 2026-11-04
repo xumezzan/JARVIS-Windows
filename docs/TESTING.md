@@ -1,5 +1,9 @@
 # Проверки этапов 1–6
 
+Пауза при вмешательстве пользователя на macOS: [контракт, команды и живая
+проверка](MACOS_INPUT_TAKEOVER.md). Обычные portable tests используют fixture poller;
+настоящие глобальные hooks включаются только в явно запрошенной native acceptance.
+
 ## Windows 11 / PowerShell
 
 Из корня рабочей копии с Python 3.12 x64:

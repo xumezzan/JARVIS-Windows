@@ -301,7 +301,10 @@ function App() {
   );
   return (
     <MotionConfig reducedMotion="user">
-      <div className="app-shell">
+      <div
+        className="app-shell"
+        data-native-window-controls={window.jarvisWindow?.nativeWindowControls || undefined}
+      >
         <a
           className="skip-link"
           href="#main-content"
@@ -354,6 +357,7 @@ function App() {
               <button
                 disabled={!window.jarvisWindow}
                 aria-label="Свернуть окно"
+                title="Свернуть"
                 onClick={() => window.jarvisWindow?.minimize()}
               >
                 <Minus />
@@ -361,6 +365,7 @@ function App() {
               <button
                 disabled={!window.jarvisWindow}
                 aria-label="Развернуть окно"
+                title="Развернуть / восстановить"
                 onClick={() => window.jarvisWindow?.maximize()}
               >
                 <Square />
@@ -369,6 +374,7 @@ function App() {
                 disabled={!window.jarvisWindow}
                 className="window-close"
                 aria-label="Закрыть окно"
+                title="Закрыть"
                 onClick={() => window.jarvisWindow?.close()}
               >
                 <X />

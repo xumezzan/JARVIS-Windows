@@ -28,6 +28,7 @@ class Window {
   setAlwaysOnTop(value) { this.top = value; }
   isVisibleOnAllWorkspaces() { return !!this.workspaces?.[0]; }
   setVisibleOnAllWorkspaces(...args) { this.workspaces = args; }
+  setWindowButtonVisibility(value) { this.nativeButtons = value; }
   showInactive() { this.visible = true; }
   show() { this.visible = true; }
   focus() { this.focused = true; }
@@ -41,6 +42,21 @@ function setup(platform = 'win32') {
   return {window, screen, hud, modes};
 }
 const active = {task: {id: "task", state: "working", phase: "executing"}, prompt: null};
+test("macOS native buttons return for confirmations and completed tasks", () => {
+  const { window, hud } = setup('darwin');
+  hud.update(active);
+  assert.equal(window.nativeButtons, false);
+  assert.deepEqual(window.workspaces, [true, {visibleOnFullScreen: true}]);
+  assert.deepEqual([window.bounds.width, window.bounds.height], [360, 120]);
+  hud.update({...active, prompt: {id: 'approve', kind: 'approval'}});
+  assert.equal(window.nativeButtons, true);
+  assert.deepEqual(window.workspaces, [false, {visibleOnFullScreen: false}]);
+  hud.update(active);
+  assert.equal(window.nativeButtons, false);
+  hud.update({task: {id: 'task', state: 'finished'}});
+  assert.equal(window.nativeButtons, true);
+  hud.dispose();
+});
 
 test("an inline cloud-data question restores the full window before transmission", () => {
   const {window, hud} = setup();
