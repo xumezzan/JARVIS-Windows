@@ -62,6 +62,7 @@ HOTKEYS = {
     "Ctrl+C": "^c",
     "Ctrl+V": "^v",
     "Ctrl+A": "^a",
+    "Ctrl+Z": "^z",
     "Enter": "{ENTER}",
     "Tab": "{TAB}",
     "Alt+F4": "%{F4}",
@@ -345,7 +346,9 @@ class NativeDesktop:
                     identities.add(identity)
             return len(pids) < 256
 
-        callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(visit)
+        callback = cast(Any, ctypes).WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(
+            visit
+        )
         self.user32.EnumChildWindows.argtypes = [wintypes.HWND, type(callback), wintypes.LPARAM]
         self.user32.EnumChildWindows(target.handle, callback, 0)
         return identities
@@ -353,7 +356,7 @@ class NativeDesktop:
     @staticmethod
     def process_aumid(pid: int) -> str:
         """Read OS application identity; titles cannot identify a Store application."""
-        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel = cast(Any, ctypes).WinDLL("kernel32", use_last_error=True)
         kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
         kernel.OpenProcess.restype = wintypes.HANDLE
         kernel.CloseHandle.argtypes = [wintypes.HANDLE]

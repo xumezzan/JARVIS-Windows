@@ -1,0 +1,67 @@
+{
+  "platform": "darwin",
+  "checks": {
+    "system.info": {
+      "status": "SUCCESS",
+      "error": "none",
+      "reason": null
+    },
+    "windows.clipboard_set": {
+      "status": "SUCCESS",
+      "error": "none",
+      "reason": null
+    },
+    "windows.clipboard_get": {
+      "status": "SUCCESS",
+      "error": "none",
+      "reason": null
+    },
+    "windows.get_open_windows": {
+      "status": "SUCCESS",
+      "error": "none",
+      "reason": null
+    },
+    "windows.focus_app": {
+      "status": "SUCCESS",
+      "error": "none",
+      "reason": null
+    },
+    "windows.get_text_fields": {
+      "status": "SUCCESS",
+      "error": "none",
+      "reason": null
+    },
+    "windows.type_text": {
+      "status": "SUCCESS",
+      "error": "none",
+      "reason": null
+    },
+    "windows.send_hotkey": {
+      "status": "SUCCESS",
+      "error": "none",
+      "reason": null
+    },
+    "windows.screenshot": {
+      "status": "SUCCESS",
+      "error": "none",
+      "reason": null
+    },
+    "windows.click_element": {
+      "status": "SUCCESS",
+      "error": "none",
+      "reason": null
+    }
+  },
+  "clipboard_roundtrip": true,
+  "clipboard_restore": "restored_all_formats",
+  "window_count": 3,
+  "accessibility": true,
+  "screen_recording": true,
+  "fixture": "observed",
+  "marked_elements": 5,
+  "image_dimensions": [
+    1280,
+    776
+  ],
+  "acceptance": "passed"
+}

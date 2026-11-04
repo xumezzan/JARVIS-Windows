@@ -1,4 +1,4 @@
-"""Fixed Chrome/Edge launch, isolated profile and OS-owned loopback CDP provenance."""
+"""Fixed Chromium-browser launch, isolated profile and OS-owned CDP provenance."""
 
 import json
 import os
@@ -43,6 +43,7 @@ def installed_browsers() -> tuple[Path, ...]:
             for bundle, name in (
                 ("Google Chrome.app", "Google Chrome"),
                 ("Microsoft Edge.app", "Microsoft Edge"),
+                ("Brave Browser.app", "Brave Browser"),
             )
         )
     if platform == "win32":

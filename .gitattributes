@@ -1,3 +1,10 @@
 # Source hashes and committed prebuilt assets must survive Windows checkout unchanged.
 desktop/** text eol=lf
+desktop/**/*.png -text
+desktop/**/*.jpg -text
+desktop/**/*.jpeg -text
+desktop/**/*.webp -text
+desktop/**/*.ico -text
+desktop/**/*.woff -text
+desktop/**/*.woff2 -text
 src/jarvis/desktop_assets/** -text

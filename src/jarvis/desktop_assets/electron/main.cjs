@@ -377,7 +377,7 @@ async function createWindow() {
   if (development) await mainWindow.loadURL(rendererUrl);
   else await mainWindow.loadFile(rendererFile);
   taskHud = new TaskHudWindow(mainWindow, screen,
-    (mode) => mainWindow?.webContents.send("jarvis-window:mode", mode));
+    (mode) => mainWindow?.webContents.send("jarvis-window:mode", mode), {platform: process.platform});
   overlay = new Overlay({ BrowserWindow, screen, ipcMain, globalShortcut }, mainWindow, rendererUrl, {taskHud: true});
   await overlay.ready;
   overlay.onCancel = () => { void runtime?.request("cancel").catch(() => {}); };

@@ -57,7 +57,7 @@ ERROR_ADVICE: dict[str, str] = {
     "provider_failed": "Модель не ответила. Проверьте ключ, идентификатор модели и сеть.",
     "provider_output": "Ответ модели не соответствует схеме планировщика.",
     "context_limit": "Запрос к модели превысил допустимый размер.",
-    "unsupported_platform": "Этот инструмент доступен только в Windows.",
+    "unsupported_platform": "Этот инструмент доступен в Windows и macOS.",
     "application_missing": "Приложение не найдено на этом компьютере.",
     "unobserved_target": "Цель не наблюдалась в этой задаче; начните команду заново.",
     "approval": "Подтверждение не выдано или уже использовано.",
@@ -977,7 +977,7 @@ class MainWindow(QMainWindow):
                 + setup_command("deepseek")
                 + "  и  "
                 + setup_command("openai")
-                + ". Они хранятся в Windows Credential Locker и не попадают "
+                + ". Они хранятся в системном хранилище учётных данных и не попадают "
                 "в команду или журнал."
             )
         )

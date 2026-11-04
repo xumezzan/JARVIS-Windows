@@ -13,6 +13,8 @@ class Window extends EventEmitter {
   }
   setIgnoreMouseEvents(...args) { this.ignore = args; }
   setAlwaysOnTop(...args) { this.top = args; }
+  setVisibleOnAllWorkspaces(...args) { this.workspaces = args; }
+  setHiddenInMissionControl(value) { this.hiddenInMissionControl = value; }
   setMenu() {}
   loadURL() { return Promise.resolve(); }
   loadFile() { return Promise.resolve(); }
@@ -24,7 +26,7 @@ class Window extends EventEmitter {
   hide() { this.visible = false; }
   destroy() { this.destroyed = true; }
 }
-function setup(shortcuts = true) {
+function setup(shortcuts = true, platform = 'win32') {
   const screen = new EventEmitter();
   screen.screenToDipRect = (_window, rect) => rect;
   screen.getDisplayMatching = () => ({ workArea: {x: -1920, y: 0, width: 1920, height: 1080}, bounds: {x: -1920, y: 0, width: 1920, height: 1080} });
@@ -34,7 +36,8 @@ function setup(shortcuts = true) {
   const keys = new Map();
   const globalShortcut = { register: (key, callback) => { keys.set(key, callback); return shortcuts; } };
   const main = new Window(); main.visible = true;
-  const overlay = new Overlay({ BrowserWindow: Window, screen, ipcMain, globalShortcut }, main, 'file:///index.html');
+  const overlay = new Overlay({ BrowserWindow: Window, screen, ipcMain, globalShortcut }, main,
+    'file:///index.html', {platform});
   return { overlay, main, keys, handlers, ipcMain, screen };
 }
 const working = (id = 'one') => ({ task: { id, state: 'working', mode: 'execute', phase: 'executing', steps: [], command: 'Check system' }, prompt: null });
@@ -131,6 +134,27 @@ test('unregistered global escape keys keep the workbench reachable', async () =>
   overlay.update(working());
   assert.equal(main.visible, true);
   assert.equal(overlay.hud.visible, false);
+  overlay.dispose();
+});
+test('macOS panels follow Spaces/fullscreen and preserve logical Retina coordinates', async () => {
+  const {overlay, screen, ipcMain} = setup(true, 'darwin');
+  screen.screenToDipRect = () => { throw new Error('macOS coordinates are already points'); };
+  await overlay.ready;
+  for (const window of [overlay.hud, overlay.target]) {
+    assert.equal(window.options.type, 'panel');
+    assert.deepEqual(window.workspaces, [true, {visibleOnFullScreen: true}]);
+    assert.equal(window.hiddenInMissionControl, true);
+    assert.equal(window.options.focusable, false);
+  }
+  overlay.update(working());
+  overlay.target.webContents.send = (_channel, value) => {
+    if (value) ipcMain.emit('jarvis-overlay:painted', {sender: overlay.target.webContents,
+      senderFrame: overlay.target.webContents.mainFrame}, value.id);
+  };
+  await overlay.highlight({id: 'retina', rectangle: {left: -1800, top: 200, right: -1600, bottom: 240}});
+  assert.equal(overlay.ghost.target_x, 220);
+  assert.equal(overlay.ghost.target_y, 220);
+  assert.deepEqual(overlay.target.ignore, [true, {forward: true}]);
   overlay.dispose();
 });
 test('watcher hints show the corner orb without hiding or focusing the main window', async () => {

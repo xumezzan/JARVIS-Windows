@@ -81,3 +81,20 @@ def test_windows_discovery_never_uses_path_or_user_arguments(
         tmp_path / "Google/Chrome/Application/chrome.exe",
         tmp_path / "Microsoft/Edge/Application/msedge.exe",
     )
+
+
+def test_macos_discovery_uses_only_application_bundle_executables(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("PATH", "untrusted-browser")
+    assert module.installed_browsers() == tuple(
+        base / bundle / "Contents/MacOS" / executable
+        for base in (Path("/Applications"), tmp_path / "Applications")
+        for bundle, executable in (
+            ("Google Chrome.app", "Google Chrome"),
+            ("Microsoft Edge.app", "Microsoft Edge"),
+            ("Brave Browser.app", "Brave Browser"),
+        )
+    )

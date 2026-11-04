@@ -27,6 +27,9 @@ class Reason(StrEnum):
     AMBIGUOUS_WINDOW = "ambiguous_window"
     APPLICATION_BLOCKED = "application_blocked"
     EFFECT_ALREADY_ISSUED = "effect_already_issued"
+    MACOS_ACCESSIBILITY_REQUIRED = "macos_accessibility_required"
+    MACOS_SCREEN_RECORDING_REQUIRED = "macos_screen_recording_required"
+    MACOS_NATIVE_DEPENDENCY_MISSING = "macos_native_dependency_missing"
 
 
 REASONS: dict[str | None, str] = {
@@ -54,7 +57,7 @@ REASONS: dict[str | None, str] = {
         "или runtime_id. Получите свежий список окон."
     ),
     Reason.WINDOW_NOT_FOREGROUND: (
-        "Windows не передала фокус выбранному окну. Сначала вызовите "
+        "Операционная система не передала фокус выбранному окну. Сначала вызовите "
         "windows.focus_app и проверьте активное окно."
     ),
     Reason.EDITOR_CHANGED: (
@@ -75,6 +78,21 @@ REASONS: dict[str | None, str] = {
         "Это действие уже было выдано и могло выполниться. Повтор не выполняется; "
         "сначала проверьте результат наблюдением."
     ),
+    Reason.MACOS_ACCESSIBILITY_REQUIRED: (
+        "macOS не разрешила управление интерфейсом. Откройте Системные настройки → "
+        "Конфиденциальность и безопасность → Универсальный доступ, разрешите доступ "
+        "Jarvis или приложению, из которого он запущен, и перезапустите Jarvis."
+    ),
+    Reason.MACOS_SCREEN_RECORDING_REQUIRED: (
+        "macOS не разрешила снимки окон. Откройте Системные настройки → "
+        "Конфиденциальность и безопасность → Запись экрана и системного аудио, "
+        "разрешите доступ Jarvis или приложению запуска и перезапустите Jarvis."
+    ),
+    Reason.MACOS_NATIVE_DEPENDENCY_MISSING: (
+        "Для этой операции нужны нативные зависимости macOS. Запустите "
+        "scripts/macos/Launch-Jarvis.command для подготовки окружения. "
+        "Запуск приложений и работа с текстовым буфером доступны через системные утилиты."
+    ),
 }
 
 ERRORS = {
@@ -91,7 +109,7 @@ ERRORS = {
         "состояние; действие могло уже выполниться."
     ),
     "application_missing": (
-        "Приложение не найдено в каталоге Windows. Проверьте установленное имя или "
+        "Приложение не найдено в системном каталоге. Проверьте установленное имя или "
         "получите список открытых окон."
     ),
     "application_ambiguous": "Найдено несколько приложений. Уточните установленное имя.",
@@ -108,9 +126,9 @@ ERRORS = {
     "audit_unavailable": "Не удалось записать надёжный audit. Выполнение остановлено.",
     "cancelled": "Выполнение отменено. Уже выданные действия не откатываются.",
     "timeout": "Истёк срок выполнения операции.",
-    "native_timeout": "Windows helper не ответил в отведённое время и был остановлен.",
+    "native_timeout": "Нативный helper не ответил в отведённое время и был остановлен.",
     "network_denied": "Адрес или доступ к сети не соответствует политике выбранного браузера.",
-    "unsupported_platform": "Для этой операции необходим Windows runtime.",
+    "unsupported_platform": "Эта операция поддерживается только на Windows и macOS.",
 }
 
 

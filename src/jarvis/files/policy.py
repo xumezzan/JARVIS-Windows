@@ -6,14 +6,31 @@ or a "..." segment cannot lead outside the folders the user allowed.
 """
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from jarvis.files.protected import macos_path_denied
 from jarvis.tools.base import ToolError
 
 # Folders a person keeps their own documents in. The installation, the repository and the
 # system directories are deliberately not here.
 USER_FOLDERS = ("Desktop", "Documents", "Downloads", "Pictures", "Music", "Videos")
+MACOS_EXECUTABLE = frozenset(
+    {
+        ".app",
+        ".command",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".py",
+        ".scpt",
+        ".scptd",
+        ".workflow",
+        ".dylib",
+        ".so",
+    }
+)
 
 # Extensions that run code when opened or that Windows treats as executable. They are never
 # written, renamed into, or opened, whatever the command says.
@@ -82,7 +99,8 @@ MAX_TEXT_BYTES = 400_000
 def default_roots() -> tuple[str, ...]:
     """The user's own folders that actually exist on this machine."""
     home = Path.home()
-    return tuple(str(home / name) for name in USER_FOLDERS if (home / name).is_dir())
+    names = ("Desktop", "Documents", "Downloads") if sys.platform == "darwin" else USER_FOLDERS
+    return tuple(str(home / name) for name in names if (home / name).is_dir())
 
 
 @dataclass(frozen=True)
@@ -117,16 +135,22 @@ class FilePolicy:
             raise ToolError("path_denied") from None
 
     def inside(self, path: Path) -> bool:
-        return not any(
-            path == root or path.is_relative_to(root) for root in self.denied_roots
-        ) and any(path == root or path.is_relative_to(root) for root in self.roots)
+        return (
+            not macos_path_denied(path)
+            and not any(path == root or path.is_relative_to(root) for root in self.denied_roots)
+            and any(path == root or path.is_relative_to(root) for root in self.roots)
+        )
 
     def check(self, raw: str) -> Path:
         """Resolve one caller-supplied path and prove it stays inside an allowed folder."""
         if not raw or len(raw) > 4096 or "\x00" in raw:
             raise ToolError("path_denied")
         candidate = Path(raw)
-        if not candidate.is_absolute() or candidate.drive.startswith("\\\\"):
+        if (
+            not candidate.is_absolute()
+            or candidate.drive.startswith("\\\\")
+            or macos_path_denied(candidate)
+        ):
             raise ToolError("path_denied")
         resolved = self.normalise(candidate)
         if not self.inside(resolved):
@@ -135,7 +159,9 @@ class FilePolicy:
 
     def writable(self, path: Path) -> Path:
         """A path that may be created, replaced, renamed or removed."""
-        if path.suffix.lower() in EXECUTABLE:
+        if path.suffix.lower() in EXECUTABLE or (
+            sys.platform == "darwin" and path.suffix.lower() in MACOS_EXECUTABLE
+        ):
             raise ToolError("file_unsupported")
         return path
 
@@ -146,6 +172,10 @@ class FilePolicy:
 
     def openable(self, path: Path) -> Path:
         """A document may be handed to its own application; a program may not."""
-        if path.suffix.lower() in EXECUTABLE or not path.suffix:
+        if (
+            path.suffix.lower() in EXECUTABLE
+            or not path.suffix
+            or (sys.platform == "darwin" and path.suffix.lower() in MACOS_EXECUTABLE)
+        ):
             raise ToolError("file_unsupported")
         return path

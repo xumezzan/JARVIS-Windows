@@ -1,4 +1,7 @@
-# JARVIS for Windows
+# JARVIS for Windows and macOS
+
+Нативная macOS-ветка сохраняет существующие имена инструментов и PermissionEngine.
+Запуск `.app`, разрешения, команды проверки и ограничения — [docs/MACOS.md](docs/MACOS.md).
 
 После интеграции PR #59 сохранены три поверхности приложения: основная Qt-оболочка
 с connectors (`python -m jarvis`), компактная Qt-оболочка (`python -m jarvis --compact`)

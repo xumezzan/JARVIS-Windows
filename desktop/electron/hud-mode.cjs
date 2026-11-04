@@ -1,9 +1,10 @@
 // Main-process window presentation only. Runtime owns tasks; no approval authority here.
 class TaskHudWindow {
-  constructor(window, screen, notify) {
+  constructor(window, screen, notify, {platform = process.platform} = {}) {
     this.window = window;
     this.screen = screen;
     this.notify = notify;
+    this.platform = platform;
     this.saved = null;
     this.restoredTask = "";
     this.state = null;
@@ -31,12 +32,15 @@ class TaskHudWindow {
       this.saved = {bounds: maximized ? this.window.getNormalBounds() : this.window.getBounds(), maximized,
         minimum: this.window.getMinimumSize(), maximum: this.window.getMaximumSize(),
         resizable: this.window.isResizable(), top: this.window.isAlwaysOnTop(),
+        workspaces: this.platform === "darwin" && this.window.isVisibleOnAllWorkspaces(),
         display: this.screen.getDisplayMatching(this.window.getBounds()).id};
       if (this.saved.maximized) this.window.unmaximize();
       this.window.setMinimumSize(0, 0);
       this.window.setMaximumSize(0, 0);
       this.window.setResizable(false);
       this.window.setAlwaysOnTop(true, "floating");
+      if (this.platform === "darwin")
+        this.window.setVisibleOnAllWorkspaces(true, {visibleOnFullScreen: true});
       this.notify("hud");
       this.position();
       this.window.showInactive();
@@ -54,6 +58,8 @@ class TaskHudWindow {
     if (!saved || this.window.isDestroyed()) return;
     this.notify("normal");
     this.window.setAlwaysOnTop(saved.top);
+    if (this.platform === "darwin")
+      this.window.setVisibleOnAllWorkspaces(saved.workspaces, {visibleOnFullScreen: false});
     this.window.setResizable(saved.resizable);
     let bounds = saved.bounds;
     if (saved.display !== undefined && !this.screen.getAllDisplays().some(d => d.id === saved.display)) {
