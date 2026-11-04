@@ -22,7 +22,12 @@ from jarvis.observability.audit import AuditLog
 from jarvis.permissions.approvals import Action, ApprovalStore
 from jarvis.permissions.engine import Outcome, PermissionEngine
 from jarvis.permissions.policies import Mode, Status
-from jarvis.platforms.windows.ghost import CursorTarget, HumanTakeover, PhysicalInput
+from jarvis.platforms.windows.ghost import (
+    CursorTarget,
+    HumanTakeover,
+    InputMonitorUnavailable,
+    PhysicalInput,
+)
 from jarvis.security.browser_policy import NetworkPolicy
 from jarvis.tools.base import ToolError, canonical
 from jarvis.tools.browser import BrowserResult, PageTarget, PageView, ReadPage, register_browser
@@ -255,6 +260,42 @@ async def test_simulation_does_not_start_physical_monitor(tmp_path: Path) -> Non
         assert (await runner.run("fixture", Mode.SIMULATION)).status == "no_action"
         monitor.start.assert_not_called()
         monitor.sample.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("during_task", [False, True])
+async def test_monitor_failure_stops_the_run_without_issuing_an_effect(
+    tmp_path: Path,
+    during_task: bool,
+) -> None:
+    monitor = Mock(spec=HumanTakeover)
+    if during_task:
+        monitor.sample.side_effect = InputMonitorUnavailable(
+            "native detail must not reach the result"
+        )
+    else:
+        monitor.start.side_effect = OSError("native detail must not reach the result")
+
+    async def wait_for_provider(data: object) -> None:
+        await asyncio.Event().wait()
+
+    provider = Mock(propose=AsyncMock(side_effect=wait_for_provider))
+    registry = ToolRegistry()
+    with closing(AuditLog(tmp_path / "audit.db")) as audit:
+        runner = Runner(
+            registry,
+            PermissionEngine(registry, ApprovalStore(), audit),
+            provider,
+            AsyncMock(),
+            AsyncMock(),
+            takeover=monitor,
+        )
+        result = await runner.run("fixture", Mode.EXECUTE)
+        assert result.status == "error" and result.error == "input_monitor_unavailable"
+        assert not result.steps
+        monitor.stop.assert_called_once_with()
+        if not during_task:
+            provider.propose.assert_not_called()
 
 
 @pytest.mark.parametrize(

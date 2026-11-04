@@ -15,6 +15,31 @@ if TYPE_CHECKING:
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
+@pytest.fixture(autouse=True)
+def isolated_physical_input(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Portable tests exercise takeover without installing global keyboard/mouse hooks.
+
+    Explicit Windows acceptance keeps the real native monitor. The macOS adapter
+    tests construct their imported class with fake Quartz and test its lifecycle.
+    """
+    if "windows" in request.keywords:
+        return
+    from jarvis.platforms.macos import input as mac_input
+    from jarvis.platforms.windows import ghost
+
+    class QuietInput:
+        def read(self) -> ghost.PhysicalInput:
+            return ghost.PhysicalInput(0, 0, 0, move_serial=0)
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(ghost, "_PhysicalPoller", QuietInput)
+    monkeypatch.setattr(mac_input, "MacPhysicalPoller", QuietInput)
+
+
 @pytest.fixture(scope="session")
 def qapp(qapp: QApplication) -> Iterator[QApplication]:
     # Wrap pytest-qt's fixture for the whole QApplication lifetime, as in production.

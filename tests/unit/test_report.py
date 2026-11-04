@@ -50,6 +50,19 @@ def test_a_sent_letter_is_reported_with_what_it_was_about() -> None:
     assert "Отправил письмо «Перенос встречи»." in said and "example.com" not in said
 
 
+def test_input_monitor_failure_explains_os_permission_and_preserves_verified_deeds() -> None:
+    result = PlanResult(
+        "error",
+        (step("windows.open_app", {"app": "калькулятор"}),),
+        "input_monitor_unavailable",
+    )
+    lines = written(result)
+    assert lines[0] in HEADLINE["error"]
+    assert "Мониторинг ввода" in lines[1]
+    assert "Открыл калькулятор." in lines
+    assert SECRET not in result.summary
+
+
 def test_a_created_meeting_names_its_subject_and_time() -> None:
     start = "2026-09-17T13:00:00Z"
     result = PlanResult(

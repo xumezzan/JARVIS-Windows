@@ -46,9 +46,11 @@ test("macOS native buttons return for confirmations and completed tasks", () => 
   const { window, hud } = setup('darwin');
   hud.update(active);
   assert.equal(window.nativeButtons, false);
+  assert.deepEqual(window.workspaces, [true, {visibleOnFullScreen: true}]);
   assert.deepEqual([window.bounds.width, window.bounds.height], [360, 120]);
   hud.update({...active, prompt: {id: 'approve', kind: 'approval'}});
   assert.equal(window.nativeButtons, true);
+  assert.deepEqual(window.workspaces, [false, {visibleOnFullScreen: false}]);
   hud.update(active);
   assert.equal(window.nativeButtons, false);
   hud.update({task: {id: 'task', state: 'finished'}});
