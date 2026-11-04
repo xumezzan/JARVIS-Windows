@@ -512,7 +512,9 @@ class NativeDesktop:
             if self.ax is not None and self.ax.AXIsProcessTrusted():
                 # macOS sharing/titlebar accessories can be frontmost CG windows
                 # owned by the app without being its actual AX document window.
-                matches = [target for target in matches if self.matching_ax_windows(target)]
+                ax_matches = [target for target in matches if self.matching_ax_windows(target)]
+                if ax_matches:
+                    matches = ax_matches
             if matches:
                 return WindowsResult(target=self.with_editor(matches[0]))
             if time.monotonic() >= deadline:

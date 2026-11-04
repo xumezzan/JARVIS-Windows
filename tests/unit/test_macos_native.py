@@ -504,6 +504,23 @@ def test_open_ignores_sharing_accessory_without_an_ax_document_window(
     assert calls == [["/usr/bin/open", "-a", str(entry.bundle)]]
 
 
+def test_open_keeps_a_bare_launch_receipt_when_ax_has_no_window(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = LaunchEntry(
+        Path("/System/Applications/TextEdit.app"), Path(target().executable), ("TextEdit",)
+    )
+    monkeypatch.setattr(desktop, "resolve_app", lambda app: entry)
+    monkeypatch.setattr(desktop, "windows", lambda: [target()])
+    monkeypatch.setattr(desktop, "matching_ax_windows", lambda observed: [])
+    monkeypatch.setattr(desktop, "with_editor", lambda observed: observed)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(native, "command", lambda argv, **kwargs: calls.append(argv))
+
+    assert desktop.open_app("notepad").target == target()
+    assert calls == [["/usr/bin/open", "-a", str(entry.bundle)]]
+
+
 @pytest.mark.parametrize("failure_stage", ["resolve", "editors"])
 def test_optional_editor_ax_failure_keeps_only_revalidated_bare_window(
     desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch, failure_stage: str
