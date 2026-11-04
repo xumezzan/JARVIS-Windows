@@ -41,6 +41,7 @@ class TaskHudWindow {
       this.window.setAlwaysOnTop(true, "floating");
       if (this.platform === "darwin")
         this.window.setVisibleOnAllWorkspaces(true, {visibleOnFullScreen: true});
+      if (this.platform === "darwin") this.window.setWindowButtonVisibility(false);
       this.notify("hud");
       this.position();
       this.window.showInactive();
@@ -69,6 +70,7 @@ class TaskHudWindow {
         y: Math.max(area.y, Math.min(bounds.y, area.y + area.height - height))};
     }
     this.window.setBounds(bounds);
+    if (this.platform === "darwin") this.window.setWindowButtonVisibility(true);
     this.window.setMinimumSize(...saved.minimum);
     this.window.setMaximumSize(...saved.maximum);
     if (saved.maximized) this.window.maximize();

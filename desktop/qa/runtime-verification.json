@@ -4,11 +4,23 @@
     "pass": true
   },
   {
-    "check": "isolated renderer, fixed window and no exposed approval API",
+    "check": "isolated renderer, display-fitting window and no exposed approval API",
     "size": [
-      1536,
-      1024
+      1480,
+      827
     ],
+    "bounds": {
+      "x": 16,
+      "y": 49,
+      "width": 1480,
+      "height": 827
+    },
+    "workArea": {
+      "x": 0,
+      "y": 33,
+      "width": 1512,
+      "height": 859
+    },
     "contextIsolation": true,
     "nodeIntegration": false,
     "sandbox": true
@@ -69,6 +81,10 @@
   {
     "check": "renderer errors",
     "errors": []
+  },
+  {
+    "check": "window controls remain visible after scrolling a short desktop",
+    "pass": true
   },
   {
     "check": "native custom window controls and owned runtime shutdown",

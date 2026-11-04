@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 interface JarvisWindowControls {
+  readonly nativeWindowControls: boolean;
   minimize(): Promise<void>;
   maximize(): Promise<boolean>;
   close(): Promise<void>;
