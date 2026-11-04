@@ -64,10 +64,13 @@ def test_bad_threshold_is_finite_configuration_failure(
         EnergyEndpoint.configured()
 
 
-def test_wake_is_disabled_without_explicit_startup_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("opted_in", [False, None, 1, "true"])
+def test_wake_is_disabled_without_explicit_opt_in(
+    monkeypatch: pytest.MonkeyPatch, opted_in: Any
+) -> None:
     monkeypatch.delenv("JARVIS_VOICE_WAKE_WORD", raising=False)
-    with pytest.raises(VoiceError, match="voice_config"):
-        audio.wait_for_wake(object(), Event(), lambda: None)
+    with pytest.raises(VoiceError, match="wake_disabled"):
+        audio.wait_for_wake(object(), Event(), lambda: None, opted_in=opted_in)
 
 
 @pytest.mark.parametrize(
@@ -75,13 +78,17 @@ def test_wake_is_disabled_without_explicit_startup_opt_in(monkeypatch: pytest.Mo
     [("джарвис", True), ("слушай джарвис", True), ("антиджарвис", False), ("[unk]", False)],
 )
 @pytest.mark.parametrize("final", [False, True])
+@pytest.mark.parametrize("confidence", [0.5, 0.99])
+@pytest.mark.parametrize("startup_opt_in", [False, True])
 def test_native_wake_uses_exact_local_grammar_without_returning_pcm_or_text(
     monkeypatch: pytest.MonkeyPatch,
     text: str,
     expected: bool,
     final: bool,
+    confidence: float,
+    startup_opt_in: bool,
 ) -> None:
-    monkeypatch.setenv("JARVIS_VOICE_WAKE_WORD", "1")
+    monkeypatch.setenv("JARVIS_VOICE_WAKE_WORD", "1" if startup_opt_in else "0")
     stopped, decoded = Event(), Event()
     disposed: list[bool] = []
     model = SimpleNamespace(vosk_model_find_word=lambda word: 1)
@@ -96,19 +103,26 @@ def test_native_wake_uses_exact_local_grammar_without_returning_pcm_or_text(
 
         def AcceptWaveform(self, frame: bytes) -> bool:
             assert len(frame) == 3200
+            if not final:
+                decoded.set()
             return final
+
+        def SetWords(self, enabled: bool) -> None:
+            assert enabled is True
 
         def Result(self) -> str:
             import json
 
             decoded.set()
-            return json.dumps({"text": text})
+            return json.dumps(
+                {
+                    "text": text,
+                    "result": [{"word": word, "conf": confidence} for word in text.split()],
+                }
+            )
 
         def PartialResult(self) -> str:
-            import json
-
-            decoded.set()
-            return json.dumps({"partial": text})
+            pytest.fail("A partial hypothesis must never activate the microphone")
 
     class Stream:
         def __init__(self, **kwargs: Any) -> None:
@@ -136,7 +150,9 @@ def test_native_wake_uses_exact_local_grammar_without_returning_pcm_or_text(
         SimpleNamespace(RawInputStream=Stream, CallbackStop=Stop, CallbackAbort=Stop),
     )
     monkeypatch.setitem(sys.modules, "vosk", SimpleNamespace(KaldiRecognizer=Decoder))
-    assert audio.wait_for_wake(model, stopped, lambda: None) == {"wake": expected}
+    assert audio.wait_for_wake(model, stopped, lambda: None, opted_in=not startup_opt_in) == {
+        "wake": expected and final and confidence >= audio.WAKE_CONFIDENCE
+    }
     assert disposed == [True]
 
 
@@ -160,7 +176,7 @@ async def test_wake_transitions_to_endpoint_recording_and_review_without_gesture
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("JARVIS_VOICE_WAKE_WORD", "1")
+    monkeypatch.delenv("JARVIS_VOICE_WAKE_WORD", raising=False)
     recognizer = recognizer_fixture(monkeypatch, tmp_path)
     calls: list[dict[str, object]] = []
     texts: list[str] = []
@@ -189,12 +205,14 @@ async def test_wake_transitions_to_endpoint_recording_and_review_without_gesture
         start,
         lambda: None,
         recognizer=recognizer,
+        wake_word=True,
     )
     voice.wake_allowed = True
     try:
         voice.reconcile_wake(True)
         await until(lambda: bool(texts) and voice.task is None)
         assert [c["operation"] for c in calls] == ["wake", "record", "transcribe"]
+        assert calls[0]["wake_opt_in"] is True
         assert texts == ["проверь систему"] and not starts
         assert voice.phase == "idle" and not voice.background
         assert voice.wake_review
@@ -286,7 +304,9 @@ async def test_real_host_protocol_reuses_one_model_for_wake_record_and_transcrib
         "def load(path):\n"
         " marker.write_text(marker.read_text()+'1' if marker.exists() else '1')\n"
         " return object()\n"
-        "def wake(model,released,ready): ready(); return {'wake':True}\n"
+        "def wake(model,released,ready,*,opted_in):\n"
+        " assert opted_in is True\n"
+        " ready(); return {'wake':True}\n"
         "def record(**kwargs):\n"
         " assert kwargs['auto_stop_on_silence']; kwargs['ready']()\n"
         " return {'pcm':base64.b64encode(bytes(6400)).decode()}\n"
@@ -305,7 +325,9 @@ async def test_real_host_protocol_reuses_one_model_for_wake_record_and_transcrib
     monkeypatch.setattr(asyncio, "create_subprocess_exec", launch)
     host = AudioHost(tmp_path)
     try:
-        wake = await host.call({"operation": "wake"}, released=Event(), ready=lambda: None)
+        wake = await host.call(
+            {"operation": "wake", "wake_opt_in": True}, released=Event(), ready=lambda: None
+        )
         assert wake == {"wake": True}
         recorded = await host.call(
             {"operation": "record", "auto_stop_on_silence": True},

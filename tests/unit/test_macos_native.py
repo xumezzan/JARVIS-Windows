@@ -207,6 +207,44 @@ def test_editor_value_is_represented_only_by_digest(desktop: NativeDesktop) -> N
     assert "private body" not in snapshot.model_dump_json()
 
 
+@pytest.mark.parametrize(
+    "role,identifier,error,accepted",
+    [
+        ("AXTextArea", "document", -25200, True),
+        ("AXTextArea", "", -25200, False),
+        ("AXTextArea", "document", -25202, False),
+        ("AXTextArea", "document", -25204, False),
+        ("AXButton", "document", -25200, False),
+    ],
+)
+def test_textedit_description_failure_requires_a_live_textarea_identifier(
+    desktop: NativeDesktop,
+    monkeypatch: pytest.MonkeyPatch,
+    role: str,
+    identifier: str,
+    error: int,
+    accepted: bool,
+) -> None:
+    editor = node(role, AXIdentifier=identifier, AXValue="private body", settable=True)
+    original = desktop.ax.AXUIElementCopyAttributeValue
+
+    def read(value: Any, name: str, output: Any) -> tuple[int, Any]:
+        if name == "AXDescription":
+            return error, None
+        code, result = original(value, name, output)
+        return int(code), result
+
+    monkeypatch.setattr(desktop.ax, "AXUIElementCopyAttributeValue", read)
+    if accepted:
+        snapshot = desktop.editor_target(Node(editor, (123, 0), 1), [])
+        assert snapshot.name == identifier
+        assert snapshot.content_sha256 == text_digest("private body")
+        assert "private body" not in snapshot.model_dump_json()
+    else:
+        with pytest.raises(ToolError):
+            desktop.label(editor)
+
+
 def test_two_identical_semantic_editors_are_refused(desktop: NativeDesktop) -> None:
     editor = node("AXTextArea", "Document", AXValue="", settable=True)
     root = node("AXWindow", AXChildren=[editor, editor.copy()])
@@ -415,6 +453,7 @@ def test_open_waits_for_observed_window_without_relaunching_after_six_seconds(
     calls: list[list[str]] = []
     monkeypatch.setattr(desktop, "resolve_app", lambda app: entry)
     monkeypatch.setattr(desktop, "with_editor", lambda observed: observed)
+    monkeypatch.setattr(desktop, "matching_ax_windows", lambda observed: [object()])
     monkeypatch.setattr(
         desktop, "windows", lambda: [target()] if appears and elapsed[0] >= 8 else []
     )
@@ -428,6 +467,40 @@ def test_open_waits_for_observed_window_without_relaunching_after_six_seconds(
         with pytest.raises(ToolError, match="native_timeout"):
             desktop.open_app("notepad")
         assert 14 <= elapsed[0] < 14.1
+    assert calls == [["/usr/bin/open", "-a", str(entry.bundle)]]
+
+
+def test_open_ignores_sharing_accessory_without_an_ax_document_window(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = LaunchEntry(
+        Path("/System/Applications/TextEdit.app"), Path(target().executable), ("TextEdit",)
+    )
+    accessory = row() | {
+        "kCGWindowNumber": 124,
+        "kCGWindowName": "Window",
+        "kCGWindowBounds": {"X": 6, "Y": 6, "Width": 66, "Height": 20},
+    }
+    document = node(
+        "AXWindow",
+        AXPosition=SimpleNamespace(x=0, y=0),
+        AXSize=SimpleNamespace(width=800, height=600),
+    )
+    monkeypatch.setattr(desktop, "window_rows", lambda: [accessory, row()])
+    monkeypatch.setattr(
+        desktop.ax,
+        "AXUIElementCreateApplication",
+        lambda pid: {"AXWindows": [document]},
+        raising=False,
+    )
+    monkeypatch.setattr(desktop, "resolve_app", lambda app: entry)
+    monkeypatch.setattr(desktop, "with_editor", lambda observed: observed)
+    calls: list[list[str]] = []
+    monkeypatch.setattr(native, "command", lambda argv, **kwargs: calls.append(argv))
+
+    result = desktop.open_app("notepad")
+
+    assert result.target == target()
     assert calls == [["/usr/bin/open", "-a", str(entry.bundle)]]
 
 
@@ -465,6 +538,53 @@ def test_optional_editor_failure_cannot_hide_changed_window_identity(
     with pytest.raises(ToolError) as caught:
         desktop.with_editor(target())
     assert caught.value.reason is Reason.WINDOW_IDENTITY_CHANGED
+
+
+@pytest.mark.parametrize(
+    "app,documents,toolbar,selected",
+    [
+        ("TextEdit", 1, True, True),
+        ("TextEdit", 2, True, False),
+        ("TextEdit", 0, True, False),
+        ("OtherEditor", 1, True, False),
+    ],
+)
+def test_textedit_default_editor_is_one_document_not_its_font_control(
+    desktop: NativeDesktop,
+    monkeypatch: pytest.MonkeyPatch,
+    app: str,
+    documents: int,
+    toolbar: bool,
+    selected: bool,
+) -> None:
+    fields = [
+        desktop.editor_target(
+            Node(
+                node("AXTextArea", f"Document {index}", AXValue="", settable=True), (123, index), 1
+            ),
+            [],
+        )
+        for index in range(documents)
+    ]
+    if toolbar:
+        fields.append(
+            desktop.editor_target(
+                Node(node("AXComboBox", "Font size", AXValue="12", settable=True), (123, 99), 1), []
+            )
+        )
+    observed = target().model_copy(
+        update={"app": app, "executable": str(Path(target().executable).with_name(app))}
+    )
+    desktop.psutil.Process(observed.pid).exe.return_value = observed.executable
+    monkeypatch.setattr(desktop, "resolve", lambda *args: object())
+    monkeypatch.setattr(desktop, "editors", lambda *args: fields)
+
+    current = desktop.with_editor(observed)
+
+    assert (current.editor is not None) is selected
+    if selected:
+        assert current.editor == fields[0]
+        assert current.empty
 
 
 def test_chrome_url_is_a_literal_argument_and_has_no_shell(

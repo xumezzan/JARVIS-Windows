@@ -226,10 +226,12 @@ def load_model(model_path: Path) -> Any:
 WAKE_GRAMMAR = '["джарвис", "слушай джарвис", "[unk]"]'
 
 
-def wait_for_wake(model: Any, released: Event, ready: Callable[[], None]) -> dict[str, object]:
+def wait_for_wake(
+    model: Any, released: Event, ready: Callable[[], None], *, opted_in: bool = False
+) -> dict[str, object]:
     """Local, opted-in bounded listening; no background PCM/text leaves this process."""
-    if os.environ.get("JARVIS_VOICE_WAKE_WORD", "0") != "1":
-        raise VoiceError("voice_config")
+    if opted_in is not True and os.environ.get("JARVIS_VOICE_WAKE_WORD", "0") != "1":
+        raise VoiceError("wake_disabled")
     try:
         EnergyEndpoint.configured()
     except ValueError:
@@ -240,6 +242,7 @@ def wait_for_wake(model: Any, released: Event, ready: Callable[[], None]) -> dic
         if model.vosk_model_find_word("джарвис") < 0:
             raise VoiceError("wake_model")
         decoder = importlib.import_module("vosk").KaldiRecognizer(model, SAMPLE_RATE, WAKE_GRAMMAR)
+        decoder.SetWords(True)
     except VoiceError:
         raise
     except Exception:
@@ -276,10 +279,7 @@ def wait_for_wake(model: Any, released: Event, ready: Callable[[], None]) -> dic
                     frame = frames.get(timeout=0.1)
                 except Empty:
                     continue
-                final = decoder.AcceptWaveform(frame)
-                data = json.loads(decoder.Result() if final else decoder.PartialResult())
-                text = data.get("text" if final else "partial", "")
-                if isinstance(text, str) and "джарвис" in text.casefold().split():
+                if decoder.AcceptWaveform(frame) and named(decoder.Result()):
                     return {"wake": True}
         if failed.is_set():
             raise VoiceError("overflow")
@@ -487,11 +487,16 @@ def recognition_host() -> int:
         emit(json.dumps(result, ensure_ascii=True))
 
     def record(
-        capture_id: str, released: Event, finished: Event, enabled: bool, wake: bool
+        capture_id: str,
+        released: Event,
+        finished: Event,
+        enabled: bool,
+        wake: bool,
+        opted_in: bool,
     ) -> None:
         try:
             result = (
-                wait_for_wake(model, released, lambda: reply({"ready": True}))
+                wait_for_wake(model, released, lambda: reply({"ready": True}), opted_in=opted_in)
                 if wake
                 else capture(
                     model=model,
@@ -533,16 +538,26 @@ def recognition_host() -> int:
                 elif model is not None and operation in {"record", "wake"}:
                     capture_id = request.get("capture_id")
                     enabled = request.get("auto_stop_on_silence", False)
+                    opted_in = request.get("wake_opt_in", False)
                     if (
                         not isinstance(capture_id, str)
                         or len(capture_id) != 32
                         or type(enabled) is not bool
+                        or type(opted_in) is not bool
+                        or (operation != "wake" and opted_in)
                     ):
                         raise VoiceError("voice_failed")
                     released, finished = Event(), Event()
                     thread = Thread(
                         target=record,
-                        args=(capture_id, released, finished, enabled, operation == "wake"),
+                        args=(
+                            capture_id,
+                            released,
+                            finished,
+                            enabled,
+                            operation == "wake",
+                            opted_in,
+                        ),
                     )
                     recording = (capture_id, released, finished, thread)
                     thread.start()
