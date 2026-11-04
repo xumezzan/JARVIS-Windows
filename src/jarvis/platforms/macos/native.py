@@ -356,7 +356,7 @@ class NativeDesktop:
             break
         raise ToolError("target_changed", reason=Reason.WINDOW_IDENTITY_CHANGED)
 
-    def resolve(self, target: WindowTarget, *, check_title: bool = False) -> Any:
+    def matching_ax_windows(self, target: WindowTarget, *, check_title: bool = False) -> list[Any]:
         self.accessibility()
         row = self.resolve_row(target, check_title=check_title)
         wanted = self.row_bounds(row)
@@ -376,6 +376,10 @@ class NativeDesktop:
                     matches.append(window)
             except ToolError:
                 continue
+        return matches
+
+    def resolve(self, target: WindowTarget, *, check_title: bool = False) -> Any:
+        matches = self.matching_ax_windows(target, check_title=check_title)
         if len(matches) != 1:
             raise ToolError("target_changed", reason=Reason.AMBIGUOUS_WINDOW)
         return matches[0]
@@ -504,6 +508,13 @@ class NativeDesktop:
             matches = [
                 target for target in self.windows() if Path(target.executable) == entry.executable
             ]
+            self.frameworks()
+            if self.ax is not None and self.ax.AXIsProcessTrusted():
+                # macOS sharing/titlebar accessories can be frontmost CG windows
+                # owned by the app without being its actual AX document window.
+                ax_matches = [target for target in matches if self.matching_ax_windows(target)]
+                if ax_matches:
+                    matches = ax_matches
             if matches:
                 return WindowsResult(target=self.with_editor(matches[0]))
             if time.monotonic() >= deadline:
@@ -525,6 +536,10 @@ class NativeDesktop:
             # typing target, and a changed CG/process identity must still fail.
             fields = []
         self.resolve_row(target)
+        if target.app == "TextEdit":
+            # Its formatting toolbar also exposes editable font controls. Only
+            # the single document area can be the default target for text input.
+            fields = [field for field in fields if field.control_type == "Document"]
         if len(fields) != 1:
             return bare
         return bare.model_copy(
@@ -664,7 +679,22 @@ class NativeDesktop:
 
     def label(self, value: Any) -> str:
         # AXValue is deliberately excluded: it can contain user text and passwords.
-        return str(self.attr(value, "AXTitle", "") or self.attr(value, "AXDescription", ""))
+        title = self.attr(value, "AXTitle", "")
+        if title:
+            return str(title)
+        try:
+            return str(self.attr(value, "AXDescription", ""))
+        except ToolError:
+            # TextEdit's document returns kAXErrorFailure for AXDescription even
+            # while its role and stable identifier are readable. Do not relax
+            # reads of role, security attributes, children or the field's value.
+            error, _ = self.ax.AXUIElementCopyAttributeValue(value, "AXDescription", None)
+            if error != -25200 or self.attr(value, "AXRole") != "AXTextArea":
+                raise
+            identifier = self.identifier(value)
+            if not identifier:
+                raise
+            return identifier
 
     def identifier(self, value: Any) -> str:
         result = str(self.attr(value, "AXIdentifier", ""))

@@ -142,7 +142,9 @@ class DesktopVoice:
         try:
             while generation == self.wake_generation and not self.wake_released.is_set():
                 result = await host.call(
-                    {"operation": "wake"}, released=self.wake_released, ready=ready
+                    {"operation": "wake", "wake_opt_in": self.wake_enabled},
+                    released=self.wake_released,
+                    ready=ready,
                 )
                 if result.get("wake") is True and generation == self.wake_generation:
                     self.wake_generation += 1  # Ignore a queued listening receipt after activation.
