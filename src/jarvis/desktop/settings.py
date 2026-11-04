@@ -19,6 +19,8 @@ class UiSettings(ToolModel):
     task_memory_enabled: bool = True
     wake_word: bool = False
     auto_stop_on_silence: bool = False
+    theme: Literal["Midnight", "Graphite"] = "Midnight"
+    motion_enabled: bool = True
     browser_mode: WorkspaceBrowserMode | None = None
     vosk_model_path: str = Field(default="", max_length=2000, repr=False)
     managed_browser: bool = False

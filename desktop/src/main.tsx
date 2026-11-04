@@ -23,7 +23,6 @@ import {
   Square,
   Unplug,
   Waves,
-  Wrench,
   X,
 } from "lucide-react";
 import { JarvisOrb } from "./components/JarvisOrb";
@@ -73,8 +72,10 @@ function App() {
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
   const [offline, setOffline] = useState(!window.jarvis);
-  const [moving, setMoving] = useState(true);
-  const [theme, setTheme] = useState("Midnight");
+  const [savingAppearance, setSavingAppearance] = useState(false);
+  const savingAppearanceRef = useRef(false);
+  const moving = state?.settings.motion_enabled ?? true;
+  const theme = state?.settings.theme ?? "Midnight";
   const [windowMode, setWindowMode] = useState<"normal" | "hud">("normal");
   const [memoryIds, setMemoryIds] = useState<string[]>([]);
   const [sessionMemory, setSessionMemory] = useState(false);
@@ -105,13 +106,23 @@ function App() {
     async (work: Promise<RuntimeState>) => {
       setError("");
       try {
-        apply(await work);
+        const next = await work;
+        apply(next);
+        return next;
       } catch (e) {
         setError(readableError(e));
+        return null;
       }
     },
     [apply],
   );
+  async function configureAppearance(patch: { theme?: "Midnight" | "Graphite"; motion_enabled?: boolean }) {
+    if (!window.jarvis || !state?.can_run || savingAppearanceRef.current) return;
+    savingAppearanceRef.current = true;
+    setSavingAppearance(true);
+    try { await perform(window.jarvis.configure(patch)); }
+    finally { savingAppearanceRef.current = false; setSavingAppearance(false); }
+  }
   useEffect(() => {
     setMemoryIds([]);
     setSessionMemory(false);
@@ -820,7 +831,7 @@ function App() {
                         disabled={!ready}
                         onClick={() => void open("tools")}
                       >
-                        Открыть инструменты
+                        Обновить инструменты
                         <ChevronRight />
                       </button>
                     </div>
@@ -889,7 +900,10 @@ function App() {
                         <select
                           id="theme"
                           value={theme}
-                          onChange={(event) => setTheme(event.target.value)}
+                          disabled={!ready || !state?.can_run || savingAppearance}
+                          onChange={(event) => void configureAppearance({
+                            theme: event.target.value as "Midnight" | "Graphite",
+                          })}
                         >
                           <option value="Midnight">Midnight</option>
                           <option value="Graphite">Graphite</option>
@@ -902,7 +916,8 @@ function App() {
                           aria-checked={moving}
                           aria-labelledby="motion-label"
                           className="toggle"
-                          onClick={() => setMoving((value) => !value)}
+                          disabled={!ready || !state?.can_run || savingAppearance}
+                          onClick={() => void configureAppearance({ motion_enabled: !moving })}
                         >
                           <span />
                         </button>
@@ -947,7 +962,8 @@ function App() {
                 aria-label="Закрыть уведомление"
                 onClick={() => {
                   setError("");
-                  if (state) setState({ ...state, notice: "" });
+                  if (state?.notice && window.jarvis)
+                    void perform(window.jarvis.dismissNotice(state.notice));
                 }}
               >
                 <X />
