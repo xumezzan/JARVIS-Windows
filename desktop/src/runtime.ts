@@ -9,6 +9,8 @@ export type VoiceSettings = {
   watch_speech: boolean;
   wake_word: boolean;
   auto_stop_on_silence: boolean;
+  theme: "Midnight" | "Graphite";
+  motion_enabled: boolean;
 };
 export type Prompt = {
   id: string;
@@ -171,9 +173,10 @@ export interface JarvisApi {
   status(): Promise<{ state: RuntimeState | null; error: string }>;
   run(command: string, mode: Mode, options?: RunOptions): Promise<RuntimeState>;
   cancel(): Promise<RuntimeState>;
+  dismissNotice(text: string): Promise<RuntimeState>;
   cloudReview(reply: { id: string; allow_current: boolean; allow_history: boolean }): Promise<RuntimeState>;
   open(panel: Panel): Promise<RuntimeState>;
-  configure(settings: VoiceSettings): Promise<RuntimeState>;
+  configure(settings: Partial<VoiceSettings>): Promise<RuntimeState>;
   answer(id: string, answer: string): Promise<RuntimeState>;
   memory(edit: Record<string, unknown>): Promise<RuntimeState>;
   mail(command: Record<string, unknown>, mode: Mode): Promise<RuntimeState>;
@@ -310,6 +313,9 @@ export function readableError(error: unknown): string {
       "Ответьте на вопрос о передаче данных в чате.",
     cloud_review_expired: "Вопрос истёк или уже обработан. Запустите задачу заново.",
     cloud_review_changed: "Настройки изменились. Запустите задачу заново.",
+    notice_changed: "Уведомление обновилось. Проверьте новое сообщение.",
+    planner_model_required: "Укажите модель Responses API и нажмите «Сохранить модель» в настройках.",
+    invalid_request: "Движок отклонил параметры. Проверьте введённые значения; настройки не изменены.",
     prompt_expired: "Запрос подтверждения истёк. Запустите задачу заново.",
     prompt_changed: "Данные подтверждения изменились. Запустите задачу заново.",
     memory_changed:

@@ -135,6 +135,13 @@ ipcMain.handle("jarvis-app:run", (event, ...args) => {
 ipcMain.handle("jarvis-app:cancel", (event, ...args) =>
   protectedRequest(event, args, 0, "cancel"),
 );
+ipcMain.handle("jarvis-app:dismiss-notice", (event, ...args) => {
+  verifiedWindow(event, args, 1);
+  const text = args[0];
+  if (typeof text !== "string" || !text || text.length > 4000)
+    throw new Error("invalid_request");
+  return protectedRequest(event, args, 1, "dismiss_notice", { notice_text: text });
+});
 ipcMain.handle("jarvis-app:workspace-browser", (event, ...args) => {
   verifiedWindow(event, args, 1);
   const mode = args[0];

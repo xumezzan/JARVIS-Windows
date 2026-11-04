@@ -1,0 +1,1635 @@
+{
+  "schema": 1,
+  "note": "Static JSX sites; map templates expand to multiple visible controls. See manual trace for semantics.",
+  "files": [
+    {
+      "file": "desktop/src/components/CloudConsentCard.tsx",
+      "sha256": "55fb47d876809ab972c4676aea1a7bef6dbd879bf6d107243f7e72d1e6150c53",
+      "importedIcons": [],
+      "elements": [
+        {
+          "line": 23,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "type": "\"checkbox\"",
+            "checked": "{current}",
+            "disabled": "{busy || expired}",
+            "onChange": "{(event) => setCurrent(event.target.checked)}"
+          }
+        },
+        {
+          "line": 30,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "type": "\"checkbox\"",
+            "checked": "{history}",
+            "disabled": "{busy || expired}",
+            "onChange": "{(event) => setHistory(event.target.checked)}"
+          }
+        },
+        {
+          "line": 40,
+          "tag": "button",
+          "kind": "control",
+          "text": "Отмена",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{busy}",
+            "onClick": "{() => void onDecision(false, false)}"
+          }
+        },
+        {
+          "line": 42,
+          "tag": "button",
+          "kind": "control",
+          "text": "Продолжить задачу",
+          "attributes": {
+            "className": "\"primary-button\"",
+            "disabled": "{busy || expired || !current}",
+            "onClick": "{() => void onDecision(current, history)}"
+          }
+        }
+      ]
+    },
+    {
+      "file": "desktop/src/components/CompactHud.tsx",
+      "sha256": "8956fe09b413079997af186eb2de1faeb1d0adce9e26bae5f6ced3ac2092b320",
+      "importedIcons": [],
+      "elements": []
+    },
+    {
+      "file": "desktop/src/components/GhostCursor.tsx",
+      "sha256": "68fdc8bab248f45fbc8c67fc7a0cbbb3dad346f4dcd1e23bf56c74fdde714efa",
+      "importedIcons": [],
+      "elements": []
+    },
+    {
+      "file": "desktop/src/components/JarvisOrb.tsx",
+      "sha256": "8b9bd242b70383715a84ed3930b33bb3a277e22da0c7576b22162ab05ed69e06",
+      "importedIcons": [],
+      "elements": []
+    },
+    {
+      "file": "desktop/src/components/RuntimeControls.tsx",
+      "sha256": "22f722fcbfdc117fbd806974bee2a7bda0bbda07e073fadf232c61e0c43d912d",
+      "importedIcons": [
+        "Mic",
+        "ShieldCheck",
+        "X"
+      ],
+      "elements": [
+        {
+          "line": 53,
+          "tag": "ShieldCheck",
+          "kind": "icon",
+          "text": "",
+          "attributes": {
+            "size": "{18}"
+          }
+        },
+        {
+          "line": 75,
+          "tag": "textarea",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "id": "\"clarification\"",
+            "value": "{answer}",
+            "maxLength": "{4000}",
+            "onChange": "{(e) => setAnswer(e.target.value)}"
+          }
+        },
+        {
+          "line": 92,
+          "tag": "button",
+          "kind": "control",
+          "text": "Отклонить действие",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "data-jarvis-approval": "{prompt.id}",
+            "data-approved": "\"false\"",
+            "disabled": "{!remaining}"
+          }
+        },
+        {
+          "line": 100,
+          "tag": "button",
+          "kind": "control",
+          "text": "Подтвердить показанное действие",
+          "attributes": {
+            "className": "\"primary-button\"",
+            "data-jarvis-approval": "{prompt.id}",
+            "data-approved": "\"true\"",
+            "disabled": "{!remaining}"
+          }
+        },
+        {
+          "line": 110,
+          "tag": "button",
+          "kind": "control",
+          "text": "Ответить",
+          "attributes": {
+            "className": "\"primary-button\"",
+            "disabled": "{!remaining || !answer.trim()}",
+            "onClick": "{() =>\n              void perform(window.jarvis!.answer(prompt.id, answer))\n            }"
+          }
+        },
+        {
+          "line": 120,
+          "tag": "button",
+          "kind": "control",
+          "text": "Остановить задачу",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "onClick": "{() => void perform(window.jarvis!.cancel())}"
+          }
+        },
+        {
+          "line": 124,
+          "tag": "X",
+          "kind": "icon",
+          "text": "",
+          "attributes": {
+            "size": "{16}"
+          }
+        },
+        {
+          "line": 127,
+          "tag": "button",
+          "kind": "control",
+          "text": "Удерживайте и скажите «стоп»",
+          "attributes": {
+            "className": "\"outline-button dialog-mic\"",
+            "data-jarvis-hold": true,
+            "disabled": "{[\"speaking\", \"transcribing\"].includes(state.voice_phase)}"
+          }
+        },
+        {
+          "line": 132,
+          "tag": "Mic",
+          "kind": "icon",
+          "text": "",
+          "attributes": {
+            "size": "{18}"
+          }
+        },
+        {
+          "line": 180,
+          "tag": "select",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "id": "\"provider\"",
+            "disabled": "{busy}",
+            "value": "{settings.provider}",
+            "onChange": "{(e) =>\n          void configure({\n            provider: e.target.value as VoiceSettings[\"provider\"],\n          })\n        }"
+          }
+        },
+        {
+          "line": 196,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "id": "\"planner-model\"",
+            "value": "{model}",
+            "maxLength": "{100}",
+            "disabled": "{busy}",
+            "onChange": "{(e) =>\n              { setModel(e.target.value); setSavedModel(\"\"); }\n            }"
+          }
+        },
+        {
+          "line": 205,
+          "tag": "button",
+          "kind": "control",
+          "text": "Сохранить модель",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{busy || !model.trim()}",
+            "onClick": "{() => void configure({ model: model.trim() })}"
+          }
+        },
+        {
+          "line": 230,
+          "tag": "button",
+          "kind": "control",
+          "text": "Выбрать локальную модель Vosk",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{busy}",
+            "onClick": "{() => void perform(window.jarvis!.model())}"
+          }
+        },
+        {
+          "line": 238,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "type": "\"checkbox\"",
+            "checked": "{pendingSettings?.auto_start ?? settings.auto_start}",
+            "disabled": "{busy}",
+            "onChange": "{(e) =>\n            void configure({ auto_start: e.target.checked })\n          }"
+          }
+        },
+        {
+          "line": 257,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "type": "\"checkbox\"",
+            "disabled": "{busy}",
+            "checked": "{pendingSettings?.[key] ?? settings[key] ?? false}",
+            "onChange": "{(e) => void configure({ [key]: e.target.checked })}"
+          }
+        },
+        {
+          "line": 264,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "type": "\"checkbox\"",
+            "checked": "{pendingSettings?.speech_enabled ?? settings.speech_enabled}",
+            "disabled": "{busy}",
+            "onChange": "{(e) =>\n            void configure({ speech_enabled: e.target.checked })\n          }"
+          }
+        },
+        {
+          "line": 289,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "type": "\"checkbox\"",
+            "checked": "{pendingSettings?.[key] ?? settings[key] ?? false}",
+            "disabled": "{busy}",
+            "onChange": "{(e) => void configure({ [key]: e.target.checked })}"
+          }
+        },
+        {
+          "line": 294,
+          "tag": "button",
+          "kind": "control",
+          "text": "Приостановить фоновые проверки",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{busy || !(settings.watch_clipboard || settings.watch_mail)}",
+            "onClick": "{() => void perform(window.jarvis!.cancel())}"
+          }
+        },
+        {
+          "line": 308,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "id": "\"eleven-key\"",
+            "type": "\"password\"",
+            "autoComplete": "\"off\"",
+            "maxLength": "{4096}",
+            "value": "{key}",
+            "disabled": "{busy}",
+            "onChange": "{(e) => {\n          setKey(e.target.value);\n          setConsent(false);\n        }}"
+          }
+        },
+        {
+          "line": 321,
+          "tag": "button",
+          "kind": "control",
+          "text": "Сохранить ключ",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{busy || !key}",
+            "onClick": "{() => {\n            const value = key;\n            setKey(\"\");\n            setConsent(false);\n            void perform(\n              window.jarvis!.eleven({ operation: \"set\", key: value }),\n            );\n          }}"
+          }
+        },
+        {
+          "line": 335,
+          "tag": "button",
+          "kind": "control",
+          "text": "Удалить ключ",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{busy}",
+            "onClick": "{() => {\n            setKey(\"\");\n            setConsent(false);\n            void perform(window.jarvis!.eleven({ operation: \"delete\" }));\n          }}"
+          }
+        },
+        {
+          "line": 346,
+          "tag": "button",
+          "kind": "control",
+          "text": "Загрузить голоса и Free-лимит",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{busy}",
+            "onClick": "{() => {\n            setConsent(false);\n            void perform(window.jarvis!.eleven({ operation: \"voices\" }));\n          }}"
+          }
+        },
+        {
+          "line": 362,
+          "tag": "select",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "id": "\"eleven-voice\"",
+            "value": "{voice}",
+            "disabled": "{busy}",
+            "onChange": "{(e) => {\n              setVoice(e.target.value);\n              setConsent(false);\n            }}"
+          }
+        },
+        {
+          "line": 381,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "type": "\"checkbox\"",
+            "checked": "{consent}",
+            "disabled": "{busy}",
+            "onChange": "{(e) => setConsent(e.target.checked)}"
+          }
+        },
+        {
+          "line": 390,
+          "tag": "button",
+          "kind": "control",
+          "text": "Прослушать пробу",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{busy || !consent || !voice}",
+            "onClick": "{() => {\n                setConsent(false);\n                void perform(\n                  window.jarvis!.eleven({\n                    operation: \"speak\",\n                    voice_id: voice,\n                    consent: true,\n                  }),\n                );\n              }}"
+          }
+        },
+        {
+          "line": 406,
+          "tag": "button",
+          "kind": "control",
+          "text": "Разрешить озвучку итога",
+          "attributes": {
+            "className": "\"primary-button\"",
+            "disabled": "{busy || !consent || !voice || !state.spoken_text}",
+            "onClick": "{() => {\n                setConsent(false);\n                void perform(window.jarvis!.eleven({\n                    operation: \"select\",\n                    voice_id: voice,\n                    consent: true,\n                  }));\n              }}"
+          }
+        },
+        {
+          "line": 420,
+          "tag": "button",
+          "kind": "control",
+          "text": "Озвучить итог",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{busy || !state.spoken_text}",
+            "onClick": "{() => void perform(window.jarvis!.speak())}"
+          }
+        },
+        {
+          "line": 474,
+          "tag": "button",
+          "kind": "control",
+          "text": "Обновить записи",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{busy}",
+            "onClick": "{() => {\n          reset();\n          void perform(window.jarvis!.memory({ operation: \"read\" }));\n        }}"
+          }
+        },
+        {
+          "line": 487,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "type": "\"checkbox\"",
+            "disabled": "{\n                busy || (!selected.includes(entry.id) && selected.length >= 8)\n              }",
+            "checked": "{selected.includes(entry.id)}",
+            "onChange": "{(e) =>\n                select(\n                  e.target.checked\n                    ? [...selected, entry.id]\n                    : selected.filter((id) => id !== entry.id),\n                )\n              }"
+          }
+        },
+        {
+          "line": 503,
+          "tag": "button",
+          "kind": "control",
+          "text": "Изменить",
+          "attributes": {
+            "className": "\"text-button\"",
+            "disabled": "{busy}",
+            "onClick": "{() => edit(entry)}"
+          }
+        },
+        {
+          "line": 510,
+          "tag": "button",
+          "kind": "control",
+          "text": "Удалить",
+          "attributes": {
+            "className": "\"text-button\"",
+            "disabled": "{busy}",
+            "onClick": "{() => {\n              reset();\n              void perform(\n                window.jarvis!.memory({ operation: \"delete\", previous: entry }),\n              );\n            }}"
+          }
+        },
+        {
+          "line": 526,
+          "tag": "select",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "id": "\"memory-kind\"",
+            "value": "{kind}",
+            "disabled": "{busy}",
+            "onChange": "{(e) => setKind(e.target.value)}"
+          }
+        },
+        {
+          "line": 545,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "id": "\"memory-label\"",
+            "maxLength": "{80}",
+            "value": "{label}",
+            "disabled": "{busy}",
+            "onChange": "{(e) => setLabel(e.target.value)}"
+          }
+        },
+        {
+          "line": 555,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "id": "\"memory-value\"",
+            "maxLength": "{80}",
+            "value": "{value}",
+            "disabled": "{busy}",
+            "onChange": "{(e) => setValue(e.target.value)}"
+          }
+        },
+        {
+          "line": 563,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "type": "\"checkbox\"",
+            "disabled": "{busy || !!previous}",
+            "checked": "{temporary}",
+            "onChange": "{(e) => setTemporary(e.target.checked)}"
+          }
+        },
+        {
+          "line": 572,
+          "tag": "button",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "className": "\"primary-button\"",
+            "disabled": "{busy || !label.trim() || !value.trim()}",
+            "onClick": "{() => {\n            reset();\n            const hint = { kind, label, value };\n            const updated = Math.floor(Date.now() / 1000);\n            void perform(\n              window.jarvis!.memory(\n                temporary\n                  ? { operation: \"session_add\", hint }\n                  : {\n                      operation: \"save\",\n                      entry: {\n                        ...hint,\n                        id:\n                          previous?.id ||\n                          crypto.randomUUID().replaceAll(\"-\", \"\"),\n                        updated,\n                        expires: updated + 30 * 86400,\n                      },\n                      previous,\n                    },\n              ),\n            );\n            setPrevious(null);\n            setLabel(\"\");\n            setValue(\"\");\n          }}"
+          }
+        },
+        {
+          "line": 605,
+          "tag": "button",
+          "kind": "control",
+          "text": "Отменить редактирование",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "onClick": "{() => {\n              setPrevious(null);\n              setLabel(\"\");\n              setValue(\"\");\n            }}"
+          }
+        },
+        {
+          "line": 616,
+          "tag": "button",
+          "kind": "control",
+          "text": "Очистить профиль",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{busy}",
+            "onClick": "{() => {\n            reset();\n            void perform(window.jarvis!.memory({ operation: \"clear\" }));\n          }}"
+          }
+        },
+        {
+          "line": 633,
+          "tag": "button",
+          "kind": "control",
+          "text": "Удалить",
+          "attributes": {
+            "className": "\"text-button\"",
+            "disabled": "{busy}",
+            "onClick": "{() => {\n              reset();\n              void perform(\n                window.jarvis!.memory({ operation: \"session_delete\", hint }),\n              );\n            }}"
+          }
+        },
+        {
+          "line": 648,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "type": "\"checkbox\"",
+            "checked": "{session}",
+            "disabled": "{busy || !state.session_memory.length}",
+            "onChange": "{(e) => setSession(e.target.checked)}"
+          }
+        },
+        {
+          "line": 656,
+          "tag": "button",
+          "kind": "control",
+          "text": "Очистить контекст сеанса",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{busy || !state.session_memory.length}",
+            "onClick": "{() => {\n          reset();\n          void perform(window.jarvis!.memory({ operation: \"session_clear\" }));\n        }}"
+          }
+        },
+        {
+          "line": 668,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "type": "\"checkbox\"",
+            "checked": "{state.settings.task_memory_enabled ?? true}",
+            "disabled": "{busy}",
+            "onChange": "{(e) => void perform(window.jarvis!.configure({\n            task_memory_enabled: e.target.checked,\n          }))}"
+          }
+        },
+        {
+          "line": 692,
+          "tag": "summary",
+          "kind": "control",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 702,
+          "tag": "button",
+          "kind": "control",
+          "text": "Удалить задачу",
+          "attributes": {
+            "className": "\"text-button\"",
+            "disabled": "{busy}",
+            "aria-label": "{`Удалить задачу: ${item.command}`}",
+            "onClick": "{() => void perform(window.jarvis!.memory({\n              operation: \"experience_delete\", record_id: item.id,\n            }))}"
+          }
+        },
+        {
+          "line": 715,
+          "tag": "summary",
+          "kind": "control",
+          "text": "Рецепт:",
+          "attributes": {}
+        },
+        {
+          "line": 718,
+          "tag": "button",
+          "kind": "control",
+          "text": "Удалить рецепт",
+          "attributes": {
+            "className": "\"text-button\"",
+            "disabled": "{busy}",
+            "aria-label": "{`Удалить рецепт: ${item.terms.join(\" \")}`}",
+            "onClick": "{() => void perform(window.jarvis!.memory({\n              operation: \"experience_delete\", record_id: item.id,\n            }))}"
+          }
+        },
+        {
+          "line": 728,
+          "tag": "button",
+          "kind": "control",
+          "text": "Очистить задачи и рецепты",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{busy || !(state.recent_tasks?.length || state.playbooks?.length)}",
+            "onClick": "{() => void perform(window.jarvis!.memory({ operation: \"experience_clear\" }))}"
+          }
+        },
+        {
+          "line": 804,
+          "tag": "select",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "id": "\"outlook-mode\"",
+            "disabled": "{busy}",
+            "value": "{mode}",
+            "onChange": "{(e) => setMode(e.target.value as Mode)}"
+          }
+        },
+        {
+          "line": 824,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "id": "\"outlook-client\"",
+            "maxLength": "{36}",
+            "value": "{client}",
+            "disabled": "{busy}",
+            "onChange": "{(e) => {\n          setClient(e.target.value);\n          setConsent(false);\n        }}"
+          }
+        },
+        {
+          "line": 835,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "type": "\"checkbox\"",
+            "checked": "{consent}",
+            "disabled": "{busy}",
+            "onChange": "{(e) => setConsent(e.target.checked)}"
+          }
+        },
+        {
+          "line": 844,
+          "tag": "button",
+          "kind": "control",
+          "text": "Подключить аккаунт",
+          "attributes": {
+            "className": "\"primary-button\"",
+            "disabled": "{busy || !consent || !client}",
+            "onClick": "{() => {\n            setConsent(false);\n            void mail(\"connect\", { client_id: client, consent: true });\n          }}"
+          }
+        },
+        {
+          "line": 854,
+          "tag": "button",
+          "kind": "control",
+          "text": "Отключить аккаунт",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{busy || !state.account}",
+            "onClick": "{() => void mail(\"disconnect\")}"
+          }
+        },
+        {
+          "line": 861,
+          "tag": "button",
+          "kind": "control",
+          "text": "Показать входящие",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{busy || !state.account}",
+            "onClick": "{() => void mail(\"list\")}"
+          }
+        },
+        {
+          "line": 872,
+          "tag": "select",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "id": "\"local-drafts\"",
+            "defaultValue": "\"\"",
+            "disabled": "{busy}",
+            "onChange": "{(e) => {\n              if (e.target.value)\n                void mail(\"load_draft\", { draft_id: e.target.value });\n              e.target.value = \"\";\n            }}"
+          }
+        },
+        {
+          "line": 892,
+          "tag": "button",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{busy}",
+            "key": "{row.id}",
+            "onClick": "{() => void mail(\"read\", { message_id: row.id })}"
+          }
+        },
+        {
+          "line": 913,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "id": "{id as string}",
+            "maxLength": "{id === \"mail-subject\" ? 500 : 2540}",
+            "value": "{value as string}",
+            "disabled": "{busy}",
+            "onChange": "{(e) => (set as (v: string) => void)(e.target.value)}"
+          }
+        },
+        {
+          "line": 923,
+          "tag": "textarea",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "id": "\"mail-body\"",
+            "value": "{body}",
+            "maxLength": "{16000}",
+            "disabled": "{busy}",
+            "onChange": "{(e) => setBody(e.target.value)}"
+          }
+        },
+        {
+          "line": 936,
+          "tag": "button",
+          "kind": "control",
+          "text": "Выбрать вложение до 32 KiB",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{busy || !state.account}",
+            "onClick": "{() => void perform(window.jarvis!.attachment())}"
+          }
+        },
+        {
+          "line": 943,
+          "tag": "button",
+          "kind": "control",
+          "text": "Убрать вложения",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{busy || !(draftAttachments || state.attachments).length}",
+            "onClick": "{() => {\n            setDraftAttachments([]);\n            void mail(\"clear_attachments\");\n          }}"
+          }
+        },
+        {
+          "line": 958,
+          "tag": "button",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "className": "\"primary-button\"",
+            "key": "{op}",
+            "disabled": "{busy || !state.account || !to || !body}",
+            "onClick": "{() =>\n              void mail(op, {\n                message: {\n                  to: addresses(to),\n                  cc: addresses(cc),\n                  bcc: addresses(bcc),\n                  subject,\n                  body,\n                  attachments: draftAttachments || state.attachments,\n                },\n              })\n            }"
+          }
+        },
+        {
+          "line": 980,
+          "tag": "button",
+          "kind": "control",
+          "text": "Остановить операцию",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "onClick": "{() => void perform(window.jarvis!.cancel())}"
+          }
+        }
+      ]
+    },
+    {
+      "file": "desktop/src/components/TaskHud.tsx",
+      "sha256": "a90ab81fa7e75b9286216c41c871de86cea728729eeaa556a67228d5efb2c86c",
+      "importedIcons": [],
+      "elements": [
+        {
+          "line": 22,
+          "tag": "button",
+          "kind": "control",
+          "text": "Stop",
+          "attributes": {
+            "className": "\"task-hud-stop\"",
+            "onClick": "{cancel}",
+            "aria-label": "\"Остановить задачу\""
+          }
+        },
+        {
+          "line": 23,
+          "tag": "button",
+          "kind": "control",
+          "text": "Открыть",
+          "attributes": {
+            "className": "\"task-hud-restore\"",
+            "onClick": "{restore}",
+            "aria-label": "\"Развернуть Jarvis\""
+          }
+        }
+      ]
+    },
+    {
+      "file": "desktop/src/components/WorkspacePanel.tsx",
+      "sha256": "46b74ab289f60588ff2b65fbf071182dbad6554732f1c57558ef2c6a5c50a4e4",
+      "importedIcons": [
+        "Plus",
+        "RotateCw",
+        "Save"
+      ],
+      "elements": [
+        {
+          "line": 74,
+          "tag": "button",
+          "kind": "control",
+          "text": "Загрузить сохранённое",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{disabled}",
+            "onClick": "{() => void request({ operation: \"read\" })}"
+          }
+        },
+        {
+          "line": 75,
+          "tag": "RotateCw",
+          "kind": "icon",
+          "text": "",
+          "attributes": {
+            "aria-hidden": "\"true\""
+          }
+        },
+        {
+          "line": 81,
+          "tag": "form",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "className": "\"runtime-form workspace-form\"",
+            "onSubmit": "{save}"
+          }
+        },
+        {
+          "line": 89,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "autoComplete": "{key === \"name\" ? \"name\" : key === \"organization\" ? \"organization\" : \"organization-title\"}",
+            "maxLength": "{200}",
+            "value": "{draft.user[key]}",
+            "onChange": "{(e) => setDraft({ ...draft, user: { ...draft.user, [key]: e.target.value } })}"
+          }
+        },
+        {
+          "line": 95,
+          "tag": "textarea",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "maxLength": "{2048}",
+            "value": "{draft.user.tasks_description}",
+            "placeholder": "\"Какие задачи вы решаете и какие правила нужно учитывать?\"",
+            "onChange": "{(e) => setDraft({ ...draft, user: { ...draft.user, tasks_description: e.target.value } })}"
+          }
+        },
+        {
+          "line": 103,
+          "tag": "button",
+          "kind": "control",
+          "text": "Добавить 14 приложений Omadli Group",
+          "attributes": {
+            "type": "\"button\"",
+            "className": "\"outline-button\"",
+            "disabled": "{dirty}",
+            "onClick": "{() => void request({ operation: \"preset\", revision: saved.revision, preset: \"omadli_group\" })}"
+          }
+        },
+        {
+          "line": 115,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "id": "{`app-name-${app.id}`}",
+            "required": true,
+            "maxLength": "{200}",
+            "value": "{app.name}",
+            "onChange": "{(e) => editApp(app.id, { name: e.target.value })}"
+          }
+        },
+        {
+          "line": 118,
+          "tag": "button",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "type": "\"button\"",
+            "role": "\"switch\"",
+            "aria-checked": "{app.enabled}",
+            "aria-label": "{`Включить ${app.name}`}",
+            "className": "\"toggle\"",
+            "onClick": "{() => editApp(app.id, { enabled: !app.enabled })}"
+          }
+        },
+        {
+          "line": 128,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "type": "\"url\"",
+            "inputMode": "\"url\"",
+            "spellCheck": "{false}",
+            "autoComplete": "\"off\"",
+            "maxLength": "{2048}",
+            "required": "{app.enabled}",
+            "placeholder": "\"https://portal.company.uz\"",
+            "value": "{app.launch_url || \"\"}",
+            "onChange": "{(e) => editApp(app.id, { launch_url: e.target.value || null })}"
+          }
+        },
+        {
+          "line": 133,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "type": "\"checkbox\"",
+            "checked": "{app.allow_private_network}",
+            "onChange": "{(e) => editApp(app.id, { allow_private_network: e.target.checked })}"
+          }
+        },
+        {
+          "line": 139,
+          "tag": "button",
+          "kind": "control",
+          "text": "Добавить приложение",
+          "attributes": {
+            "type": "\"button\"",
+            "className": "\"outline-button\"",
+            "disabled": "{draft.apps.length >= 128}",
+            "onClick": "{addApp}"
+          }
+        },
+        {
+          "line": 140,
+          "tag": "Plus",
+          "kind": "icon",
+          "text": "",
+          "attributes": {
+            "aria-hidden": "\"true\""
+          }
+        },
+        {
+          "line": 146,
+          "tag": "button",
+          "kind": "control",
+          "text": "Открыть рабочий браузер",
+          "attributes": {
+            "type": "\"button\"",
+            "className": "\"outline-button\"",
+            "disabled": "{dirty}",
+            "onClick": "{async () => {\n                setPending(true); setError(\"\");\n                try {\n                  const next = await window.jarvis!.workspaceBrowser(draft.browser_mode === \"live\"\n                    ? \"live\" : \"authenticated_workspace\"); apply(next);\n                  if (next.workspace) { setSaved(next.workspace); setDraft(structuredClone(next.workspace.profile)); }\n                }\n                catch (error) { setError(readableError(error)); }\n                finally { setPending(false); }\n              }}"
+          }
+        },
+        {
+          "line": 164,
+          "tag": "select",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "value": "{draft.browser_mode}",
+            "onChange": "{(e) => setDraft({ ...draft,\n                browser_mode: e.target.value as WorkspaceProfile[\"browser_mode\"] })}"
+          }
+        },
+        {
+          "line": 178,
+          "tag": "button",
+          "kind": "control",
+          "text": "Сохранить пространство",
+          "attributes": {
+            "type": "\"submit\"",
+            "className": "\"primary-button\"",
+            "disabled": "{!dirty}"
+          }
+        },
+        {
+          "line": 178,
+          "tag": "Save",
+          "kind": "icon",
+          "text": "",
+          "attributes": {
+            "aria-hidden": "\"true\""
+          }
+        }
+      ]
+    },
+    {
+      "file": "desktop/src/main.tsx",
+      "sha256": "de73bb02981724e15f1ec261c3f90b4e13e424cbd7dc7032086bc92fef5d6e05",
+      "importedIcons": [
+        "Activity",
+        "ArrowRight",
+        "AudioLines",
+        "Check",
+        "ChevronRight",
+        "CircleHelp",
+        "Clock3",
+        "Globe",
+        "House",
+        "Keyboard",
+        "LayoutGrid",
+        "Mail",
+        "Mic",
+        "Minus",
+        "Monitor",
+        "Plug",
+        "Settings",
+        "ShieldCheck",
+        "Square",
+        "Unplug",
+        "Waves",
+        "X"
+      ],
+      "elements": [
+        {
+          "line": 285,
+          "tag": "Check",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 285,
+          "tag": "Clock3",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 300,
+          "tag": "Clock3",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 319,
+          "tag": "a",
+          "kind": "control",
+          "text": "К содержимому",
+          "attributes": {
+            "className": "\"skip-link\"",
+            "href": "\"#main-content\"",
+            "onClick": "{(event) => {\n            event.preventDefault();\n            document.getElementById(\"main-content\")?.focus();\n          }}"
+          }
+        },
+        {
+          "line": 336,
+          "tag": "motion.button",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "key": "{key}",
+            "title": "{label}",
+            "aria-label": "{label}",
+            "aria-current": "{page === key ? \"page\" : undefined}",
+            "className": "{`nav-item ${page === key ? \"active\" : \"\"}`}",
+            "whileTap": "{{ scale: 0.98 }}",
+            "onClick": "{() => setPage(key)}"
+          }
+        },
+        {
+          "line": 345,
+          "tag": "Icon",
+          "kind": "icon",
+          "text": "",
+          "attributes": {
+            "aria-hidden": "\"true\""
+          }
+        },
+        {
+          "line": 351,
+          "tag": "ShieldCheck",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 368,
+          "tag": "button",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "disabled": "{!window.jarvisWindow}",
+            "aria-label": "\"Свернуть окно\"",
+            "title": "\"Свернуть\"",
+            "onClick": "{() => window.jarvisWindow?.minimize()}"
+          }
+        },
+        {
+          "line": 374,
+          "tag": "Minus",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 376,
+          "tag": "button",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "disabled": "{!window.jarvisWindow}",
+            "aria-label": "\"Развернуть окно\"",
+            "title": "\"Развернуть / восстановить\"",
+            "onClick": "{() => window.jarvisWindow?.maximize()}"
+          }
+        },
+        {
+          "line": 382,
+          "tag": "Square",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 384,
+          "tag": "button",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "disabled": "{!window.jarvisWindow}",
+            "className": "\"window-close\"",
+            "aria-label": "\"Закрыть окно\"",
+            "title": "\"Закрыть\"",
+            "onClick": "{() => window.jarvisWindow?.close()}"
+          }
+        },
+        {
+          "line": 391,
+          "tag": "X",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 424,
+          "tag": "button",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "className": "\"text-button\"",
+            "disabled": "{!ready}",
+            "onClick": "{() => void open(\"settings\")}"
+          }
+        },
+        {
+          "line": 430,
+          "tag": "ChevronRight",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 434,
+          "tag": "ShieldCheck",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 441,
+          "tag": "button",
+          "kind": "control",
+          "text": "Все",
+          "attributes": {
+            "className": "\"text-button\"",
+            "onClick": "{() => setPage(\"history\")}"
+          }
+        },
+        {
+          "line": 446,
+          "tag": "ChevronRight",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 454,
+          "tag": "button",
+          "kind": "control",
+          "text": "Открыть",
+          "attributes": {
+            "className": "\"text-button\"",
+            "onClick": "{() => setPage(\"services\")}"
+          }
+        },
+        {
+          "line": 459,
+          "tag": "ChevronRight",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 464,
+          "tag": "Mail",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 474,
+          "tag": "button",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "className": "\"icon-button\"",
+            "disabled": "{!ready}",
+            "aria-label": "\"Настроить Outlook\"",
+            "onClick": "{() => void open(\"outlook\")}"
+          }
+        },
+        {
+          "line": 480,
+          "tag": "ChevronRight",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 505,
+          "tag": "button",
+          "kind": "control",
+          "text": "Стоп",
+          "attributes": {
+            "onClick": "{() => void cancel()}",
+            "aria-label": "\"Выключить фоновый микрофон\""
+          }
+        },
+        {
+          "line": 507,
+          "tag": "button",
+          "kind": "control",
+          "text": "Возобновить",
+          "attributes": {
+            "data-jarvis-wake": true,
+            "disabled": "{!state.can_run}"
+          }
+        },
+        {
+          "line": 522,
+          "tag": "AudioLines",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 550,
+          "tag": "button",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "className": "\"round-button\"",
+            "aria-label": "\"Ввести команду с клавиатуры\"",
+            "onClick": "{() => input.current?.focus()}"
+          }
+        },
+        {
+          "line": 555,
+          "tag": "Keyboard",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 557,
+          "tag": "button",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "className": "\"microphone\"",
+            "aria-label": "\"Удерживайте для голосового ввода\"",
+            "title": "\"Удерживайте кнопку или пробел на ней. Отпустите для распознавания.\"",
+            "data-jarvis-hold": true,
+            "disabled": "{\n                          !ready ||\n                          [\"speaking\", \"transcribing\"].includes(\n                            state?.voice_phase || \"idle\",\n                          )\n                        }"
+          }
+        },
+        {
+          "line": 569,
+          "tag": "Mic",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 571,
+          "tag": "button",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "className": "\"round-button\"",
+            "aria-label": "\"Остановить задачу\"",
+            "disabled": "{\n                          !ready || (!working && state?.voice_phase === \"idle\")\n                        }",
+            "onClick": "{() => void cancel()}"
+          }
+        },
+        {
+          "line": 579,
+          "tag": "X",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 585,
+          "tag": "form",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "className": "\"composer\"",
+            "onSubmit": "{(event) => {\n                      event.preventDefault();\n                      void submit();\n                    }}"
+          }
+        },
+        {
+          "line": 592,
+          "tag": "Waves",
+          "kind": "icon",
+          "text": "",
+          "attributes": {
+            "aria-hidden": "\"true\""
+          }
+        },
+        {
+          "line": 596,
+          "tag": "input",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "ref": "{input}",
+            "id": "\"command\"",
+            "value": "{command}",
+            "maxLength": "{4000}",
+            "onChange": "{(event) => {\n                        setCommand(event.target.value);\n                        setError(\"\");\n                      }}",
+            "onKeyDown": "{(event) => {\n                        if (\n                          (event.ctrlKey || event.metaKey) &&\n                          event.key === \"Enter\"\n                        ) {\n                          event.preventDefault();\n                          void submit();\n                        }\n                      }}",
+            "disabled": "{!ready || working || pending || !state?.can_run}",
+            "aria-invalid": "{!!error}",
+            "placeholder": "\"Напишите задачу…\""
+          }
+        },
+        {
+          "line": 618,
+          "tag": "button",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "type": "{working ? \"button\" : \"submit\"}",
+            "aria-label": "{\n                        working ? \"Отменить задачу\" : \"Выполнить команду\"\n                      }",
+            "disabled": "{\n                        !ready || pending || (!working && !state?.can_run)\n                      }",
+            "onClick": "{working ? () => void cancel() : undefined}"
+          }
+        },
+        {
+          "line": 628,
+          "tag": "Square",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 628,
+          "tag": "ArrowRight",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 641,
+          "tag": "select",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "id": "\"mode\"",
+            "value": "{mode}",
+            "disabled": "{\n                        working || pending || !!state?.cloud_review || state?.voice_phase !== \"idle\"\n                      }",
+            "onChange": "{(event) => setMode(event.target.value as Mode)}"
+          }
+        },
+        {
+          "line": 673,
+          "tag": "Check",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 675,
+          "tag": "Activity",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 693,
+          "tag": "summary",
+          "kind": "control",
+          "text": "Flight Recorder · детали отказа",
+          "attributes": {}
+        },
+        {
+          "line": 711,
+          "tag": "Activity",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 725,
+          "tag": "button",
+          "kind": "control",
+          "text": "Ответить на уточнение",
+          "attributes": {
+            "className": "\"primary-button\"",
+            "onClick": "{() => void open(\"task\")}"
+          }
+        },
+        {
+          "line": 730,
+          "tag": "ChevronRight",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 749,
+          "tag": "summary",
+          "kind": "control",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 751,
+          "tag": "ChevronRight",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 759,
+          "tag": "CircleHelp",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 769,
+          "tag": "ShieldCheck",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 782,
+          "tag": "button",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{!ready}",
+            "onClick": "{() =>\n                        void open(task?.phase === \"approval\" ? \"task\" : \"tools\")\n                      }"
+          }
+        },
+        {
+          "line": 790,
+          "tag": "ChevronRight",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 812,
+          "tag": "button",
+          "kind": "control",
+          "text": "К ассистенту",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "onClick": "{() => setPage(\"home\")}"
+          }
+        },
+        {
+          "line": 817,
+          "tag": "ChevronRight",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 829,
+          "tag": "button",
+          "kind": "control",
+          "text": "Обновить инструменты",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{!ready}",
+            "onClick": "{() => void open(\"tools\")}"
+          }
+        },
+        {
+          "line": 835,
+          "tag": "ChevronRight",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 844,
+          "tag": "Globe",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 846,
+          "tag": "Mail",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 848,
+          "tag": "Monitor",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 870,
+          "tag": "Unplug",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 900,
+          "tag": "select",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "id": "\"theme\"",
+            "value": "{theme}",
+            "disabled": "{!ready || !state?.can_run || savingAppearance}",
+            "onChange": "{(event) => void configureAppearance({\n                            theme: event.target.value as \"Midnight\" | \"Graphite\",\n                          })}"
+          }
+        },
+        {
+          "line": 914,
+          "tag": "button",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "role": "\"switch\"",
+            "aria-checked": "{moving}",
+            "aria-labelledby": "\"motion-label\"",
+            "className": "\"toggle\"",
+            "disabled": "{!ready || !state?.can_run || savingAppearance}",
+            "onClick": "{() => void configureAppearance({ motion_enabled: !moving })}"
+          }
+        },
+        {
+          "line": 941,
+          "tag": "button",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "className": "\"outline-button\"",
+            "disabled": "{!state.can_run}",
+            "onClick": "{() => {\n                        if (item.kind === \"mail\") setPage(\"services\");\n                        void perform(window.jarvis!.watcher(item.id));\n                      }}"
+          }
+        },
+        {
+          "line": 948,
+          "tag": "button",
+          "kind": "control",
+          "text": "Скрыть",
+          "attributes": {
+            "className": "\"text-button\"",
+            "onClick": "{() => void perform(window.jarvis!.watcher(item.id, true))}"
+          }
+        },
+        {
+          "line": 961,
+          "tag": "button",
+          "kind": "control",
+          "text": "",
+          "attributes": {
+            "aria-label": "\"Закрыть уведомление\"",
+            "onClick": "{() => {\n                  setError(\"\");\n                  if (state?.notice && window.jarvis)\n                    void perform(window.jarvis.dismissNotice(state.notice));\n                }}"
+          }
+        },
+        {
+          "line": 969,
+          "tag": "X",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        },
+        {
+          "line": 975,
+          "tag": "Unplug",
+          "kind": "icon",
+          "text": "",
+          "attributes": {}
+        }
+      ]
+    },
+    {
+      "file": "desktop/src/runtime.ts",
+      "sha256": "d292dcf6e1e8851dfe7f50805d15b892a06e3a93a1aa26b28f9821bc49f469d2",
+      "importedIcons": [],
+      "elements": []
+    },
+    {
+      "file": "desktop/src/vite-env.d.ts",
+      "sha256": "1a1f17c27516f5d97712cb70c4f11a566710d190f445f92988798991d97279ab",
+      "importedIcons": [],
+      "elements": []
+    }
+  ]
+}

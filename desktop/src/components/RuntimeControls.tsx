@@ -8,7 +8,7 @@ import type {
   VoiceSettings,
 } from "../runtime";
 
-export type Perform = (work: Promise<RuntimeState>) => Promise<void>;
+export type Perform = (work: Promise<RuntimeState>) => Promise<RuntimeState | null>;
 
 export function PromptDialog({
   state,
@@ -127,7 +127,7 @@ export function PromptDialog({
       <button
         className="outline-button dialog-mic"
         data-jarvis-hold
-        disabled={state.voice_phase !== "idle"}
+        disabled={["speaking", "transcribing"].includes(state.voice_phase)}
       >
         <Mic size={18} /> Удерживайте и скажите «стоп»
       </button>
@@ -143,42 +143,34 @@ export function VoiceSettingsPanel({
   state: RuntimeState;
   perform: Perform;
 }) {
-  const [settings, setSettings] = useState<VoiceSettings>(state.settings);
+  const settings = state.settings;
+  const [model, setModel] = useState(state.settings.model);
+  const [savedModel, setSavedModel] = useState("");
   const [key, setKey] = useState("");
   const [voice, setVoice] = useState("");
   const [consent, setConsent] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [pendingSettings, setPendingSettings] = useState<Partial<VoiceSettings> | null>(null);
   const savingSettingsRef = useRef(false);
-  useEffect(
-    () => {
-      if (!savingSettingsRef.current) setSettings(state.settings);
-    },
-    [
-      state.settings.provider,
-      state.settings.model,
-      state.settings.auto_start,
-      state.settings.speech_enabled,
-      state.settings.task_memory_enabled,
-      state.settings.watch_clipboard,
-      state.settings.watch_mail,
-      state.settings.watch_speech,
-      state.settings.wake_word,
-      state.settings.auto_stop_on_silence,
-    ],
-  );
+  useEffect(() => { setModel(state.settings.model); }, [state.settings.model]);
   const busy = !state.can_run || savingSettings;
-  async function configure(next: VoiceSettings) {
-    // A configure request carries the entire settings snapshot. Serialize UI
-    // writes so a later checkbox cannot resend the previous provider/model.
+  async function configure(patch: Partial<VoiceSettings>) {
+    // Render acknowledged Python settings. A rejected write must never leave
+    // an optimistic OpenAI selection while the runner still uses offline.
     if (savingSettingsRef.current || !state.can_run) return;
     savingSettingsRef.current = true;
     setSavingSettings(true);
-    setSettings(next);
+    setPendingSettings(patch);
     try {
-      await perform(window.jarvis!.configure(next));
+      const next = await perform(window.jarvis!.configure(patch));
+      if (next && patch.model !== undefined) {
+        setModel(next.settings.model);
+        setSavedModel(next.settings.model);
+      }
     } finally {
       savingSettingsRef.current = false;
       setSavingSettings(false);
+      setPendingSettings(null);
     }
   }
   return (
@@ -191,7 +183,6 @@ export function VoiceSettingsPanel({
         value={settings.provider}
         onChange={(e) =>
           void configure({
-            ...settings,
             provider: e.target.value as VoiceSettings["provider"],
           })
         }
@@ -204,20 +195,21 @@ export function VoiceSettingsPanel({
           <label htmlFor="planner-model">Модель Responses API</label>
           <input
             id="planner-model"
-            value={settings.model}
+            value={model}
             maxLength={100}
             disabled={busy}
             onChange={(e) =>
-              setSettings({ ...settings, model: e.target.value })
+              { setModel(e.target.value); setSavedModel(""); }
             }
           />
           <button
             className="outline-button"
-            disabled={busy}
-            onClick={() => void configure(settings)}
+            disabled={busy || !model.trim()}
+            onClick={() => void configure({ model: model.trim() })}
           >
             Сохранить модель
           </button>
+          <p role="status">{savingSettings ? "Сохранение…" : savedModel && savedModel === settings.model ? "Модель сохранена на этом компьютере." : model !== settings.model ? "Есть несохранённые изменения модели." : "Модель из сохранённых настроек."}</p>
           <p>
             Ключ хранится в системном хранилище. Для ввода: python -m
             jarvis.security.credentials set. Команда, наблюдения, скриншоты и
@@ -228,6 +220,8 @@ export function VoiceSettingsPanel({
           </p>
         </>
       )}
+      <p role="status">Применено в движке: {settings.provider === "openai"
+        ? `OpenAI · ${settings.model || "укажите модель"}` : "Офлайн"}.</p>
       <h3>Голосовой ввод</h3>
       <p>
         Модель Vosk загружается заранее и остаётся в RAM. Микрофон включается
@@ -243,10 +237,10 @@ export function VoiceSettingsPanel({
       <label className="check-row">
         <input
           type="checkbox"
-          checked={settings.auto_start}
+          checked={pendingSettings?.auto_start ?? settings.auto_start}
           disabled={busy}
           onChange={(e) =>
-            void configure({ ...settings, auto_start: e.target.checked })
+            void configure({ auto_start: e.target.checked })
           }
         />
         Голосовой автозапуск
@@ -260,8 +254,8 @@ export function VoiceSettingsPanel({
         ["wake_word", "Ожидать обращение «Джарвис» (Wake Word)"],
         ["auto_stop_on_silence", "Завершать запись по тишине (Auto-stop on silence)"],
       ] as const).map(([key, label]) => <label className="check-row" key={key}>
-        <input type="checkbox" disabled={busy} checked={settings[key] ?? false}
-          onChange={(e) => void configure({ ...settings, [key]: e.target.checked })} />
+        <input type="checkbox" disabled={busy} checked={pendingSettings?.[key] ?? settings[key] ?? false}
+          onChange={(e) => void configure({ [key]: e.target.checked })} />
         {label}
       </label>)}
       <small>Эти настройки сохраняются. При включённом Wake Word индикатор микрофона виден;
@@ -269,10 +263,10 @@ export function VoiceSettingsPanel({
       <label className="check-row">
         <input
           type="checkbox"
-          checked={settings.speech_enabled}
+          checked={pendingSettings?.speech_enabled ?? settings.speech_enabled}
           disabled={busy}
           onChange={(e) =>
-            void configure({ ...settings, speech_enabled: e.target.checked })
+            void configure({ speech_enabled: e.target.checked })
           }
         />
         Озвучивать итог системным голосом
@@ -292,8 +286,8 @@ export function VoiceSettingsPanel({
         ["watch_speech", "Коротко озвучивать фоновые подсказки системным голосом"],
       ] as const).map(([key, label]) => (
         <label className="check-row" key={key}>
-          <input type="checkbox" checked={settings[key] ?? false} disabled={busy}
-            onChange={(e) => void configure({ ...settings, [key]: e.target.checked })} />
+          <input type="checkbox" checked={pendingSettings?.[key] ?? settings[key] ?? false} disabled={busy}
+            onChange={(e) => void configure({ [key]: e.target.checked })} />
           {label}
         </label>
       ))}
@@ -412,18 +406,13 @@ export function VoiceSettingsPanel({
             <button
               className="primary-button"
               disabled={busy || !consent || !voice || !state.spoken_text}
-              onClick={async () => {
+              onClick={() => {
                 setConsent(false);
-                try {
-                  const next = await window.jarvis!.eleven({
+                void perform(window.jarvis!.eleven({
                     operation: "select",
                     voice_id: voice,
                     consent: true,
-                  });
-                  await perform(Promise.resolve(next));
-                } catch {
-                  return;
-                }
+                  }));
               }}
             >
               Разрешить озвучку итога
@@ -681,7 +670,7 @@ export function MemoryPanel({
           checked={state.settings.task_memory_enabled ?? true}
           disabled={busy}
           onChange={(e) => void perform(window.jarvis!.configure({
-            ...state.settings, task_memory_enabled: e.target.checked,
+            task_memory_enabled: e.target.checked,
           }))}
         />
         Запоминать успешные задачи и использовать их контекст
@@ -953,8 +942,11 @@ export function OutlookPanel({
         </button>
         <button
           className="outline-button"
-          disabled={busy || !state.attachments.length}
-          onClick={() => void mail("clear_attachments")}
+          disabled={busy || !(draftAttachments || state.attachments).length}
+          onClick={() => {
+            setDraftAttachments([]);
+            void mail("clear_attachments");
+          }}
         >
           Убрать вложения
         </button>

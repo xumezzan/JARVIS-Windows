@@ -139,7 +139,11 @@ class BrowserSession:
             self.playwright = await async_playwright().start()
             if self.cdp_endpoint:
                 self.browser = await self.playwright.chromium.connect_over_cdp(
-                    self.cdp_endpoint, timeout=10000
+                    # This context belongs to the owner's Chrome. Do not reset
+                    # its downloads, focus or media settings while attaching.
+                    self.cdp_endpoint,
+                    timeout=10000,
+                    no_defaults=True,
                 )
                 if not self.browser.contexts:
                     raise ToolError("browser_unavailable")

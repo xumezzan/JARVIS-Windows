@@ -1,5 +1,12 @@
 # Product truth: Jarvis Desktop
 
+Дополнение 2026-11-04: [аудит всех элементов Electron](../docs/ELECTRON_UI_BACKEND_AUDIT.md).
+Настройки передаются отдельными полями; тема и анимация сохраняются в Python.
+UI показывает фактически применённые provider/model и сообщает об ошибке сохранения.
+Закрытие Python-уведомления очищает его в движке. Микрофон почтового диалога теперь
+доступен для отмены, как в диалогах Runner; голос не выдаёт action approval.
+Цепочки проверены с настоящим IPC; Graph, credentials и аудио в регрессии синтетические.
+
 Дополнение 2026-10-26: [Workspace Setup UI](../docs/WORKSPACE_SETUP_UI.md).
 Панель «Пространство» сохраняет identity, правила работы, 14 приложений Omadli Group,
 пользовательские приложения, их URL/включение и Strict/Authenticated Workspace.

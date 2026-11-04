@@ -111,7 +111,12 @@ const { _electron } = require("playwright");
     });
     await page.getByRole("button", { name: "Ассистент", exact: true }).click();
     await page.getByLabel("Режим", { exact: true }).selectOption("execute");
-    await page.mouse.move(x, y);
+    // Settings/full-page capture can move the scroll position. Observe the
+    // current target again instead of clicking its old viewport coordinates.
+    await mic.scrollIntoViewIfNeeded();
+    const currentMic = await mic.boundingBox();
+    assert.ok(currentMic);
+    await page.mouse.move(currentMic.x + currentMic.width / 2, currentMic.y + currentMic.height / 2);
     await page.mouse.down();
     await until((s) => s.voice_phase === "recording");
     await page.mouse.up();

@@ -25,6 +25,8 @@ class Settings(ToolModel):
     watch_speech: bool = False
     wake_word: bool = False
     auto_stop_on_silence: bool = False
+    theme: Literal["Midnight", "Graphite"] = "Midnight"
+    motion_enabled: bool = True
 
 
 class Reply(ToolModel):
@@ -144,11 +146,13 @@ class Request(ToolModel):
         "workspace",
         "workspace_browser",
         "cloud_review",
+        "dismiss_notice",
     ]
     sample_id: str = Field(default="", pattern=r"^(?:[a-f0-9]{32})?$")
     clipboard_text: str = Field(default="", max_length=16000, repr=False)
     notification_id: str = Field(default="", pattern=r"^(?:[a-f0-9]{32})?$")
     dismiss: bool = False
+    notice_text: str = Field(default="", max_length=4000, repr=False)
     command: str = Field(default="", max_length=4000, repr=False)
     mode: Literal["simulation", "execute"] = "simulation"
     panel: Literal["task", "settings", "memory", "outlook", "voice", "tools", "workspace"] = "task"
@@ -170,6 +174,8 @@ class Request(ToolModel):
 
     @model_validator(mode="after")
     def scoped_fields(self) -> "Request":
+        if (self.operation == "dismiss_notice") != bool(self.notice_text):
+            raise ValueError("Notice text outside dismissal.")
         if self.operation != "workspace_browser" and self.browser_mode is not None:
             raise ValueError("Browser mode outside browser connection.")
         if (self.operation == "clipboard_sample") != bool(self.sample_id):
@@ -194,7 +200,10 @@ class Request(ToolModel):
             or self.conversation_consent
         ):
             raise ValueError("Task fields outside run.")
-        if self.operation not in {"run", "voice_start", "mail"} and self.mode != "simulation":
+        if (
+            self.operation not in {"run", "voice_start", "voice_wake_resume", "mail"}
+            and self.mode != "simulation"
+        ):
             raise ValueError("Mode outside task.")
         if self.operation != "open" and self.panel != "task":
             raise ValueError("Panel outside open.")

@@ -1,0 +1,13 @@
+{
+  "platform": "darwin",
+  "liveServices": false,
+  "realMicrophone": false,
+  "checks": [
+    "appearance reaches Python, atomic JSON, renderer reload and full process restart",
+    "a rejected provider write leaves both UI and Python offline, with a visible error",
+    "provider/model persist across restart; unsaved model stays a draft; invalid save cannot alter Python",
+    "closing a Python notice clears it in the service and later publishes cannot resurrect it",
+    "native file picker→bounded bytes→Python RAM draft→reload→remove attachment→new Message has no attachments (fixture account)",
+    "mail auxiliary prompt accepts trusted Space/pointer hold and release; arbitrary speech cannot approve, stop cancels (synthetic audio)"
+  ]
+}

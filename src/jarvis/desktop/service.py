@@ -154,6 +154,8 @@ class DesktopService:
                     "task_memory_enabled",
                     "wake_word",
                     "auto_stop_on_silence",
+                    "theme",
+                    "motion_enabled",
                 }
             )
             | {
@@ -656,6 +658,8 @@ class DesktopService:
         if direct_target is not None:
             provider = ChromeCommandProvider(chrome_command(command))
         if self.settings.provider == "openai" and direct_target is None:
+            if not self.settings.model:
+                raise ValueError("planner_model_required")
             provider = provider or OpenAIProvider(self.settings.model)
             provider = ReviewedCloudProvider(
                 provider,
@@ -834,6 +838,11 @@ class DesktopService:
             elif raw.operation == "cancel":
                 self.watchers.notices.clear()
                 self.cancel()
+            elif raw.operation == "dismiss_notice":
+                # A stale close button must not dismiss a newer backend notice.
+                if self.notice != raw.notice_text:
+                    raise ValueError("notice_changed")
+                self.notice = ""
             elif raw.operation == "respond":
                 self._respond(raw)
             elif raw.operation == "target_presented":
@@ -866,11 +875,18 @@ class DesktopService:
                 if self.busy or self.voice.task is not None:
                     raise ValueError("busy")
                 assert raw.settings is not None
-                if raw.settings.model:
-                    OpenAIProvider(raw.settings.model)
+                # A checkbox writes only its own field. Defaults in the schema
+                # are not instructions to reset the saved provider/model.
+                settings = Settings.model_validate(
+                    self.settings.model_dump() | raw.settings.model_dump(exclude_unset=True)
+                    if raw.settings.model_fields_set
+                    else {}  # Preserve the existing explicit empty-settings reset.
+                )
+                if settings.model:
+                    OpenAIProvider(settings.model)
                 persisted = UiSettings.model_validate(
                     self.ui_settings.model_dump()
-                    | raw.settings.model_dump(
+                    | settings.model_dump(
                         exclude={
                             "model",
                             "watch_clipboard",
@@ -878,12 +894,12 @@ class DesktopService:
                             "watch_speech",
                         }
                     )
-                    | {"planner_model": raw.settings.model}
+                    | {"planner_model": settings.model}
                 )
                 await asyncio.to_thread(self.ui_store.save, persisted)
                 self.ui_settings = persisted
                 await self.voice.stop_wake()
-                self.settings = raw.settings
+                self.settings = settings
                 self.voice.auto_start = self.settings.auto_start
                 self.voice.speech_enabled = self.settings.speech_enabled
                 self.voice.wake_enabled = self.settings.wake_word
@@ -900,9 +916,11 @@ class DesktopService:
                     self.conversation.clear()
                     self.playbooks = ()
             elif raw.operation == "voice_start":
-                if self.auxiliary is not None:
+                if self.auxiliary is not None and self.prompt is None:
                     raise ValueError("busy")
-                self.voice.record(Mode(raw.mode), self.worker is not None)
+                # Mail confirmations run in auxiliary, planner prompts in worker.
+                # Both permit only spoken cancellation, never spoken approval.
+                self.voice.record(Mode(raw.mode), self.busy or self.prompt is not None)
             elif raw.operation == "voice_model":
                 if self.busy or self.voice.task is not None:
                     raise ValueError("busy")
@@ -962,6 +980,8 @@ class DesktopService:
                 "cloud_review_expired",
                 "cloud_review_changed",
                 "workspace_changed",
+                "notice_changed",
+                "planner_model_required",
             }
             error = str(exc) if str(exc) in allowed else "invalid_request"
         except Exception:
