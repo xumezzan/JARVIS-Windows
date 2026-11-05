@@ -44,7 +44,8 @@ def main() -> None:
     if sys.platform != "darwin":
         raise SystemExit("Launch-Jarvis.command requires macOS.")
     repository = Path(__file__).resolve().parents[2]
-    output = Path.home() / "Applications/Jarvis.app"
+    system_app = Path("/Applications/Jarvis.app")
+    output = system_app if system_app.exists() else Path.home() / "Applications/Jarvis.app"
     assets = verify_prebuilt(repository)
     if not current_bundle(repository, output, assets):
         subprocess.run(

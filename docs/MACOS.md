@@ -1,5 +1,44 @@
 # Jarvis на macOS
 
+## Постоянная иконка и локальное обновление
+
+Для установки в общие «Программы» один раз выполните из подготовленного checkout:
+
+```sh
+.venv/bin/python scripts/macos/manage_installation.py --install "$PWD"
+```
+
+Приложение располагается в `/Applications/Jarvis.app` и регистрируется в LaunchServices.
+Его можно запускать двойным щелчком из Finder → Программы и закрепить в Dock.
+Прежний `~/Applications/Jarvis.app` перенаправляется на этот экземпляр;
+исходная копия сохраняется для восстановления вне списка приложений.
+
+Явно установленный пользовательский LaunchAgent `org.jarvis.desktop.sync` следит
+за готовым `src/jarvis/desktop_assets/manifest.json` и повторяет проверку каждые 30 с.
+После изменения frontend завершайте работу обычным `npm --prefix desktop run build`.
+Когда Jarvis закрыт, проверенная сборка атомарно заменяет ту же `.app`, сохраняя
+иконку, bundle ID, настройки и OS credentials. Открытое приложение не перезапускается:
+обновление ждёт закрытия. Python-код привязан к выбранному checkout и подхватывается
+при следующем запуске. Неудачная сборка не публикуется.
+
+Это синхронизация с локальным проектом: агент не делает git pull, не запускает npm,
+не запускает Jarvis, не включает микрофон и не передаёт данные в сеть.
+Установленная копия helper хранится в
+`~/Library/Application Support/JarvisDesktop/maintenance/` и работает независимо
+от последующего merge PR с исходниками установщика.
+`source.json` содержит выбранный checkout; `status.json` — последнее состояние:
+`current`, `updated`, `waiting_for_close` или `update_failed`.
+
+Чтобы отключить синхронизацию, выполните:
+
+```sh
+launchctl bootout "gui/$(id -u)/org.jarvis.desktop.sync"
+```
+
+Для отключения после следующего входа также переместите
+`~/Library/LaunchAgents/org.jarvis.desktop.sync.plist` из LaunchAgents.
+Само приложение продолжит запускаться, настройки и ключи не удаляются.
+
 Общий Python-движок и Electron работают на Windows 11 и macOS. Имена инструментов
 `windows.*` сохранены для совместимости: `ProcessBackend` сам выбирает доверенный
 `windows.worker` или `macos.worker`. Модель не выбирает платформу, модуль или команду.
