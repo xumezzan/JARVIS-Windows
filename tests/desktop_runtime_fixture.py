@@ -11,8 +11,8 @@ from typing import Any
 
 from jarvis.config import AppConfig
 from jarvis.core.planner.contracts import PlannerInput, Proposal
+from jarvis.core.planner.offline import call
 from jarvis.desktop import service
-from jarvis.desktop.system_tools import DesktopOfflineProvider
 from jarvis.desktop.voice import DesktopVoice
 from jarvis.permissions.approvals import ApprovalStore
 from jarvis.permissions.engine import PermissionEngine
@@ -29,9 +29,6 @@ class Empty(ToolModel):
 
 
 class FixtureProvider:
-    def __init__(self) -> None:
-        self.offline = DesktopOfflineProvider()
-
     async def propose(self, data: PlannerInput) -> Proposal:
         if data.command == "clarify fixture":
             return (
@@ -40,7 +37,7 @@ class FixtureProvider:
                 else Proposal(kind="clarify", question="Какое окно выбрать?")
             )
         if data.command not in {"confirm fixture", "overlay fixture"}:
-            return await self.offline.propose(data)
+            return call("system.info", {}) if not data.steps else Proposal(kind="finish")
         if not data.steps:
             return Proposal(
                 kind="call",

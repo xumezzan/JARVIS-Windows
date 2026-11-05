@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from jarvis.memory.derived import LEARNED, Derived, DerivedStore
-from jarvis.memory.models import APPS, KINDS, PROFILE_TTL, Entry, Hint, MemoryContext
+from jarvis.memory.models import KINDS, PROFILE_TTL, Entry, Hint, MemoryContext
 from jarvis.memory.session import SessionContext
 from jarvis.memory.store import MemoryFailure, MemoryStore
 from jarvis.ui import workers
@@ -131,8 +131,7 @@ class MemoryPanel(QWidget):
         self.app = QComboBox()
         self.app.setEditable(True)
         self.app.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        for key, title in APPS.items():
-            self.app.addItem(title, key)
+        self.app.setPlaceholderText("Название любого приложения")
         self.app.hide()
         form.addRow("Категория", self.kind)
         form.addRow("Метка / имя", self.label)
@@ -219,7 +218,7 @@ class MemoryPanel(QWidget):
         # people and work, and both would otherwise leave the machine unannounced.
         self.cloud_consent = QCheckBox(
             "Разрешаю передать показанные метки, названных знакомых лиц и проектов "
-            "и подходящие выученные слова в DeepSeek или OpenAI для одной задачи"
+            "и подходящие выученные слова в OpenAI для одной задачи"
         )
         layout.addWidget(self.cloud_consent)
         self.status = note("Загрузка профиля…")

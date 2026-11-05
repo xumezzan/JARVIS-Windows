@@ -93,6 +93,10 @@ class ReviewedCloudProvider:
         self.delegate, self.review = delegate, review
         self.reviewed, self.history_allowed = reviewed, history_allowed
 
+    @property
+    def needs_desktop_context(self) -> bool:
+        return bool(getattr(self.delegate, "needs_desktop_context", False))
+
     async def propose(self, data: PlannerInput) -> Proposal:
         # A simple request can grow into a long task. Pause before the next outbound
         # call, rather than sending more observations and only then asking the owner.

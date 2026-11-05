@@ -50,7 +50,9 @@ async def test_full_task_context_survives_runner_cleanup_restart_and_follows_up(
     second = Scripted([])
     restarted = DesktopService(AppConfig(tmp_path), lambda value: None, provider=second)
     try:
-        restarted.start("А теперь этот же текст в другом чате", Mode.SIMULATION)
+        restarted.start(
+            "А теперь этот же текст в другом чате", Mode.SIMULATION, conversation_consent=True
+        )
         await until(lambda: restarted.worker is None)
         recalled = second.inputs[0].task_memory.recent[0]
         assert recalled.command == "Открой блокнот документ"
@@ -58,7 +60,9 @@ async def test_full_task_context_survives_runner_cleanup_restart_and_follows_up(
         assert second.inputs[0].steps == () and not second.inputs[0].scratchpad
         assert restarted.conversation.read() == saved  # Simulation did not write history.
         second.inputs.clear()
-        restarted.start("Пожалуйста открой блокноте документы", Mode.SIMULATION)
+        restarted.start(
+            "Пожалуйста открой блокноте документы", Mode.SIMULATION, conversation_consent=True
+        )
         await until(lambda: restarted.worker is None)
         assert len(second.inputs[0].task_memory.playbooks) == 1
         await restarted.handle(request("memory", memory={"operation": "experience_clear"}))
@@ -72,12 +76,15 @@ async def test_full_task_context_survives_runner_cleanup_restart_and_follows_up(
 @pytest.mark.asyncio
 async def test_cloud_history_requires_separate_one_task_consent_and_voice_cannot_supply_it(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     events: list[dict[str, object]] = []
     provider = Scripted([call("system.info", {})])
-    service = DesktopService(AppConfig(tmp_path), events.append, provider=provider)
+    # Preserve the production disclosure path; only the model factory is synthetic.
+    monkeypatch.setattr("jarvis.desktop.service.OpenAIProvider", lambda model: provider)
+    service = DesktopService(AppConfig(tmp_path), events.append)
     try:
-        service.start("Проверь систему", Mode.EXECUTE)
+        service.start("Проверь систему", Mode.EXECUTE, cloud_consent=True)
         # Consent is the contract here, not a five-second startup deadline on a
         # loaded Windows runner. Await the actual production-bounded audited task.
         worker = service.worker
@@ -127,7 +134,9 @@ async def test_storage_failure_keeps_actual_task_result_and_clears_stale_context
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service = DesktopService(AppConfig(tmp_path), lambda value: None)
+    service = DesktopService(
+        AppConfig(tmp_path), lambda value: None, provider=Scripted([call("system.info", {})])
+    )
 
     def broken(*args: Any, **kwargs: Any) -> Any:
         raise MemoryFailure("storage")

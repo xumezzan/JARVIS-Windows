@@ -8,8 +8,10 @@ import pytest
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtTest import QTest
 from pytestqt.qtbot import QtBot
+from tests.unit.test_planner import Scripted
 
 from jarvis.config import AppConfig
+from jarvis.core.planner.offline import call
 from jarvis.observability.logging import ShellLog
 from jarvis.ui.compact_window import MainWindow
 from jarvis.ui.states import UiState
@@ -211,6 +213,8 @@ def test_planner_entrypoint_and_close_allows_reopen(qtbot: QtBot, window: MainWi
     QTest.mouseClick(window.planner_button, Qt.MouseButton.LeftButton)
     planner = window.planner_window
     assert planner is not None and planner.command.toPlainText() == "проверь систему дважды"
+    planner.override_provider = Scripted([call("local.check", {}), call("local.check", {})])
+    qtbot.waitUntil(lambda: planner.memory.available and planner.memory.worker is None)
     with qtbot.waitSignal(planner.task_finished):
         QTest.mouseClick(planner.run_button, Qt.MouseButton.LeftButton)
     planner.close()

@@ -10,8 +10,9 @@ know what the calendar said.
 That has a consequence worth stating plainly, because it looks like a limitation and is
 actually the invariant. A target observed before the restart is not observed now, so the
 resumed task must look again before it may act on anything (invariant И5 in `AGENTS.md`).
-`Runner._observed_target` enforces this on its own: a restored step carries no result, so
-nothing can be addressed through it.
+Restored steps carry no element/mark observations. The runner scopes those to fresh
+reads; desktop adapters validate process/start/handle/executable again and may resolve
+the current active window for ordinary input.
 
 A step whose outcome never arrived is restored as a timeout that may have had effects. It
 is the honest reading — a service may well have accepted the work — and it keeps the

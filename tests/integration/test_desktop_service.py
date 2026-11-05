@@ -162,7 +162,9 @@ async def test_thirty_screenshots_keep_only_current_image_outside_history_and_js
 async def test_desktop_runs_actual_engine_and_reports_observations(
     tmp_path: Path, mode: str
 ) -> None:
-    service = DesktopService(AppConfig(tmp_path), lambda value: None)
+    service = DesktopService(
+        AppConfig(tmp_path), lambda value: None, provider=Scripted([call("system.info", {})])
+    )
     try:
         await service.handle(request("run", command="проверь систему", mode=mode))
         await until(lambda: service.worker is None)
@@ -185,9 +187,12 @@ async def test_desktop_runs_actual_engine_and_reports_observations(
 
 
 @pytest.mark.asyncio
-async def test_cloud_consent_is_one_task_and_navigation_never_starts_audio(tmp_path: Path) -> None:
+async def test_cloud_consent_is_one_task_and_navigation_never_starts_audio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     events: list[dict[str, object]] = []
-    service = DesktopService(AppConfig(tmp_path), events.append, provider=Scripted([]))
+    monkeypatch.setattr("jarvis.desktop.service.OpenAIProvider", lambda model: Scripted([]))
+    service = DesktopService(AppConfig(tmp_path), events.append)
     try:
         await service.handle(request("configure", settings={"provider": "openai", "model": "test"}))
         await service.handle(request("run", command="test", mode="execute"))
@@ -338,7 +343,9 @@ async def test_voice_threshold_and_acknowledgement(
     expected: int,
 ) -> None:
     fixture = VoiceFixture("проверь систему", confidence=confidence)
-    service = DesktopService(AppConfig(tmp_path), lambda value: None)
+    service = DesktopService(
+        AppConfig(tmp_path), lambda value: None, provider=Scripted([call("system.info", {})])
+    )
     service.voice = DesktopVoice(
         service.publish,
         service.transcript,
@@ -411,14 +418,12 @@ async def test_headless_subprocess_works_with_invalid_qt_plugin(tmp_path: Path) 
     assert process.stdin is not None and process.stdout is not None
     async with asyncio.timeout(10):
         assert json.loads(await process.stdout.readline())["event"] == "state"
-        process.stdin.write(
-            request("run", command="проверь систему", mode="execute").model_dump_json().encode()
-            + b"\n"
-        )
+        process.stdin.write(request("status").model_dump_json().encode() + b"\n")
         await process.stdin.drain()
         while True:
             message = json.loads(await process.stdout.readline())
-            if message.get("event") == "state" and message["state"]["task"]["state"] == "finished":
+            if message.get("ok") is True:
+                assert message["state"]["ready"] and message["state"]["task"]["state"] == "idle"
                 break
         process.stdin.close()
         await process.wait()
@@ -447,7 +452,9 @@ async def test_memory_edits_preserve_store_and_explicit_selection(tmp_path: Path
         await service.handle(request("run", command="test"))
         await until(lambda: service.worker is None)
         assert provider.inputs[-1].memory.empty
-        await service.handle(request("run", command="test", memory_ids=[entry.id]))
+        await service.handle(
+            request("run", command="test", memory_ids=[entry.id], memory_consent=True)
+        )
         await until(lambda: service.worker is None)
         assert provider.inputs[-1].memory.profile[0].value == "Jarvis"
         await service.handle(
@@ -486,7 +493,9 @@ async def test_voice_cancel_before_coroutine_starts_clears_busy() -> None:
 
 @pytest.mark.asyncio
 async def test_stop_while_draining_ack_never_restarts_result_speech(tmp_path: Path) -> None:
-    service = DesktopService(AppConfig(tmp_path), lambda value: None)
+    service = DesktopService(
+        AppConfig(tmp_path), lambda value: None, provider=Scripted([call("system.info", {})])
+    )
     draining = asyncio.Event()
     release = asyncio.Event()
     fixture = VoiceFixture()
@@ -588,7 +597,9 @@ async def test_eleven_result_requires_consent_consumed_once_and_exact_text(
 ) -> None:
     from jarvis.voice.elevenlabs import ElevenLabsSpeaker
 
-    service = DesktopService(AppConfig(tmp_path), lambda value: None)
+    service = DesktopService(
+        AppConfig(tmp_path), lambda value: None, provider=Scripted([call("system.info", {})])
+    )
     spoken: list[str] = []
 
     async def speak(speaker: ElevenLabsSpeaker, text: str) -> None:

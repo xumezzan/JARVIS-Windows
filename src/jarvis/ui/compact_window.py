@@ -167,7 +167,7 @@ class MainWindow(QMainWindow):
         self.command_input = QPlainTextEdit()
         self.command_input.setObjectName("commandInput")
         self.command_input.setAccessibleName("Текстовая команда")
-        self.command_input.setPlaceholderText("Например, проверь систему дважды")
+        self.command_input.setPlaceholderText("Опишите задачу своими словами")
         self.command_input.setFixedHeight(80)
         self.command_input.installEventFilter(self)
         command_label.setBuddy(self.command_input)
@@ -217,7 +217,7 @@ class MainWindow(QMainWindow):
         self.permissions_button.clicked.connect(self.open_permissions)
         tools.addWidget(self.permissions_button)
         tools.addWidget(
-            label("Наблюдение окон, Блокнот, VS Code и временный браузерный сеанс.", "muted")
+            label("Окна любых приложений, ввод, буфер обмена и браузерный сеанс.", "muted")
         )
         tools.addSpacing(24)
         self.demo_toggle = QPushButton("Демонстрация интерфейса")

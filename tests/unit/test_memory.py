@@ -202,16 +202,15 @@ def test_session_is_explicit_bounded_expiring_and_resettable() -> None:
 
 
 @pytest.mark.asyncio
-async def test_offline_application_followup_and_ambiguity() -> None:
-    one = Hint(kind="application", label="Редактор", value="notepad")
-    two = Hint(kind="application", label="Браузер", value="chrome")
+async def test_memory_labels_never_activate_an_offline_task_recipe() -> None:
+    from jarvis.core.planner.contracts import ProviderError
+
+    hint = Hint(kind="application", label="Редактор", value="Arbitrary Editor")
     data = PlannerInput(
-        "открой выбранное приложение", (), (), Mode.EXECUTE, "[]", MemoryContext(session=(one,))
+        "открой выбранное приложение", (), (), Mode.EXECUTE, "[]", MemoryContext(session=(hint,))
     )
-    result = await OfflineProvider().propose(data)
-    assert result.tool == "windows.open_app" and json.loads(result.arguments) == {"app": "notepad"}
-    for memory in (MemoryContext(), MemoryContext(profile=(one, two))):
-        assert (await OfflineProvider().propose(replace(data, memory=memory))).kind == "clarify"
+    with pytest.raises(ProviderError, match="provider_unavailable"):
+        await OfflineProvider().propose(data)
 
 
 @pytest.mark.asyncio
@@ -321,7 +320,9 @@ async def test_contact_clarification_cancels_with_no_calls(harness: Harness) -> 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", [Mode.EXECUTE, Mode.SIMULATION])
-async def test_memory_cannot_supply_stale_windows_target(tmp_path: Path, mode: Mode) -> None:
+async def test_desktop_target_uses_native_validation_even_when_memory_is_present(
+    tmp_path: Path, mode: Mode
+) -> None:
     registry, _ = local_registry()
     probe = WindowsProbe()
     register_windows(registry, probe)
@@ -355,9 +356,13 @@ async def test_memory_cannot_supply_stale_windows_target(tmp_path: Path, mode: M
             ),
         )
         result = await runner.run("test", mode)
-        assert result.error == "unobserved_target" and len(result.steps) == 1
-        assert result.steps[0].outcome.status is Status.DENIED
-        assert not probe.calls
+        assert result.error == "" and len(result.steps) == 1
+        if mode is Mode.EXECUTE:
+            assert result.steps[0].outcome.status is Status.SUCCESS
+            assert any(request.operation == "check_target" for request in probe.calls)
+        else:
+            assert result.steps[0].outcome.status is Status.SIMULATED
+            assert not probe.calls
     finally:
         audit.close()
 

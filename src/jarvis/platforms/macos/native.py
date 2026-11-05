@@ -13,6 +13,7 @@ import math
 import os
 import plistlib
 import selectors
+import shutil
 import subprocess
 import tempfile
 import time
@@ -68,41 +69,86 @@ ROLE_TYPES = {
     "AXPopUpButton": "ComboBox",
     "AXComboBox": "ComboBox",
 }
-ALIASES = {
-    "notepad": "TextEdit",
-    "блокнот": "TextEdit",
-    "textedit": "TextEdit",
-    "notes": "Notes",
-    "заметки": "Notes",
-    "calculator": "Calculator",
-    "calc": "Calculator",
-    "калькулятор": "Calculator",
-    "chrome": "Google Chrome",
-    "браузер": "Google Chrome",
-    "хром": "Google Chrome",
-    "гугл хром": "Google Chrome",
-    "vscode": "Visual Studio Code",
-    "code": "Visual Studio Code",
-    "vs code": "Visual Studio Code",
-    "вс код": "Visual Studio Code",
-    "finder": "Finder",
-    "explorer": "Finder",
-    "проводник": "Finder",
-    "terminal": "Terminal",
-    "терминал": "Terminal",
-    "cmd": "Terminal",
-    "командная строка": "Terminal",
-}
-# Only this fixed set can generate native keys; text insertion never goes through it.
-HOTKEYS: dict[str, tuple[int, bool]] = {
-    "Ctrl+C": (8, True),
-    "Ctrl+V": (9, True),
-    "Ctrl+A": (0, True),
-    "Ctrl+Z": (6, True),
-    "Enter": (36, False),
-    "Tab": (48, False),
-    "Alt+F4": (13, True),  # Command-W closes the selected macOS window.
-}
+# macOS virtual key codes, independent of the application receiving an input event.
+KEY_CODES = dict(zip("asdfhgzxcv", (0, 1, 2, 3, 4, 5, 6, 7, 8, 9), strict=True))
+KEY_CODES.update(dict(zip("bqweryt", (11, 12, 13, 14, 15, 16, 17), strict=True)))
+KEY_CODES.update(dict(zip("123465=97-80]ou[ip", range(18, 36), strict=True)))
+KEY_CODES.update(dict(zip("lj'k;\\,/nm.", range(37, 48), strict=True)))
+KEY_CODES.update(
+    {
+        "enter": 36,
+        "return": 36,
+        "tab": 48,
+        "space": 49,
+        "`": 50,
+        "backspace": 51,
+        "escape": 53,
+        "esc": 53,
+        "delete": 117,
+        "insert": 114,
+        "home": 115,
+        "end": 119,
+        "pageup": 116,
+        "pagedown": 121,
+        "left": 123,
+        "arrowleft": 123,
+        "right": 124,
+        "arrowright": 124,
+        "down": 125,
+        "arrowdown": 125,
+        "up": 126,
+        "arrowup": 126,
+        "f1": 122,
+        "f2": 120,
+        "f3": 99,
+        "f4": 118,
+        "f5": 96,
+        "f6": 97,
+        "f7": 98,
+        "f8": 100,
+        "f9": 101,
+        "f10": 109,
+        "f11": 103,
+        "f12": 111,
+        "f13": 105,
+        "f14": 107,
+        "f15": 113,
+        "f16": 106,
+        "f17": 64,
+        "f18": 79,
+        "f19": 80,
+        "f20": 90,
+    }
+)
+
+
+def key_combination(hotkey: str) -> tuple[int, set[str]]:
+    """Parse one bounded shortcut, never source code or an application command."""
+    parts = hotkey.casefold().split("+")
+    if not 1 <= len(parts) <= 5 or any(not part or part != part.strip() for part in parts):
+        raise ToolError("control_unsupported")
+    aliases = {
+        "ctrl": "command",
+        "control": "command",
+        "cmd": "command",
+        "command": "command",
+        "meta": "command",
+        "win": "command",
+        "super": "command",
+        "alt": "option",
+        "option": "option",
+        "shift": "shift",
+    }
+    try:
+        modifiers = {aliases[part] for part in parts[:-1]}
+        code = KEY_CODES[parts[-1]]
+    except KeyError:
+        raise ToolError("control_unsupported") from None
+    if len(modifiers) != len(parts) - 1:
+        raise ToolError("control_unsupported")
+    if hotkey.casefold() == "alt+f4":
+        return KEY_CODES["w"], {"command"}
+    return code, modifiers
 
 
 def command(
@@ -393,8 +439,13 @@ class NativeDesktop:
             raise ToolError("target_changed")
         pid = int(app.processIdentifier())
         focused = self.attr(self.ax.AXUIElementCreateApplication(pid), "AXFocusedWindow")
+        # Custom-drawn applications can omit AXFocusedWindow. WindowServer and the
+        # frontmost process still identify their foreground window without a recipe.
         if focused is None:
-            raise ToolError("target_changed")
+            matches = [t for t in self.windows() if t.pid == pid]
+            if not matches:
+                raise ToolError("target_changed")
+            return None, matches[0]
         bounds = self.bounds(focused)
         matches = [
             t
@@ -403,7 +454,7 @@ class NativeDesktop:
         ]
         if len(matches) != 1:
             raise ToolError("target_changed", reason=Reason.AMBIGUOUS_WINDOW)
-        return self.resolve(matches[0]), matches[0]
+        return focused, matches[0]
 
     def require_foreground(self, target: WindowTarget) -> None:
         _, current = self.active()
@@ -411,7 +462,12 @@ class NativeDesktop:
             raise ToolError("target_changed", reason=Reason.WINDOW_NOT_FOREGROUND)
 
     def activate(self, target: WindowTarget) -> Any:
-        window = self.resolve(target)
+        self.accessibility()
+        self.resolve_row(target)
+        try:
+            window = self.resolve(target)
+        except ToolError:
+            window = None
         running = self.appkit.NSRunningApplication.runningApplicationWithProcessIdentifier_(
             target.pid
         )
@@ -419,8 +475,12 @@ class NativeDesktop:
             self.appkit.NSApplicationActivateIgnoringOtherApps
         ):
             raise ToolError("target_changed", reason=Reason.WINDOW_NOT_FOREGROUND)
-        self.ax.AXUIElementPerformAction(window, "AXRaise")
-        self.set_attr(window, "AXMain", True)
+        if window is not None:
+            self.ax.AXUIElementPerformAction(window, "AXRaise")
+            # AXMain is optional for custom windows; foreground verification is
+            # performed below independently of the accessibility implementation.
+            with suppress(ToolError):
+                self.set_attr(window, "AXMain", True)
         deadline = time.monotonic() + 1
         while True:
             try:
@@ -430,6 +490,53 @@ class NativeDesktop:
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(0.03)
+
+    @staticmethod
+    def bundle_entry(candidate: Path) -> LaunchEntry | None:
+        try:
+            bundle = candidate.resolve()
+            with (bundle / "Contents/Info.plist").open("rb") as stream:
+                raw = stream.read(MAX_APP_METADATA_BYTES + 1)
+            if len(raw) > MAX_APP_METADATA_BYTES:
+                return None
+            info = plistlib.loads(raw)
+            if not isinstance(info, dict):
+                return None
+            binary = info["CFBundleExecutable"]
+            if not isinstance(binary, str) or "/" in binary or "\\" in binary:
+                return None
+            executable = (bundle / "Contents/MacOS" / binary).resolve()
+            if not executable.is_file() or not executable.is_relative_to(bundle):
+                return None
+            names = [bundle.stem, binary]
+            metadata = [info]
+            # Localized application names belong to the installed bundle, rather
+            # than a maintained table translating a few chosen applications.
+            resources = bundle / "Contents/Resources"
+            localized_paths = list(resources.glob("*.lproj/InfoPlist.strings"))[:128]
+            if (resources / "InfoPlist.loctable").is_file():
+                localized_paths.append(resources / "InfoPlist.loctable")
+            for path in localized_paths:
+                try:
+                    with path.open("rb") as stream:
+                        localized = stream.read(MAX_APP_METADATA_BYTES + 1)
+                    if len(localized) > MAX_APP_METADATA_BYTES:
+                        continue
+                    value = plistlib.loads(localized)
+                except (OSError, ValueError, plistlib.InvalidFileException, ExpatError):
+                    continue
+                if isinstance(value, dict):
+                    if path.suffix == ".loctable":
+                        metadata.extend(v for v in value.values() if isinstance(v, dict))
+                    else:
+                        metadata.append(value)
+            for value in metadata:
+                names.extend(
+                    str(value[k]) for k in ("CFBundleName", "CFBundleDisplayName") if value.get(k)
+                )
+            return LaunchEntry(bundle, executable, tuple(dict.fromkeys(names)))
+        except (OSError, ValueError, KeyError, plistlib.InvalidFileException, ExpatError):
+            return None
 
     @staticmethod
     def catalog(roots: tuple[Path, ...] | None = None) -> list[LaunchEntry]:
@@ -451,55 +558,52 @@ class NativeDesktop:
                 visited += 1
                 if visited > 5000:
                     return list(result.values())
-                try:
-                    bundle = candidate.resolve()
-                    with (bundle / "Contents/Info.plist").open("rb") as stream:
-                        raw = stream.read(MAX_APP_METADATA_BYTES + 1)
-                    if len(raw) > MAX_APP_METADATA_BYTES:
-                        continue
-                    info = plistlib.loads(raw)
-                    if not isinstance(info, dict):
-                        continue
-                    binary = info["CFBundleExecutable"]
-                    if not isinstance(binary, str) or "/" in binary or "\\" in binary:
-                        continue
-                    executable = (bundle / "Contents/MacOS" / binary).resolve()
-                    if not executable.is_file() or not executable.is_relative_to(bundle):
-                        continue
-                    names = tuple(
-                        str(n)
-                        for n in (
-                            bundle.stem,
-                            info.get("CFBundleName", ""),
-                            info.get("CFBundleDisplayName", ""),
-                            binary,
-                        )
-                        if n
-                    )
-                    result[bundle] = LaunchEntry(bundle, executable, names)
-                except (OSError, ValueError, KeyError, plistlib.InvalidFileException, ExpatError):
-                    continue
+                entry = NativeDesktop.bundle_entry(candidate)
+                if entry is not None:
+                    result[entry.bundle] = entry
         return list(result.values())
 
     def resolve_app(self, name: str) -> LaunchEntry:
         # The public schema is also rechecked in the isolated helper.
         validated = NativeRequest(operation="open", app=name).app
         assert validated is not None
-        wanted = normalize(ALIASES.get(validated.casefold(), validated))
-        if wanted in {"script editor", "automator", "python", "osascript", "applescript"}:
-            raise ToolError("control_unsupported", reason=Reason.APPLICATION_BLOCKED)
-        matches = [
-            entry for entry in self.catalog() if wanted in {normalize(n) for n in entry.names}
-        ]
-        if not matches:
+        path = Path(validated).expanduser()
+        if path.is_absolute():
+            entry = self.bundle_entry(path)
+            if entry is not None:
+                return entry
+            if path.is_file() and os.access(path, os.X_OK):
+                resolved = path.resolve()
+                return LaunchEntry(resolved, resolved, (resolved.stem,))
             raise ToolError("application_missing")
+        wanted = normalize(validated)
+        catalog = self.catalog()
+        matches = [entry for entry in catalog if wanted in {normalize(n) for n in entry.names}]
+        if not matches:
+            matches = [
+                entry for entry in catalog if any(wanted in normalize(n) for n in entry.names)
+            ]
+        if not matches:
+            executable = shutil.which(validated)
+            if executable is None:
+                raise ToolError("application_missing")
+            resolved = Path(executable).resolve()
+            return LaunchEntry(resolved, resolved, (resolved.stem,))
         if len(matches) != 1:
             raise ToolError("application_ambiguous")
         return matches[0]
 
     def open_app(self, name: str) -> WindowsResult:
         entry = self.resolve_app(name)
-        command(["/usr/bin/open", "-a", str(entry.bundle)], limit=1024)
+        if entry.bundle.suffix.casefold() == ".app":
+            command(["/usr/bin/open", "-a", str(entry.bundle)], limit=1024)
+        else:
+            subprocess.Popen(
+                [str(entry.executable)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
         # A cold application may have a live process before WindowServer publishes
         # its first visible window. Observe longer within the transport's open budget;
         # the launch itself is issued exactly once and is never retried.
@@ -536,10 +640,13 @@ class NativeDesktop:
             # typing target, and a changed CG/process identity must still fail.
             fields = []
         self.resolve_row(target)
-        if target.app == "TextEdit":
-            # Its formatting toolbar also exposes editable font controls. Only
-            # the single document area can be the default target for text input.
-            fields = [field for field in fields if field.control_type == "Document"]
+        # Document editors are preferred over formatting toolbar fields in every
+        # application. An ambiguous collection still has no implicit text target.
+        documents = [field for field in fields if field.control_type == "Document"]
+        if documents:
+            fields = documents
+        else:
+            fields = [field for field in fields if not field.class_name.startswith("AXComboBox:")]
         if len(fields) != 1:
             return bare
         return bare.model_copy(
@@ -658,7 +765,7 @@ class NativeDesktop:
 
     @staticmethod
     def typing(request: NativeRequest) -> TypeText:
-        if request.target is None or request.text is None:
+        if request.text is None:
             raise ToolError("native_failure")
         return TypeText(
             target=request.target,
@@ -668,6 +775,8 @@ class NativeDesktop:
         )
 
     def resolve_editor(self, args: TypeText) -> tuple[Any, Any]:
+        if args.target is None or args.field is None:
+            raise ToolError("control_unsupported", reason=Reason.EDITOR_NOT_WRITABLE)
         window = self.resolve(args.target)
         editor = self.chosen_editor(window, args.target, args.field)
         if (
@@ -685,8 +794,8 @@ class NativeDesktop:
         try:
             return str(self.attr(value, "AXDescription", ""))
         except ToolError:
-            # TextEdit's document returns kAXErrorFailure for AXDescription even
-            # while its role and stable identifier are readable. Do not relax
+            # Some document implementations fail optional AXDescription even
+            # while their role and stable identifier are readable. Do not relax
             # reads of role, security attributes, children or the field's value.
             error, _ = self.ax.AXUIElementCopyAttributeValue(value, "AXDescription", None)
             if error != -25200 or self.attr(value, "AXRole") != "AXTextArea":
@@ -727,6 +836,9 @@ class NativeDesktop:
         self, window: Any, target: WindowTarget, max_depth: int
     ) -> tuple[WindowsResult, list[Rectangle], bool]:
         bounds = self.row_bounds(self.resolve_row(target))
+        if window is None:
+            self.focused_input(target)
+            return WindowsResult(target=target, window_rectangle=bounds, truncated=True), [], False
         nodes, tree_truncated = self.walk(window, target, max_depth)
         truncated = tree_truncated
         candidates, private = [], []
@@ -788,6 +900,8 @@ class NativeDesktop:
         return result
 
     def prepared_window(self, window: Any, target: WindowTarget) -> Any:
+        if window is None:
+            return None
         # Chromium can expose only its toolbar until a trusted accessibility client
         # requests its renderer tree. A toolbar alone cannot prove password redaction.
         from jarvis.platforms.macos.ghost import chromium_executable
@@ -879,7 +993,9 @@ class NativeDesktop:
         window = self.prepared_window(window, target)
         observation, private, complete = self.inspection(window, target, MAX_UIA_DEPTH)
         if not complete:
-            raise ToolError("control_unsupported")  # An incomplete tree cannot prove redaction.
+            # A custom interface can still be observed visually. Known secure
+            # controls are masked and a protected focused field refuses capture.
+            self.focused_input(target)
         bounds = observation.window_rectangle
         assert bounds is not None
         arguments = ["/usr/sbin/screencapture", "-x", "-o", "-t", "png"]
@@ -901,12 +1017,12 @@ class NativeDesktop:
         ):
             raise ToolError("target_changed")
         if scope == "active_window":
-            after, after_private, complete = self.inspection(
-                self.resolve(target), target, MAX_UIA_DEPTH
-            )
+            after_window, after_target = self.active()
+            if after_target.identity != target.identity:
+                raise ToolError("target_changed")
+            after, after_private, complete = self.inspection(after_window, target, MAX_UIA_DEPTH)
             if (
-                not complete
-                or after_private != private
+                after_private != private
                 or after.window_rectangle != observation.window_rectangle
                 or after.elements != observation.elements
             ):
@@ -946,21 +1062,20 @@ class NativeDesktop:
             self.before_click(bounds)
 
     def click(self, request: NativeRequest) -> WindowsResult:
-        if request.target is None:
-            raise ToolError("native_failure")
+        target = request.target or self.active()[1]
         args = ClickElement(
-            target=request.target,
+            target=target,
             element=request.element,
             x=request.x,
             y=request.y,
             window_rectangle=request.window_rectangle,
         )
-        window = self.activate(args.target)
+        self.activate(target)
         if args.element is not None:
             element = args.element
 
             def chosen() -> Node:
-                nodes, _ = self.walk(self.resolve(args.target), args.target)
+                nodes, _ = self.walk(self.resolve(target), target)
                 matches = []
                 for node in nodes:
                     try:
@@ -973,43 +1088,61 @@ class NativeDesktop:
                 return matches[0]
 
             chosen()
-            self.preview(args.target, element.rectangle, label=element.name)
+            self.preview(target, element.rectangle, label=element.name)
             node = chosen()
-            self.require_foreground(args.target)
+            self.require_foreground(target)
             if self.ax.AXUIElementPerformAction(node.value, "AXPress") != 0:
-                raise ToolError("control_unsupported")
+                x = (element.rectangle.left + element.rectangle.right) // 2
+                y = (element.rectangle.top + element.rectangle.bottom) // 2
+                self.check_point(target, x, y)
+                self.point_click(x, y)
         else:
             assert args.x is not None and args.y is not None
-            bounds = self.bounds(window)
+            bounds = self.row_bounds(self.resolve_row(target))
             if (
-                bounds != args.window_rectangle
+                args.window_rectangle is not None
+                and bounds != args.window_rectangle
                 or not bounds.left <= args.x < bounds.right
                 or not bounds.top <= args.y < bounds.bottom
             ):
                 raise ToolError("target_changed")
-            self.check_point(args.target, args.x, args.y)
+            self.check_point(target, args.x, args.y)
             preview = Rectangle(
                 left=args.x - 12, top=args.y - 12, right=args.x + 12, bottom=args.y + 12
             )
-            self.preview(args.target, preview)
-            if self.bounds(self.resolve(args.target)) != bounds:
+            self.preview(target, preview)
+            if self.row_bounds(self.resolve_row(target)) != bounds:
                 raise ToolError("target_changed")
-            self.require_foreground(args.target)
-            self.check_point(args.target, args.x, args.y)
+            self.require_foreground(target)
+            self.check_point(target, args.x, args.y)
             self.point_click(args.x, args.y)
-        return WindowsResult(target=args.target, performed=True)
+        return WindowsResult(target=target, performed=True)
 
     def check_point(self, target: WindowTarget, x: int, y: int) -> None:
         self.require_foreground(target)
+        # A physical event must still land inside the current frontmost window.
+        # This check uses WindowServer, including custom views with no AX node.
+        containing = []
+        for row in self.window_rows():
+            if int(row.get("kCGWindowLayer", 0)) != 0 or float(row.get("kCGWindowAlpha", 1)) <= 0:
+                continue
+            bounds = self.row_bounds(row)
+            if bounds.left <= x < bounds.right and bounds.top <= y < bounds.bottom:
+                containing.append(int(row.get("kCGWindowNumber", 0)))
+        if not containing or containing[0] != target.handle:
+            raise ToolError("target_changed")
         system = self.ax.AXUIElementCreateSystemWide()
         error, element = self.ax.AXUIElementCopyElementAtPosition(system, x, y, None)
-        if error != 0 or element is None or self.private_ancestor(element):
+        if error != 0 or element is None:
+            self.focused_input(target)
+            return
+        if self.private_ancestor(element):
             raise ToolError("target_changed")
         error, pid = self.ax.AXUIElementGetPid(element, None)
         if error != 0 or int(pid) != target.pid:
             raise ToolError("target_changed")
         window = self.attr(element, "AXWindow")
-        if window is None or self.bounds(window) != self.bounds(self.resolve(target)):
+        if window is not None and self.bounds(window) != self.row_bounds(self.resolve_row(target)):
             raise ToolError("target_changed")
 
     def point_click(self, x: int, y: int) -> None:
@@ -1028,44 +1161,139 @@ class NativeDesktop:
             if abs(current.x - x) <= 1 and abs(current.y - y) <= 1:
                 q.CGWarpMouseCursorPosition(previous)
 
-    def hotkey(self, request: NativeRequest) -> WindowsResult:
-        if request.target is None:
-            raise ToolError("native_failure")
-        args = SendHotkey(
-            target=request.target,
-            hotkey=cast("Any", request.hotkey),
-            clipboard_sha256=request.clipboard_sha256,
-        )
-        self.activate(args.target)
-        focused = self.attr(
-            self.ax.AXUIElementCreateApplication(args.target.pid), "AXFocusedUIElement"
-        )
-        if focused is None or self.private_ancestor(focused):
-            raise ToolError("control_unsupported")
-        if (
-            args.hotkey == "Ctrl+V"
-            and clipboard_digest(self.clipboard(plain_only=True)) != args.clipboard_sha256
-        ):
-            raise ToolError("target_changed")
-        self.require_foreground(args.target)
-        if self.quartz is None or args.hotkey not in HOTKEYS:
-            raise ToolError("control_unsupported")
-        code, command_modifier = HOTKEYS[args.hotkey]
+    def focused_input(self, target: WindowTarget) -> Any:
+        self.require_foreground(target)
+        focused = self.attr(self.ax.AXUIElementCreateApplication(target.pid), "AXFocusedUIElement")
+        if focused is not None:
+            if (
+                self.private_ancestor(focused)
+                or not self.attr(focused, "AXEnabled", True)
+                or self.attr(focused, "AXReadOnly", False)
+            ):
+                raise ToolError("control_unsupported", reason=Reason.EDITOR_NOT_WRITABLE)
+        else:
+            from jarvis.platforms.macos.input import secure_input_reader
+
+            if secure_input_reader()():
+                raise ToolError("control_unsupported", reason=Reason.EDITOR_NOT_WRITABLE)
+        return focused
+
+    def send_keys(self, hotkey: str) -> None:
+        code, modifiers = key_combination(hotkey)
+        if self.quartz is None:
+            raise ToolError("control_unsupported", reason=Reason.MACOS_NATIVE_DEPENDENCY_MISSING)
+        flags = 0
+        for modifier in modifiers:
+            flags |= int(
+                getattr(
+                    self.quartz,
+                    {
+                        "command": "kCGEventFlagMaskCommand",
+                        "option": "kCGEventFlagMaskAlternate",
+                        "shift": "kCGEventFlagMaskShift",
+                    }[modifier],
+                )
+            )
         for down in (True, False):
             event = self.quartz.CGEventCreateKeyboardEvent(None, code, down)
             if event is None:
                 raise ToolError("native_failure")
-            self.quartz.CGEventSetFlags(
-                event, self.quartz.kCGEventFlagMaskCommand if command_modifier else 0
-            )
+            self.quartz.CGEventSetFlags(event, flags)
             self.quartz.CGEventPost(self.quartz.kCGHIDEventTap, event)
-        return WindowsResult(target=args.target, performed=True)
+
+    def paste_literal(self, args: TypeText, target: WindowTarget, focused: Any) -> WindowsResult:
+        """Paste literal text while preserving every original pasteboard format.
+
+        An issued event is an attempt receipt. Only a readable field with an exact
+        expected value can turn it into a verified text result.
+        """
+        self.frameworks()
+        if self.appkit is None:
+            raise ToolError("control_unsupported", reason=Reason.MACOS_NATIVE_DEPENDENCY_MISSING)
+        pasteboard = self.appkit.NSPasteboard.generalPasteboard()
+        saved = []
+        size = 0
+        for original in list(pasteboard.pasteboardItems() or ()):
+            item = self.appkit.NSPasteboardItem.alloc().init()
+            for kind in original.types() or ():
+                data = original.dataForType_(kind)
+                if data is not None:
+                    size += len(data)
+                    if size > 8_000_000:
+                        raise ToolError("control_unsupported")
+                    if not item.setData_forType_(data, kind):
+                        raise ToolError("control_unsupported")
+            saved.append(item)
+        before = self.attr(focused, "AXValue") if focused is not None else None
+        expected = None
+        if isinstance(before, str):
+            expected = args.text if args.overwrite else before + args.text
+        restore_count = None
+        verified = None
+        try:
+            self.focused_input(target)
+            pasteboard.clearContents()
+            restore_count = int(pasteboard.changeCount())
+            if not pasteboard.setString_forType_(args.text, "public.utf8-plain-text"):
+                raise ToolError("native_failure")
+            restore_count = int(pasteboard.changeCount())
+            if args.overwrite:
+                self.send_keys("Cmd+A")
+            self.send_keys("Cmd+V")
+            # Dispatch native events while waiting for readback. A custom control
+            # may expose no value, so its bounded attempt remains unverified.
+            foundation = importlib.import_module("Foundation")
+            deadline = time.monotonic() + 0.35
+            while time.monotonic() < deadline:
+                foundation.NSRunLoop.currentRunLoop().runUntilDate_(
+                    foundation.NSDate.dateWithTimeIntervalSinceNow_(0.01)
+                )
+                self.require_foreground(target)
+                if focused is not None and expected is not None:
+                    try:
+                        after = self.attr(focused, "AXValue")
+                    except ToolError:
+                        break
+                    if isinstance(after, str) and normalize_newlines(after) == normalize_newlines(
+                        expected
+                    ):
+                        verified = text_digest(after)
+                        break
+        finally:
+            # Preserve an owner's concurrent clipboard edit instead of replacing it.
+            if restore_count is not None and int(pasteboard.changeCount()) == restore_count:
+                pasteboard.clearContents()
+                if saved and not pasteboard.writeObjects_(saved):
+                    raise ToolError("native_failure")
+        return WindowsResult(
+            target=target,
+            performed=True,
+            inserted_text_sha256=text_digest(args.text),
+            text_sha256=verified,
+            text_verified=verified is not None,
+        )
+
+    def hotkey(self, request: NativeRequest) -> WindowsResult:
+        target = request.target or self.active()[1]
+        args = SendHotkey(
+            target=target,
+            hotkey=cast("Any", request.hotkey),
+            clipboard_sha256=request.clipboard_sha256,
+        )
+        self.activate(target)
+        self.focused_input(target)
+        if (
+            args.hotkey.casefold() in {"ctrl+v", "cmd+v", "command+v"}
+            and args.clipboard_sha256 is not None
+            and clipboard_digest(self.clipboard(plain_only=True)) != args.clipboard_sha256
+        ):
+            raise ToolError("target_changed")
+        self.require_foreground(target)
+        self.send_keys(args.hotkey)
+        return WindowsResult(target=target, performed=True)
 
     def dispatch(self, request: NativeRequest) -> WindowsResult:
         operation = request.operation
-        if operation.startswith("calculator_"):
-            # Microsoft Calculator contracts carry Windows-only package/control IDs.
-            raise ToolError("control_unsupported")
         if operation == "list":
             windows = self.windows(request.app)
             return WindowsResult(windows=windows, truncated=len(windows) == 100)
@@ -1120,6 +1348,45 @@ class NativeDesktop:
                 target = matches[0]
             self.activate(target)
             return WindowsResult(target=target, focused=True)
+        if operation in {"type", "check_target"} and request.text is not None:
+            args = self.typing(request)
+            target = args.target or self.active()[1]
+            args = args.model_copy(update={"target": target})
+            if args.field is not None:
+                _, editor = self.resolve_editor(args)
+                bounds = self.bounds(editor)
+                if operation == "check_target":
+                    return WindowsResult(target=target)
+                self.preview(target, bounds, typing=True, label="Ввод текста...")
+                _, editor = self.resolve_editor(args)
+                if self.bounds(editor) != bounds:
+                    raise ToolError("target_changed")
+            else:
+                self.activate(target)
+                editor = self.focused_input(target)
+                if operation == "check_target":
+                    return WindowsResult(target=target)
+                self.preview(
+                    target,
+                    self.row_bounds(self.resolve_row(target)),
+                    typing=True,
+                    label="Ввод текста...",
+                )
+            if editor is not None and self.writable(editor):
+                expected = ("" if args.overwrite else self.read(editor)) + args.text
+                self.set_attr(editor, "AXValue", expected)
+                digest = text_digest(self.read(editor))
+                if digest != text_digest(expected):
+                    raise ToolError("target_changed", reason=Reason.EDITOR_CHANGED)
+                return WindowsResult(
+                    target=target,
+                    performed=True,
+                    text_verified=True,
+                    text_sha256=digest,
+                    inserted_text_sha256=text_digest(args.text),
+                )
+            self.activate(target)
+            return self.paste_literal(args, target, self.focused_input(target))
         if request.target is None:
             raise ToolError("native_failure")
         if operation == "check_target":
@@ -1133,29 +1400,17 @@ class NativeDesktop:
                 target=request.target,
                 editors=self.editors(self.resolve(request.target), request.target),
             )
-        if operation == "type":
-            args = self.typing(request)
-            _, editor = self.resolve_editor(args)
-            bounds = self.bounds(editor)
-            self.preview(args.target, bounds, typing=True, label="Ввод текста...")
-            _, editor = self.resolve_editor(args)
-            if self.bounds(editor) != bounds:
-                raise ToolError("target_changed")
-            expected = ("" if args.overwrite else self.read(editor)) + args.text
-            self.set_attr(editor, "AXValue", expected)
-            chosen = self.chosen_editor(self.resolve(args.target), args.target, args.field)
-            digest = text_digest(self.read(chosen))
-            if digest != text_digest(expected):
-                raise ToolError("target_changed", reason=Reason.EDITOR_CHANGED)
-            return WindowsResult(
-                target=args.target, text_sha256=digest, inserted_text_sha256=text_digest(args.text)
-            )
         if operation == "verify" and request.result is not None:
             if request.result.text_sha256 is not None:
                 wanted = request.editor or request.target.editor
                 if wanted is None:
-                    raise ToolError("native_failure")
-                editor = self.chosen_editor(self.resolve(request.target), request.target, wanted)
+                    editor = self.focused_input(request.target)
+                    if editor is None:
+                        raise ToolError("control_unsupported")
+                else:
+                    editor = self.chosen_editor(
+                        self.resolve(request.target), request.target, wanted
+                    )
                 return WindowsResult(
                     target=request.target, text_sha256=text_digest(self.read(editor))
                 )
@@ -1166,5 +1421,4 @@ class NativeDesktop:
             except ToolError:
                 focused = False
             return WindowsResult(target=request.target, focused=focused)
-        # Microsoft's calculator-specific IDs deliberately cannot identify a Mac control.
         raise ToolError("control_unsupported")

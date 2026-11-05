@@ -232,7 +232,6 @@ class Runner:
             "windows.click_element",
             "windows.send_hotkey",
             "windows.clipboard_set",
-            "windows.calculator_number",
             "browser.open",
             "browser.navigate",
             "browser.click",
@@ -397,6 +396,15 @@ class Runner:
                 return PlanResult("error", error="invalid_answer")
             answers.append(Answer(question, answer))
         catalog = json.dumps(self.registry.discover(), ensure_ascii=False)
+        if mode is Mode.EXECUTE and getattr(self.provider, "needs_desktop_context", False):
+            # These observations use the same policy/audit path as model-selected reads.
+            # No screenshot is captured or transmitted by this initial text context.
+            for context_tool in (
+                "windows.get_open_windows",
+                "windows.inspect_active_window",
+                "windows.clipboard_get",
+            ):
+                await self._fresh_read(context_tool, {})
         while True:
             if self.cancelled.is_set():
                 raise asyncio.CancelledError
@@ -557,7 +565,11 @@ class Runner:
                             return PlanResult("error", tuple(self.steps), failure.error.value)
                         # Resolve before prepare: policy/approval bind the full exact element.
                         args = click.model_copy(
-                            update={"element": matches[0], "mark_id": None}
+                            update={
+                                "target": observed.target if observed is not None else click.target,
+                                "element": matches[0],
+                                "mark_id": None,
+                            }
                         ).model_dump(mode="json")
             if proposal.tool in ("browser.click", "browser.type") and isinstance(args, dict):
                 tool = self.registry.get(proposal.tool)
@@ -639,8 +651,19 @@ class Runner:
                     continue
                 return PlanResult("error", tuple(self.steps), outcome.error.value)
             # Reads leave nothing behind, so only effects are journalled and guarded.
-            journal = self.journal if action.risk is not Risk.SAFE else None
+            journal = self.journal if self._is_effect(action) else None
             key = step_key(action.tool, action.payload)
+            if (
+                journal is not None
+                and action.risk is Risk.SAFE
+                and action.tool.startswith("windows.")
+            ):
+                try:
+                    key = journal.input_key(key)
+                except WorkflowFailure:
+                    self.engine.cancel(action)
+                    self.active = None
+                    return PlanResult("error", tuple(self.steps), "journal_unavailable")
             if key in self._uncertain_effects:
                 outcome = self.engine.reject(
                     action, ErrorCode.DUPLICATE_EFFECT, Reason.EFFECT_ALREADY_ISSUED
@@ -761,7 +784,7 @@ class Runner:
             return None
         return self._screenshot_b64
 
-    def _click_observation(self, target: WindowTarget) -> WindowsResult | None:
+    def _click_observation(self, target: WindowTarget | None) -> WindowsResult | None:
         mutations = {
             "windows.open_app",
             "windows.focus_app",
@@ -779,7 +802,9 @@ class Runner:
             }:
                 continue
             observed = WindowsResult.model_validate_json(step.outcome.result_json or "{}")
-            if observed.target != target:
+            if target is not None and (
+                observed.target is None or observed.target.identity != target.identity
+            ):
                 # A newer active-window observation of another window expires the marks.
                 if observed.target is not None:
                     return None
@@ -808,15 +833,12 @@ class Runner:
             return self._browser_target_observed(target)
         if action.tool == "windows.click_element":
             click = ClickElement.model_validate_json(action.payload)
+            if click.mark_id is not None:
+                return False  # Marks are resolved before prepare(), never trusted as identities.
+            if click.element is None:
+                return True  # Native adapter validates coordinates against the actual window.
             click_observed = self._click_observation(click.target)
-            if click_observed is None or click.mark_id is not None:
-                return False
-            if click.element is not None:
-                return click.element in click_observed.elements
-            return (
-                click.window_rectangle is not None
-                and click.window_rectangle == click_observed.window_rectangle
-            )
+            return click_observed is not None and click.element in click_observed.elements
         if action.tool == "fs.write_file" and args.get("expected_version") is not None:
             return any(
                 step.tool == "fs.read_document"
@@ -877,8 +899,10 @@ class Runner:
                     if value.get("event_id")
                 )
             return True
-        if action.tool == "windows.focus_app" and args.get("target") is None:
-            return self._focus_observation(FocusApp.model_validate_json(action.payload)) is not None
+        if action.tool in ("windows.focus_app", "windows.type_text", "windows.send_hotkey"):
+            # Human selectors and active-window input are resolved at execution time.
+            # PID/start/handle are still checked by the native adapter for explicit targets.
+            return True
         if "target" not in args or not action.tool.startswith(("browser.", "windows.")):
             return True
         for step in reversed(self.steps[self._observation_floor :]):
@@ -902,10 +926,6 @@ class Runner:
                                 "clipboard_sha256"
                             ] == clipboard.get("clipboard_sha256")
                     return False
-                if action.tool == "windows.calculator_number":
-                    if args.get("calculator") == result.get("calculator"):
-                        return True
-                    continue
                 if args.get("editor") is None:
                     return True
                 # A named field must come from the same observation as its window.

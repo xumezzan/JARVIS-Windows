@@ -135,7 +135,7 @@ async def test_targeted_input_reaches_adapter_after_inspection(
     assert all(step.outcome.status is Status.SUCCESS for step in result.steps)
     assert backend.await_count == len(replies)
     assert backend.call_args.args[0].operation == ("click" if operation == "click" else "hotkey")
-    assert approve.await_count == int(operation in ("Enter", "Alt+F4", "click"))
+    approve.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -148,7 +148,7 @@ async def test_targeted_input_reaches_adapter_after_inspection(
         if operation == "click" or history != "changed_bounds"
     ],
 )
-async def test_unobserved_input_stops_before_approval_and_adapter(
+async def test_active_input_delegates_current_window_validation_to_native_adapter(
     windows_runner: tuple[Runner, AsyncMock, AsyncMock], operation: str, history: str
 ) -> None:
     runner, backend, approve = windows_runner
@@ -178,10 +178,11 @@ async def test_unobserved_input_stops_before_approval_and_adapter(
         name = "send_hotkey"
         args["hotkey"] = "Enter"
     runner.provider = Scripted([call("windows." + name, args)])
+    backend.return_value = WindowsResult(target=target(), performed=True)
     result = await runner.run("test", Mode.EXECUTE)
-    assert result.status == "error" and result.error == "unobserved_target"
+    assert result.status == "finished"
     assert runner.active is None
-    backend.assert_not_awaited()
+    backend.assert_awaited_once()
     approve.assert_not_awaited()
 
 
@@ -338,4 +339,59 @@ async def test_unknown_mark_does_not_reach_adapter(
     result = await runner.run("test", Mode.EXECUTE)
     assert result.error == "unobserved_target"
     backend.assert_not_awaited()
+    approve.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", [Mode.EXECUTE, Mode.SIMULATION])
+async def test_llm_receives_initial_desktop_context_only_in_execute_mode(
+    windows_runner: tuple[Runner, AsyncMock, AsyncMock], mode: Mode
+) -> None:
+    class UniversalPlanner(Scripted):
+        needs_desktop_context = True
+
+    runner, backend, approve = windows_runner
+    provider = UniversalPlanner([])
+    runner.provider = provider
+    backend.side_effect = [
+        WindowsResult(windows=[target()]),
+        WindowsResult(target=target(), window_rectangle=RECT),
+        WindowsResult(
+            text="synthetic clipboard", clipboard_sha256=clipboard_digest("synthetic clipboard")
+        ),
+    ]
+    result = await runner.run("Неизвестная заранее задача в новом приложении", mode)
+    assert result.status == ("finished" if mode is Mode.EXECUTE else "no_action")
+    first = provider.inputs[0]
+    assert first.command == "Неизвестная заранее задача в новом приложении"
+    assert first.screenshot_b64 is None
+    assert [step.tool for step in first.steps] == (
+        ["windows.get_open_windows", "windows.inspect_active_window", "windows.clipboard_get"]
+        if mode is Mode.EXECUTE
+        else []
+    )
+    assert backend.await_count == (3 if mode is Mode.EXECUTE else 0)
+    approve.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_changed_title_and_accessibility_id_do_not_expire_window_identity(
+    windows_runner: tuple[Runner, AsyncMock, AsyncMock],
+) -> None:
+    runner, backend, approve = windows_runner
+    observe(
+        runner,
+        "windows.inspect_active_window",
+        WindowsResult(target=target(), elements=[MARK], window_rectangle=RECT),
+    )
+    updated = target().model_copy(
+        update={"title": "Unsaved — renamed document", "runtime_id": [55, 66]}
+    )
+    runner.provider = Scripted(
+        [call("windows.click_element", {"target": updated.model_dump(), "mark_id": 1})]
+    )
+    backend.return_value = WindowsResult(target=updated, performed=True)
+    result = await runner.run("Продолжить работу с документом", Mode.EXECUTE)
+    assert result.status == "finished"
+    backend.assert_awaited_once()
     approve.assert_not_awaited()

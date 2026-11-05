@@ -59,10 +59,13 @@ def test_standing_policy_does_not_change_legacy_ui_settings(tmp_path: Path) -> N
     assert store.load().planner_model == "fixture"
 
 
-def service_for(path: Path, provider: Scripted) -> DesktopService:
+def service_for(path: Path, provider: Scripted, monkeypatch: pytest.MonkeyPatch) -> DesktopService:
     UiSettingsStore(path).save(UiSettings(provider="openai", planner_model="fixture"))
     CloudPolicyStore(path).save(CloudPolicy(routine_cloud_consent=True))
-    return DesktopService(AppConfig(path), lambda event: None, provider=provider)
+    # Exercise the real production provider-selection and disclosure path. Only the
+    # provider factory is synthetic; override_provider would intentionally bypass cloud.
+    monkeypatch.setattr("jarvis.desktop.service.OpenAIProvider", lambda model: provider)
+    return DesktopService(AppConfig(path), lambda event: None)
 
 
 async def finished(service: DesktopService) -> None:
@@ -90,9 +93,11 @@ def answer(identifier: str, current: bool = True, history: bool = False) -> Requ
 
 
 @pytest.mark.asyncio
-async def test_ordinary_task_uses_saved_permission_without_a_question(tmp_path: Path) -> None:
+async def test_ordinary_task_uses_saved_permission_without_a_question(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     provider = Scripted([call("system.info", {})])
-    service = service_for(tmp_path, provider)
+    service = service_for(tmp_path, provider, monkeypatch)
     try:
         assert service.start("Проверь систему", Mode.EXECUTE)
         await finished(service)
@@ -106,10 +111,10 @@ async def test_ordinary_task_uses_saved_permission_without_a_question(tmp_path: 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("allow_history", [False, True])
 async def test_serious_task_waits_and_history_is_one_task_only(
-    tmp_path: Path, allow_history: bool
+    tmp_path: Path, allow_history: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     provider = Scripted([call("system.info", {})])
-    service = service_for(tmp_path, provider)
+    service = service_for(tmp_path, provider, monkeypatch)
     try:
         assert service.start("Проверь систему", Mode.EXECUTE)
         await finished(service)
@@ -132,10 +137,10 @@ async def test_serious_task_waits_and_history_is_one_task_only(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("scenario", ["deny", "cancel", "expired", "changed", "wrong_id"])
 async def test_unaccepted_or_changed_review_never_calls_provider(
-    tmp_path: Path, scenario: str
+    tmp_path: Path, scenario: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     provider = Scripted([])
-    service = service_for(tmp_path, provider)
+    service = service_for(tmp_path, provider, monkeypatch)
     try:
         assert not service.start("Удали файлы", Mode.EXECUTE)
         pending = service.cloud_review
@@ -159,9 +164,11 @@ async def test_unaccepted_or_changed_review_never_calls_provider(
 
 
 @pytest.mark.asyncio
-async def test_long_task_pauses_before_the_fifth_provider_call(tmp_path: Path) -> None:
+async def test_long_task_pauses_before_the_fifth_provider_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     provider = Scripted([call("system.info", {}) for _ in range(5)])
-    service = service_for(tmp_path, provider)
+    service = service_for(tmp_path, provider, monkeypatch)
     try:
         assert service.start("Проверь систему", Mode.EXECUTE)
         await until_review(service)
@@ -176,9 +183,11 @@ async def test_long_task_pauses_before_the_fifth_provider_call(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_cancel_during_long_task_review_sends_no_more_context(tmp_path: Path) -> None:
+async def test_cancel_during_long_task_review_sends_no_more_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     provider = Scripted([call("system.info", {}) for _ in range(5)])
-    service = service_for(tmp_path, provider)
+    service = service_for(tmp_path, provider, monkeypatch)
     try:
         assert service.start("Проверь систему", Mode.EXECUTE)
         await until_review(service)

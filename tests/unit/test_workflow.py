@@ -356,3 +356,21 @@ def test_outcome_values_reach_the_journal_unchanged(tmp_path: Path) -> None:
     )
     step = runs.get(run.id).steps[0]  # type: ignore[union-attr]
     assert step.status == Status.TIMEOUT.value and step.may_have_effects
+
+
+def test_identical_ordinary_input_gets_an_occurrence_only_after_success(tmp_path: Path) -> None:
+    runs = store(tmp_path)
+    run = runs.start("two tab keys", Mode.EXECUTE)
+    journal = RunJournal(runs, run.id)
+    key = step_key("windows.send_hotkey", '{"hotkey":"Tab"}')
+    assert journal.input_key(key) == key
+    runs.append(run.id, issued(key=key, tool="windows.send_hotkey"))
+    assert journal.input_key(key) == key
+    assert journal.issued(key)
+    runs.complete(run.id, key, Status.SUCCESS, ErrorCode.NONE, True)
+    next_key = journal.input_key(key)
+    assert next_key != key and not journal.issued(next_key)
+    runs.append(run.id, issued(index=1, key=next_key, tool="windows.send_hotkey"))
+    restarted = RunJournal(runs, run.id)
+    assert restarted.input_key(key) == next_key
+    assert restarted.issued(next_key)

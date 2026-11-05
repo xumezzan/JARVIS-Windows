@@ -1,0 +1,14 @@
+{
+  "date": "2026-11-05",
+  "target": "/Applications/Jarvis.app",
+  "manifest_sha256": "ea503605bb5e1d416998f4577737dbfd2ace8ffe6e419c4b67764506d39ad0af",
+  "verified_assets": 22,
+  "codesign_verified": true,
+  "observed_ui_state": "READY",
+  "observed_provider": "openai",
+  "observed_model": "gpt-4o",
+  "preserved_mode": "simulation",
+  "live_openai_tested": false,
+  "native_windows_tested": false,
+  "voice_hardware_tested": false
+}

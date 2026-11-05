@@ -3,7 +3,7 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import Field, JsonValue, model_validator
+from pydantic import Field, JsonValue, field_validator, model_validator
 
 from jarvis.mail.models import Message
 from jarvis.memory.models import Entry, Hint
@@ -15,8 +15,8 @@ MAX_RESPONSE = 1048576
 
 
 class Settings(ToolModel):
-    provider: Literal["offline", "openai"] = "offline"
-    model: str = Field(default="", max_length=100)
+    provider: Literal["openai"] = "openai"
+    model: str = Field(default="gpt-4o", max_length=100)
     auto_start: bool = False
     speech_enabled: bool = False
     task_memory_enabled: bool = True
@@ -27,6 +27,12 @@ class Settings(ToolModel):
     auto_stop_on_silence: bool = False
     theme: Literal["Midnight", "Graphite"] = "Midnight"
     motion_enabled: bool = True
+
+    @field_validator("provider", mode="before")
+    @classmethod
+    def migrate_offline_provider(cls, value: object) -> object:
+        # Legacy saved profiles and clients select the universal planner after upgrade.
+        return "openai" if value == "offline" else value
 
 
 class Reply(ToolModel):

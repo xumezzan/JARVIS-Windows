@@ -12,8 +12,8 @@ from jarvis.workspace.store import JsonSettingsStore
 
 
 class UiSettings(ToolModel):
-    provider: Literal["offline", "openai"] = "offline"
-    planner_model: str = Field(default="", max_length=100)
+    provider: Literal["openai"] = "openai"
+    planner_model: str = Field(default="gpt-4o", max_length=100)
     auto_start: bool = False
     speech_enabled: bool = False
     task_memory_enabled: bool = True
@@ -25,10 +25,17 @@ class UiSettings(ToolModel):
     vosk_model_path: str = Field(default="", max_length=2000, repr=False)
     managed_browser: bool = False
 
+    @field_validator("provider", mode="before")
+    @classmethod
+    def migrate_offline_provider(cls, value: object) -> object:
+        # Legacy saved profiles and clients select the universal planner after upgrade.
+        return "openai" if value == "offline" else value
+
     @field_validator("planner_model")
     @classmethod
     def model_name(cls, value: str) -> str:
-        if value and not valid_model(value):
+        value = value or "gpt-4o"
+        if not valid_model(value):
             raise ValueError("Invalid model identifier.")
         return value
 

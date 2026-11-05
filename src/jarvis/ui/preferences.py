@@ -39,7 +39,7 @@ class HomePreferences:
         self.themes = themes
         self.name = ""
         self.theme = themes[0]
-        self.provider = "offline"
+        self.provider = "cloud"
         self._load()
 
     def _load(self) -> None:
@@ -59,13 +59,13 @@ class HomePreferences:
                 self.theme = theme
             provider = data.get("provider")
             if isinstance(provider, str) and provider in PROVIDERS:
-                self.provider = provider
+                self.provider = "cloud"
         except (OSError, ValueError, TypeError):
             # A settings file that cannot be read is a greeting without a name, never a
             # failure to start: the window matters more than the preference.
             self.name = ""
             self.theme = self.themes[0]
-            self.provider = "offline"
+            self.provider = "cloud"
 
     def remember(self, name: str, theme: str) -> None:
         self.name = unicodedata.normalize("NFKC", name).strip() if valid_name(name) else ""
@@ -73,7 +73,7 @@ class HomePreferences:
         self._save()
 
     def remember_provider(self, provider: str) -> None:
-        selected = provider if provider in PROVIDERS else "offline"
+        selected = "cloud"
         if selected != self.provider:
             self.provider = selected
             self._save()

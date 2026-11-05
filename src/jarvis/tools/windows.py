@@ -1,19 +1,20 @@
 """Portable desktop schemas with legacy windows.* names. No native imports here."""
 
+import ipaddress
 import json
+import socket
 from collections.abc import Callable
 from hashlib import sha256
 from typing import Annotated, Literal, Protocol
 from urllib.parse import quote, urlsplit, urlunsplit
 
-from pydantic import Field, StringConstraints, field_validator, model_validator
+from pydantic import AliasChoices, Field, StringConstraints, field_validator, model_validator
 
 from jarvis.permissions.interaction import requires_confirmation
 from jarvis.permissions.policies import Risk
 from jarvis.tools.base import ExecutionContext, ToolError, ToolModel, ToolSpec
 from jarvis.tools.registry import ToolRegistry
 
-LaunchAppId = Literal["notepad", "chrome", "vscode"]
 MAX_REPLY_BYTES = 2_500_000
 MAX_SCREENSHOT_JPEG_BYTES = 48 * 1024
 MAX_SCREENSHOT_BASE64 = 4 * ((MAX_SCREENSHOT_JPEG_BYTES + 2) // 3)
@@ -21,15 +22,11 @@ MAX_UIA_ELEMENTS = 96
 MAX_UIA_DEPTH = 32
 MAX_ELEMENT_NAME = 120
 MAX_UIA_OBSERVATION_BYTES = 67000
-# Any installed application: a spoken or typed name for a request, and the executable's
-# own stem for an observed window. Letters, digits, spaces and a few separators only —
-# never a path, argument, URL or shell fragment.
-AppId = Annotated[
+# Names and absolute application paths are resolved by the OS catalog, never a shell.
+AppQuery = Annotated[
     str,
     StringConstraints(
-        min_length=1,
-        max_length=100,
-        pattern=r"^[0-9A-Za-z\u0400-\u04FF][0-9A-Za-z\u0400-\u04FF ._+\-]*$",
+        strip_whitespace=True, min_length=1, max_length=1000, pattern=r"^[^\x00-\x1f\x7f]+$"
     ),
 ]
 
@@ -97,7 +94,6 @@ class WindowTarget(ToolModel):
             self.pid,
             self.process_started,
             self.executable,
-            tuple(self.runtime_id),
         )
 
 
@@ -110,22 +106,23 @@ def window_matches(target: WindowTarget, query: str) -> bool:
 
 
 class ListWindows(ToolModel):
-    app: AppId | None = Field(
+    app: AppQuery | None = Field(
         default=None,
         description=(
-            "Partial process name or window title, e.g. 'notepad', 'chrome.exe' or 'Отчёт'. "
+            "Any partial process name or window title. "
             "Use null to list all open windows. Results contain exact identities."
         ),
     )
 
 
 class OpenApp(ToolModel):
-    app: AppId = Field(
+    app: AppQuery = Field(
+        validation_alias=AliasChoices("app", "query"),
         description=(
-            "Installed application's spoken name, for example 'Блокнот' or 'Notepad'. "
+            "Any installed application's name, shortcut name or absolute application path. "
             "The host OS resolves the name and returns an observed window target. "
-            "Do not supply a path, arguments or native window identifiers."
-        )
+            "Do not supply command-line arguments or shell code."
+        ),
     )
 
 
@@ -170,6 +167,27 @@ def chrome_url(value: str) -> str:
         ):
             raise ValueError
         host = parts.hostname.encode("idna").decode("ascii").lower()
+        if "%" in host:
+            raise ValueError  # Encoded host characters have browser-specific normalization.
+        host = host.rstrip(".")
+        if host.rstrip(".") == "localhost" or host.rstrip(".").endswith(".localhost"):
+            raise ValueError
+        try:
+            address = ipaddress.ip_address(host)
+        except ValueError:
+            # Browsers also accept abbreviated/octal/hex IPv4, e.g. 127.1.
+            # inet_aton parses literals locally and never resolves a hostname.
+            try:
+                address = ipaddress.ip_address(socket.inet_aton(host))
+            except OSError:
+                address = None
+        if address is not None and (
+            address.is_loopback
+            or address.is_private
+            or address.is_link_local
+            or address.is_unspecified
+        ):
+            raise ValueError
         port = parts.port
         if port is not None and port <= 0:
             raise ValueError
@@ -193,16 +211,9 @@ def chrome_url(value: str) -> str:
         raise ToolError("network_denied") from None
 
 
-CHROME_SITE_ALIASES = {
-    "instagram": "https://www.instagram.com/",
-    "инстаграм": "https://www.instagram.com/",
-}
-
-
 def normalize_chrome_url(value: str) -> str:
-    """Resolve known aliases and use other hosts literally, including intranet names."""
+    """Normalize a literal web address; semantic destinations belong to the planner."""
     value = value.strip()
-    value = CHROME_SITE_ALIASES.get(value.casefold(), value)
     candidate = value if "://" in value else "https://" + value
     return chrome_url(candidate)
 
@@ -211,7 +222,7 @@ class FocusApp(ToolModel):
     target: WindowTarget | None = None
     handle: int | None = Field(default=None, gt=0)
     title: str | None = Field(default=None, min_length=1, max_length=1000)
-    process: AppId | None = None
+    process: AppQuery | None = None
 
     @model_validator(mode="after")
     def one_selector(self) -> "FocusApp":
@@ -231,10 +242,8 @@ class ListFields(ToolModel):
 
 class TypeText(ToolModel):
     service: Literal["windows-desktop"] = "windows-desktop"
-    action_type: Literal["fill_text_field", "fill_empty_notepad_editor", "set_editor_text"] = (
-        "fill_text_field"
-    )
-    target: WindowTarget
+    action_type: Literal["fill_text_field", "set_editor_text"] = "fill_text_field"
+    target: WindowTarget | None = None
     # The exact field, as observed in this task. Omitted only when the window has one.
     editor: EditorTarget | None = None
     text: str = Field(min_length=1, max_length=4000)
@@ -251,58 +260,8 @@ class TypeText(ToolModel):
         return value
 
     @property
-    def field(self) -> EditorTarget:
-        chosen = self.editor or self.target.editor
-        if chosen is None:
-            raise ValueError("Select an observed text field.")
-        return chosen
-
-    @model_validator(mode="after")
-    def observed_field(self) -> "TypeText":
-        if self.editor is None and self.target.editor is None:
-            raise ValueError("Select an observed text field.")
-        return self
-
-
-class CalculatorElement(ToolModel):
-    runtime_id: list[int] = Field(min_length=1, max_length=32)
-    automation_id: str = Field(min_length=1, max_length=80)
-    control_type: Literal["Button", "Text"]
-    class_name: str = Field(max_length=200)
-    name: str = Field(max_length=200)
-    visible: bool = True
-
-
-CalculatorNumber = Annotated[
-    str, StringConstraints(min_length=1, max_length=15, pattern=r"^[0-9]+$")
-]
-
-
-class CalculatorTarget(ToolModel):
-    """Observed numeric buttons and the calculator state one approved number changes."""
-
-    number: CalculatorNumber
-    pid: int = Field(gt=0)
-    process_started: float = Field(gt=0, allow_inf_nan=False)
-    executable: str = Field(min_length=1, max_length=1000)
-    buttons: list[CalculatorElement] = Field(min_length=1, max_length=10)
-    display: CalculatorElement
-    expression: CalculatorElement
-
-    @model_validator(mode="after")
-    def fixed_controls(self) -> "CalculatorTarget":
-        expected = [f"num{digit}Button" for digit in sorted(set(self.number))]
-        if [button.automation_id for button in self.buttons] != expected or any(
-            button.control_type != "Button" for button in self.buttons
-        ):
-            raise ValueError("Only the observed numeric buttons for this number are supported.")
-        for element, identifier, role in (
-            (self.display, "CalculatorResults", "Text"),
-            (self.expression, "CalculatorExpression", "Text"),
-        ):
-            if element.automation_id != identifier or element.control_type != role:
-                raise ValueError("Only observed calculator digit controls are supported.")
-        return self
+    def field(self) -> EditorTarget | None:
+        return self.editor or (self.target.editor if self.target is not None else None)
 
 
 class Rectangle(ToolModel):
@@ -357,19 +316,63 @@ class ClipboardSet(ToolModel):
 
 
 class SendHotkey(ToolModel):
-    target: WindowTarget
-    hotkey: Literal["Ctrl+C", "Ctrl+V", "Ctrl+A", "Ctrl+Z", "Enter", "Tab", "Alt+F4"]
+    target: WindowTarget | None = None
+    hotkey: str = Field(min_length=1, max_length=80)
     clipboard_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
 
-    @model_validator(mode="after")
-    def bind_paste(self) -> "SendHotkey":
-        if self.hotkey == "Ctrl+V" and self.clipboard_sha256 is None:
-            raise ValueError("Paste requires the observed clipboard digest.")
-        return self
+    @field_validator("hotkey")
+    @classmethod
+    def single_chord(cls, value: str) -> str:
+        parts = value.casefold().split("+")
+        modifiers = {
+            "ctrl",
+            "control",
+            "cmd",
+            "command",
+            "meta",
+            "super",
+            "win",
+            "alt",
+            "option",
+            "shift",
+        }
+        named = {
+            "enter",
+            "return",
+            "tab",
+            "escape",
+            "esc",
+            "backspace",
+            "delete",
+            "insert",
+            "home",
+            "end",
+            "pageup",
+            "pagedown",
+            "up",
+            "down",
+            "left",
+            "right",
+            "arrowup",
+            "arrowdown",
+            "arrowleft",
+            "arrowright",
+            "space",
+        }
+        if not 1 <= len(parts) <= 5 or any(part not in modifiers for part in parts[:-1]):
+            raise ValueError("Supply modifiers and one key, never executable key syntax.")
+        key = parts[-1]
+        if not (
+            (len(key) == 1 and key.isascii() and key.isalnum())
+            or key in named
+            or (key.startswith("f") and key[1:].isdigit() and 1 <= int(key[1:]) <= 24)
+        ):
+            raise ValueError("Unsupported key.")
+        return value
 
 
 class ClickElement(ToolModel):
-    target: WindowTarget
+    target: WindowTarget | None = None
     element: ElementTarget | None = None
     mark_id: int | None = Field(default=None, ge=1, le=MAX_UIA_ELEMENTS)
     x: int | None = None
@@ -384,8 +387,8 @@ class ClickElement(ToolModel):
                 raise ValueError("Supply an element or a mark, not both.")
             if self.x is not None or self.y is not None or self.window_rectangle is not None:
                 raise ValueError("Supply an element, a mark or coordinates.")
-        elif not coordinates or self.window_rectangle is None:
-            raise ValueError("Coordinates require an observed window rectangle.")
+        elif not coordinates:
+            raise ValueError("Supply an element, mark or both coordinates.")
         return self
 
 
@@ -412,8 +415,7 @@ class WindowsResult(ToolModel):
     inserted_text_sha256: str | None = Field(
         default=None, pattern=r"^[a-f0-9]{64}$", exclude_if=lambda value: value is None
     )
-    calculator: CalculatorTarget | None = None
-    calculator_value_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    text_verified: bool = False
 
 
 def uia_metadata_bytes(result: WindowsResult) -> int:
@@ -443,16 +445,12 @@ Operation = Literal[
     "click",
     "screenshot",
     "fields",
-    "calculator_observe",
-    "calculator_check",
-    "calculator_number",
-    "calculator_verify",
 ]
 
 
 class NativeRequest(ToolModel):
     operation: Operation
-    app: AppId | None = None
+    app: AppQuery | None = None
     url: str | None = Field(default=None, max_length=2000)
     target: WindowTarget | None = None
     editor: EditorTarget | None = None
@@ -461,7 +459,7 @@ class NativeRequest(ToolModel):
     result: WindowsResult | None = None
     handle: int | None = Field(default=None, gt=0)
     title: str | None = Field(default=None, min_length=1, max_length=1000)
-    process: AppId | None = None
+    process: AppQuery | None = None
     max_depth: int = Field(default=MAX_UIA_DEPTH, ge=1, le=MAX_UIA_DEPTH)
     hotkey: str | None = None
     clipboard_sha256: str | None = None
@@ -470,8 +468,6 @@ class NativeRequest(ToolModel):
     y: int | None = None
     window_rectangle: Rectangle | None = None
     scope: Literal["active_window", "screen"] = "active_window"
-    number: CalculatorNumber | None = None
-    calculator: CalculatorTarget | None = None
 
 
 class WindowsBackend(Protocol):
@@ -506,7 +502,7 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
             "windows.open_chrome_url",
             "Открыть любой HTTP/HTTPS-сайт в обычном Chrome, в новой вкладке текущего профиля. "
             "Без подтверждения, списка разрешённых сайтов и проверок сети Jarvis. "
-            "Поддерживает локальные адреса и intranet; использует существующие аккаунты. "
+            "Локальные/private IP и localhost запрещены; использует текущий профиль. "
             "Не читает вкладки и не проверяет загрузку страницы. "
             "После передачи сетью и перенаправлениями управляет Chrome, не Strict Sandbox.",
             # Owner's explicit policy on 2026-10-26: opening a website is automatic.
@@ -614,20 +610,25 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
         )
 
     async def type_verify(args: TypeText, result: WindowsResult, context: ExecutionContext) -> bool:
-        if (
-            result.target is None
-            or result.target.identity != args.target.identity
-            or result.text_sha256 is None
+        if result.target is None or (
+            args.target is not None and result.target.identity != args.target.identity
         ):
             return False
-        if args.overwrite or args.target.empty or args.field.content_sha256 == text_digest(""):
+        if result.text_sha256 is None:
+            # A physical paste has an execution receipt, but cannot prove document text.
+            return result.performed and result.inserted_text_sha256 == text_digest(args.text)
+        if (
+            args.overwrite
+            or (args.target is not None and args.target.empty)
+            or (args.field is not None and args.field.content_sha256 == text_digest(""))
+        ):
             if result.text_sha256 != text_digest(args.text):
                 return False
         elif result.inserted_text_sha256 != text_digest(args.text):
             return False
         checked = await backend.call(
             NativeRequest(
-                operation="verify", target=args.target, editor=args.editor, result=result
+                operation="verify", target=result.target, editor=args.editor, result=result
             ),
             context,
         )
@@ -693,7 +694,8 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
     registry.register(
         ToolSpec(
             "windows.type_text",
-            "Ввести текст в наблюдаемое поле; overwrite=true заменяет содержимое.",
+            "Ввести текст в поле или активное окно; UIA/AX, затем вставка через буфер. "
+            "overwrite=true заменяет содержимое. Проверяйте результат новым наблюдением.",
             Risk.SAFE,
             TypeText,
             WindowsResult,
@@ -751,7 +753,11 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
                     and uia_metadata_bytes(result) <= MAX_UIA_OBSERVATION_BYTES
                 )
             if isinstance(args, (SendHotkey, ClickElement)):
-                return result.performed and result.target == args.target
+                return (
+                    result.performed
+                    and result.target is not None
+                    and (args.target is None or result.target.identity == args.target.identity)
+                )
             return False
 
         registry.register(
@@ -792,15 +798,10 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
         "Заменить текст системного буфера обмена.",
     )
 
-    def hotkey_risk(args: ToolModel) -> Risk:
-        assert isinstance(args, SendHotkey)
-        # Enter may submit; Alt+F4 may discard unsaved work. No focused-control snapshot.
-        return Risk.CONFIRM if args.hotkey in ("Enter", "Alt+F4", "Ctrl+Z") else Risk.SAFE
-
     def click_risk(args: ToolModel) -> Risk:
         assert isinstance(args, ClickElement)
-        if args.element is None or not args.element.name.strip() or args.element.label_truncated:
-            return Risk.CONFIRM  # Coordinates/unnamed elements carry no action semantics.
+        if args.element is None:
+            return Risk.SAFE  # Owner authorizes ordinary coordinate and custom-control input.
         return (
             Risk.CONFIRM
             if any(
@@ -814,17 +815,16 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
         "windows.send_hotkey",
         SendHotkey,
         "hotkey",
-        Risk.CONFIRM,
-        "Активировать точное окно и отправить одну комбинацию клавиш. "
-        "Enter может отправить данные, Alt+F4 может закрыть несохранённое окно.",
-        classify_risk=hotkey_risk,
+        Risk.SAFE,
+        "Отправить комбинацию клавиш в указанное или текущее активное окно. "
+        "Комбинация содержит модификаторы и одну клавишу; текст вводится type_text.",
     )
     register_operation(
         "windows.click_element",
         ClickElement,
         "click",
-        Risk.CONFIRM,
-        "Активировать точное окно и нажать наблюдавшийся UIA-элемент "
+        Risk.SAFE,
+        "Активировать указанное или текущее окно и нажать UIA/AX-элемент "
         "по полному ElementTarget или mark_id последнего наблюдения; "
         "либо точку в наблюдавшихся границах окна; возможны внешние эффекты.",
         classify_risk=click_risk,
@@ -836,6 +836,3 @@ def register_windows(registry: ToolRegistry, backend: WindowsBackend) -> None:
         Risk.SAFE,
         "Захватить активное окно или экран: base64 JPEG до 1280×800.",
     )
-    from jarvis.tools.calculator import register_calculator
-
-    register_calculator(registry, backend)

@@ -128,12 +128,9 @@ class PermissionWorkbench(QDialog):
         self.simulation.setChecked(True)
         form.addRow("Режим", self.simulation)
         self.app_choice = QComboBox()
-        # Editable: any installed application can be named, not only these shortcuts.
         self.app_choice.setEditable(True)
         self.app_choice.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        editor = "TextEdit" if sys.platform == "darwin" else "Блокнот"
-        for title, app in ((editor, "notepad"), ("Chrome", "chrome"), ("VS Code", "code")):
-            self.app_choice.addItem(title, app)
+        self.app_choice.setPlaceholderText("Любое приложение или путь к нему")
         form.addRow("Приложение", self.app_choice)
         self.target_choice = QComboBox()
         self.target_choice.setMinimumContentsLength(20)
@@ -287,6 +284,8 @@ class PermissionWorkbench(QDialog):
                 if preset and typed == self.app_choice.itemText(self.app_choice.currentIndex())
                 else typed
             }
+            if tool == "windows.get_open_windows" and not typed:
+                arguments = {"app": None}
         elif tool in ("windows.focus_app", "windows.type_text"):
             target = self.target_choice.currentData()
             if not isinstance(target, WindowTarget):
@@ -387,7 +386,11 @@ class PermissionWorkbench(QDialog):
                         )
                     text = f"SUCCESS — обнаружено окон: {len(targets)}. Выберите точную цель."
                 elif self._result_tool == "windows.type_text":
-                    text = "SUCCESS — текст прочитан обратно и совпадает с подтверждённым."
+                    text = (
+                        "SUCCESS — текст прочитан обратно и совпадает с введённым."
+                        if data.text_sha256 is not None
+                        else "SUCCESS — вставка отправлена; содержимое окна не проверено."
+                    )
                     self.target_choice.clear()  # Empty-editor snapshot is now stale.
                 else:
                     text = "SUCCESS — выбранное окно получило фокус."

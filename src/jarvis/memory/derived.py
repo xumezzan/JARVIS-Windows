@@ -53,7 +53,7 @@ MAX_ROW = 1024
 MAX_DB_BYTES = 1048576
 
 TOOL = re.compile(r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*")
-# Mirrors `AppId` in `jarvis.tools.windows`: a spoken application name, never a path.
+# Learned labels are application names, not paths or command arguments.
 APPLICATION = re.compile(r"[0-9A-Za-zЀ-ӿ][0-9A-Za-zЀ-ӿ ._+\-]{0,99}")
 ENTITY = re.compile(r"[a-f0-9]{32}")
 WORD = re.compile(r"[^\W_]+", re.UNICODE)

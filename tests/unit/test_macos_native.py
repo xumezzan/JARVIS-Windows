@@ -1,9 +1,11 @@
 """Portable fake-AX checks; none grant OS permission or control a real desktop."""
 
 import base64
+import importlib
 import io
 import json
 import plistlib
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -21,6 +23,8 @@ from jarvis.tools.windows import (
     MAX_SCREENSHOT_JPEG_BYTES,
     NativeRequest,
     Rectangle,
+    TypeText,
+    WindowsResult,
     WindowTarget,
     clipboard_digest,
     text_digest,
@@ -125,7 +129,6 @@ def test_window_target_uses_real_process_and_cg_window_identity(desktop: NativeD
         ("pid", 43),
         ("handle", 124),
         ("process_started", 20.0),
-        ("runtime_id", [1]),
         ("executable", "/wrong"),
     ],
 )
@@ -135,6 +138,13 @@ def test_reused_window_or_process_identity_is_refused(
     changed = target().model_copy(update={field: value})
     with pytest.raises(ToolError, match="target_changed"):
         desktop.resolve_row(changed)
+
+
+def test_title_and_accessibility_rebuild_keep_the_same_native_window(
+    desktop: NativeDesktop,
+) -> None:
+    changed = target().model_copy(update={"title": "Renamed document", "runtime_id": [999]})
+    assert desktop.resolve_row(changed) == row()
 
 
 def test_missing_accessibility_opens_only_fixed_settings_url_once(
@@ -406,10 +416,10 @@ def test_app_resolution_only_uses_observed_bundle_and_refuses_ambiguity(
         Path("/System/Applications/TextEdit.app"), Path(target().executable), ("TextEdit",)
     )
     monkeypatch.setattr(desktop, "catalog", lambda: [entry])
-    assert desktop.resolve_app("notepad") == entry
+    assert desktop.resolve_app("TextEdit") == entry
     monkeypatch.setattr(desktop, "catalog", lambda: [entry, entry])
     with pytest.raises(ToolError, match="application_ambiguous"):
-        desktop.resolve_app("notepad")
+        desktop.resolve_app("TextEdit")
 
 
 @pytest.mark.parametrize(
@@ -563,10 +573,10 @@ def test_optional_editor_failure_cannot_hide_changed_window_identity(
         ("TextEdit", 1, True, True),
         ("TextEdit", 2, True, False),
         ("TextEdit", 0, True, False),
-        ("OtherEditor", 1, True, False),
+        ("OtherEditor", 1, True, True),
     ],
 )
-def test_textedit_default_editor_is_one_document_not_its_font_control(
+def test_default_editor_prefers_documents_in_any_application(
     desktop: NativeDesktop,
     monkeypatch: pytest.MonkeyPatch,
     app: str,
@@ -674,15 +684,34 @@ def test_clipboard_uses_utf8_and_has_digest(
     assert calls[0][1]["data"] == "Привет".encode()
 
 
-def test_key_mapping_is_fixed_command_modifier() -> None:
-    assert set(native.HOTKEYS) == {"Ctrl+C", "Ctrl+V", "Ctrl+A", "Ctrl+Z", "Enter", "Tab", "Alt+F4"}
-    assert all(native.HOTKEYS[key][1] for key in ("Ctrl+C", "Ctrl+V", "Ctrl+A", "Ctrl+Z"))
+@pytest.mark.parametrize(
+    "hotkey,code,modifiers",
+    [
+        ("Cmd+Shift+S", 1, {"command", "shift"}),
+        ("Ctrl+L", 37, {"command"}),
+        ("Alt+F4", 13, {"command"}),
+        ("ArrowDown", 125, set()),
+        ("Escape", 53, set()),
+        ("F12", 111, set()),
+    ],
+)
+def test_key_mapping_is_application_independent(
+    hotkey: str, code: int, modifiers: set[str]
+) -> None:
+    assert native.key_combination(hotkey) == (code, modifiers)
+
+
+@pytest.mark.parametrize("hotkey", ["", "Cmd+", "Cmd+Cmd+A", "Cmd+Unknown", "A+B", "ls -la"])
+def test_malformed_shortcuts_never_become_commands(hotkey: str) -> None:
+    with pytest.raises(ToolError):
+        native.key_combination(hotkey)
 
 
 def test_paste_rechecks_clipboard_digest_before_any_key_event(
     desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(desktop, "activate", lambda *args: None)
+    monkeypatch.setattr(desktop, "require_foreground", lambda *args: None)
     monkeypatch.setattr(desktop, "clipboard", lambda **kwargs: "changed")
     monkeypatch.setattr(
         desktop.ax,
@@ -700,13 +729,6 @@ def test_paste_rechecks_clipboard_digest_before_any_key_event(
             )
         )
     desktop.quartz.CGEventCreateKeyboardEvent.assert_not_called()
-
-
-def test_unsupported_calculator_contract_is_never_faked(desktop: NativeDesktop) -> None:
-    with pytest.raises(ToolError, match="control_unsupported"):
-        desktop.dispatch(
-            NativeRequest(operation="calculator_observe", target=target(), number="123")
-        )
 
 
 def test_screenshot_denies_before_capture_when_screen_permission_missing(
@@ -729,3 +751,229 @@ def test_full_display_capture_fails_closed_before_observing_other_apps(
     with pytest.raises(ToolError, match="control_unsupported"):
         desktop.capture("screen")
     observed.assert_not_called()
+
+
+def test_novel_app_resolves_localized_metadata_and_absolute_path(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    bundle = tmp_path / "未预见アプリ.app"
+    contents = bundle / "Contents"
+    (contents / "MacOS").mkdir(parents=True)
+    binary = contents / "MacOS/Nova Sketch"
+    binary.write_bytes(b"fixture executable")
+    (contents / "Info.plist").write_bytes(
+        plistlib.dumps({"CFBundleExecutable": "Nova Sketch", "CFBundleDisplayName": "Nova Sketch"})
+    )
+    resources = contents / "Resources"
+    resources.mkdir()
+    (resources / "InfoPlist.loctable").write_bytes(
+        plistlib.dumps({"ru": {"CFBundleDisplayName": "Новый редактор 2027"}})
+    )
+    (resources / "ko.lproj").mkdir()
+    (resources / "ko.lproj/InfoPlist.strings").write_bytes(
+        plistlib.dumps({"CFBundleName": "새 편집기"})
+    )
+    entries = NativeDesktop.catalog((tmp_path,))
+    monkeypatch.setattr(desktop, "catalog", lambda: entries)
+    for name in (str(bundle), "Новый редактор 2027", "새 편집기", "Nova Sketch"):
+        assert desktop.resolve_app(name).executable == binary
+
+
+def test_app_resolution_has_no_cross_application_alias_recipe(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry = LaunchEntry(Path("/Applications/Editor.app"), Path("/mock/editor"), ("Editor",))
+    monkeypatch.setattr(desktop, "catalog", lambda: [entry])
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    with pytest.raises(ToolError, match="application_missing"):
+        desktop.resolve_app("notepad")
+
+
+def test_executable_path_is_a_single_literal_launch_target(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    executable = tmp_path / "a strange $(name) binary"
+    executable.write_bytes(b"fixture")
+    executable.chmod(0o700)
+    assert desktop.resolve_app(str(executable)).executable == executable
+    monkeypatch.setattr(desktop, "catalog", lambda: [])
+    monkeypatch.setattr(shutil, "which", lambda name: str(executable))
+    assert desktop.resolve_app("unknown-app").executable == executable
+
+
+def test_type_without_target_uses_current_focused_window(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    editor, observed = typing_fixture(desktop, monkeypatch)
+    monkeypatch.setattr(desktop, "active", lambda: (None, observed))
+    result = desktop.dispatch(NativeRequest(operation="type", text=" inserted"))
+    assert result.target == observed
+    assert result.performed and result.text_verified
+    assert editor["AXValue"] == "old inserted"
+
+
+def test_custom_control_automatically_uses_literal_paste(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    focused = node("AXTextArea", AXValue="", settable=False)
+    monkeypatch.setattr(desktop, "active", lambda: (None, target()))
+    monkeypatch.setattr(desktop, "activate", lambda selected: None)
+    monkeypatch.setattr(desktop, "focused_input", lambda selected: focused)
+    pasted: list[tuple[TypeText, WindowTarget, Any]] = []
+
+    def paste(args: TypeText, selected: WindowTarget, field: Any) -> WindowsResult:
+        pasted.append((args, selected, field))
+        return WindowsResult(target=selected, performed=True)
+
+    monkeypatch.setattr(desktop, "paste_literal", paste)
+    result = desktop.dispatch(NativeRequest(operation="type", text="Новый текст"))
+    assert result.performed and not result.text_verified
+    assert result.text_sha256 is None
+    assert pasted[0][0].text == "Новый текст" and pasted[0][2] is focused
+    assert not desktop.ax.writes
+
+
+def test_coordinate_click_uses_active_window_without_a_tree_or_saved_rectangle(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clicks = []
+    monkeypatch.setattr(desktop, "active", lambda: (None, target()))
+    monkeypatch.setattr(desktop, "activate", lambda selected: None)
+    monkeypatch.setattr(desktop, "require_foreground", lambda selected: None)
+    monkeypatch.setattr(desktop, "check_point", lambda *args: None)
+    monkeypatch.setattr(desktop, "point_click", lambda x, y: clicks.append((x, y)))
+    result = desktop.dispatch(NativeRequest(operation="click", x=50, y=80))
+    assert result.performed and result.target == target()
+    assert clicks == [(50, 80)]
+    with pytest.raises(ToolError, match="target_changed"):
+        desktop.dispatch(NativeRequest(operation="click", x=999, y=80))
+    assert len(clicks) == 1
+
+
+def test_axpress_unsupported_automatically_clicks_observed_control_center(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    button = node("AXButton", "Unanticipated action")
+    root = node("AXWindow", AXChildren=[button])
+    observed = desktop.element_snapshot(Node(button, (123, 0), 1))
+    clicks = []
+    monkeypatch.setattr(desktop, "activate", lambda *args: root)
+    monkeypatch.setattr(desktop, "resolve", lambda *args: root)
+    monkeypatch.setattr(desktop, "require_foreground", lambda *args: None)
+    monkeypatch.setattr(desktop.ax, "AXUIElementPerformAction", lambda *args: -25204)
+    monkeypatch.setattr(desktop, "check_point", lambda *args: None)
+    monkeypatch.setattr(desktop, "point_click", lambda x, y: clicks.append((x, y)))
+    result = desktop.dispatch(NativeRequest(operation="click", target=target(), element=observed))
+    assert result.performed and clicks == [(60, 35)]
+
+
+class PasteboardItem:
+    def __init__(self, data: dict[str, bytes] | None = None) -> None:
+        self.data = data or {}
+
+    @classmethod
+    def alloc(cls) -> "PasteboardItem":
+        return cls()
+
+    def init(self) -> "PasteboardItem":
+        return self
+
+    def types(self) -> list[str]:
+        return list(self.data)
+
+    def dataForType_(self, kind: str) -> bytes | None:
+        return self.data.get(kind)
+
+    def setData_forType_(self, data: bytes, kind: str) -> bool:
+        self.data[kind] = data
+        return True
+
+
+class Pasteboard:
+    def __init__(self) -> None:
+        self.items = [PasteboardItem({"public.png": b"image", "custom/format": b"user data"})]
+        self.count = 1
+
+    def pasteboardItems(self) -> list[PasteboardItem]:
+        return self.items
+
+    def changeCount(self) -> int:
+        return self.count
+
+    def clearContents(self) -> None:
+        self.count += 1
+        self.items = []
+
+    def setString_forType_(self, text: str, kind: str) -> bool:
+        self.items = [PasteboardItem({kind: text.encode()})]
+        self.count += 1
+        return True
+
+    def writeObjects_(self, items: list[PasteboardItem]) -> bool:
+        self.items = items
+        self.count += 1
+        return True
+
+
+@pytest.mark.parametrize("readable,owner_edits", [(False, False), (True, False), (False, True)])
+def test_paste_preserves_all_clipboard_formats_and_distinguishes_attempt_from_readback(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch, readable: bool, owner_edits: bool
+) -> None:
+    pasteboard = Pasteboard()
+    desktop.appkit = SimpleNamespace(
+        NSPasteboard=SimpleNamespace(generalPasteboard=lambda: pasteboard),
+        NSPasteboardItem=PasteboardItem,
+    )
+    focused = node("AXTextArea", AXValue="old") if readable else None
+    monkeypatch.setattr(desktop, "focused_input", lambda selected: focused)
+    monkeypatch.setattr(desktop, "require_foreground", lambda selected: None)
+    keys = []
+
+    def send(hotkey: str) -> None:
+        keys.append(hotkey)
+        if hotkey == "Cmd+V" and focused is not None:
+            focused["AXValue"] = "new"
+
+    monkeypatch.setattr(desktop, "send_keys", send)
+    elapsed = [0.0]
+    monkeypatch.setattr(time, "monotonic", lambda: elapsed[0])
+
+    def pump(date: Any) -> None:
+        elapsed[0] += 0.02
+        if owner_edits:
+            pasteboard.items = [PasteboardItem({"owner/new": b"new clipboard"})]
+            pasteboard.count += 1
+
+    foundation = SimpleNamespace(
+        NSRunLoop=SimpleNamespace(currentRunLoop=lambda: SimpleNamespace(runUntilDate_=pump)),
+        NSDate=SimpleNamespace(dateWithTimeIntervalSinceNow_=lambda seconds: seconds),
+    )
+    original_import = importlib.import_module
+    monkeypatch.setattr(
+        importlib,
+        "import_module",
+        lambda name: foundation if name == "Foundation" else original_import(name),
+    )
+    result = desktop.paste_literal(TypeText(text="new", overwrite=True), target(), focused)
+    assert keys == ["Cmd+A", "Cmd+V"]
+    assert result.performed and result.text_verified is readable
+    assert result.text_sha256 == (text_digest("new") if readable else None)
+    if owner_edits:
+        assert pasteboard.items[0].data == {"owner/new": b"new clipboard"}
+    else:
+        assert pasteboard.items[0].data == {"public.png": b"image", "custom/format": b"user data"}
+
+
+def test_password_focus_refuses_physical_input_before_any_event(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(desktop, "require_foreground", lambda selected: None)
+    monkeypatch.setattr(
+        desktop.ax,
+        "AXUIElementCreateApplication",
+        lambda pid: {"AXFocusedUIElement": node("AXSecureTextField", AXValue="private")},
+        raising=False,
+    )
+    with pytest.raises(ToolError, match="control_unsupported"):
+        desktop.focused_input(target())
+    desktop.quartz.CGEventCreateKeyboardEvent.assert_not_called()

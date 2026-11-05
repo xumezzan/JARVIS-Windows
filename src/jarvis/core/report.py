@@ -209,8 +209,6 @@ DEEDS: dict[str, Callable[[dict[str, object], bool], str]] = {
     "windows.focus_app": lambda args, spoken: "переключился на " + _app(args),
     # The typed text itself is the owner's content, so the report says where, never what.
     "windows.type_text": lambda args, spoken: "напечатал текст в " + _app(args),
-    "windows.calculator_digit": lambda args, spoken: "ввёл цифру в калькулятор",
-    "windows.calculator_number": lambda args, spoken: "ввёл число в калькулятор",
     "browser.open": lambda args, spoken: "открыл в браузере " + _host(args.get("url")),
     "browser.navigate": lambda args, spoken: "перешёл на " + _host(args.get("url")),
     "browser.search": lambda args, spoken: (
@@ -264,6 +262,10 @@ def attempted_action(step: Step) -> str:
 
 
 def _sentence(step: Step, spoken: bool) -> str:
+    if step.tool == "windows.type_text" and step.outcome.status is Status.SUCCESS:
+        receipt = json.loads(step.outcome.result_json or "{}")
+        if receipt.get("text_sha256") is None and receipt.get("performed"):
+            return "Вставка отправлена в окно; содержимое нужно проверить новым наблюдением."
     if step.tool == "windows.open_chrome_url" and step.outcome.status is not Status.SUCCESS:
         if step.outcome.may_have_effects:
             return "Передача адреса Chrome не подтверждена — проверьте браузер."

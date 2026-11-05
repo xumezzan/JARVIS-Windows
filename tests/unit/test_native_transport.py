@@ -55,6 +55,37 @@ async def test_same_protocol_selects_only_the_host_worker(
     assert launches[0] == (sys.executable, "-I", "-m", worker)
 
 
+@pytest.mark.asyncio
+async def test_active_window_typing_preview_accepts_native_resolved_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An omitted target is resolved inside the helper, including the visual preview."""
+    rectangle = Rectangle(left=10, top=20, right=500, bottom=400)
+    preview = transport.TargetPreview(
+        event="target", rectangle=rectangle, window_handle=42, action="type"
+    )
+    process = AsyncMock()
+    process.returncode = 0
+    process.stdout.readuntil.side_effect = [
+        preview.model_dump_json().encode() + b"\n",
+        transport.NativeReply(result=WindowsResult(performed=True)).model_dump_json().encode()
+        + b"\n",
+    ]
+    process.stdin = SimpleNamespace(write=lambda data: None, drain=AsyncMock(), close=lambda: None)
+    launch = AsyncMock(return_value=process)
+    callback = AsyncMock()
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", launch)
+    monkeypatch.setattr(
+        transport, "sys", SimpleNamespace(platform="win32", executable=sys.executable)
+    )
+    backend = transport.ProcessBackend(before_action=callback)
+    result = await backend.call(
+        NativeRequest(operation="type", text="new"), ExecutionContext(Event())
+    )
+    assert result.performed
+    assert callback.call_args.args[0].window_handle == 42
+
+
 def test_other_hosts_cannot_select_a_worker(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(transport, "sys", SimpleNamespace(platform="linux"))
     with pytest.raises(ToolError, match="unsupported_platform"):

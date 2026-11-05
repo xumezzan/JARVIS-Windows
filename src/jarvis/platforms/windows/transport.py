@@ -130,9 +130,8 @@ class ProcessBackend:
                         raise ToolError("native_failure")
                     if target.rectangle != expected or (
                         target.window_handle
-                        and (
-                            request.target is None or target.window_handle != request.target.handle
-                        )
+                        and request.target is not None
+                        and target.window_handle != request.target.handle
                     ):
                         raise ToolError("target_changed")
                     if self.before_action is not None:
@@ -141,7 +140,7 @@ class ProcessBackend:
                                 rectangle=target.rectangle,
                                 action="type" if request.operation == "type" else "click",
                                 label=target.label,
-                                window_handle=request.target.handle if request.target else 0,
+                                window_handle=target.window_handle,
                             )
                         )
                     elif self.before_click is not None:

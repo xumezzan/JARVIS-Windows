@@ -95,9 +95,7 @@ async def test_two_thirty_step_tasks_commit_only_metadata_before_adapter(tmp_pat
             )
             previous = [json.loads(row[0]) for row in rows[1:]]
             assert previous[0]["request_id"] == latest["request_id"]
-            assert previous[0]["event"] == (
-                "approved" if request.operation == "hotkey" else "prepared"
-            )
+            assert previous[0]["event"] == "prepared"
             adapter_calls += 1
             match request.operation:
                 case "inspect":
@@ -152,7 +150,7 @@ async def test_two_thirty_step_tasks_commit_only_metadata_before_adapter(tmp_pat
     with closing(sqlite3.connect(path)) as reader:
         serialized = [row[0] for row in reader.execute("SELECT record FROM events ORDER BY id")]
         assert reader.execute("PRAGMA integrity_check").fetchone() == ("ok",)
-    assert len(serialized) == 194  # 60 * (prepared/started/finished) + 14 approvals
+    assert len(serialized) == 180  # 60 SAFE actions: prepared/started/finished
     lifecycles: dict[str, list[str]] = defaultdict(list)
     for row in serialized:
         event = json.loads(row)

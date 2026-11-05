@@ -48,7 +48,7 @@ def test_som_schemas_reject_oversized_names_marks_and_element_lists() -> None:
         ClickElement(target=target(), element=element, mark_id=1)
 
 
-def test_inspection_truncates_labels_without_downgrading_risk(
+def test_inspection_truncation_preserves_exact_hash_for_native_revalidation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     desktop = adapter()
@@ -76,7 +76,7 @@ def test_inspection_truncates_labels_without_downgrading_risk(
     normalized = tool.normalize(
         {"target": target().model_dump(), "element": result.elements[0].model_dump()}
     )
-    assert tool.classify_risk(normalized) is Risk.CONFIRM
+    assert tool.classify_risk(normalized) is Risk.SAFE
 
 
 def test_inspection_bounds_long_unicode_metadata_not_only_element_count(

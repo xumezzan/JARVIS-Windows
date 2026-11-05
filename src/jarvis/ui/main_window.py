@@ -494,7 +494,7 @@ class MainWindow(QMainWindow):
         pickers.addWidget(self.run_mode, 1)
         self.provider_mode = QComboBox()
         self.provider_mode.addItems(
-            ["Офлайн: учебные команды", "Облако: DeepSeek, сложные задачи — OpenAI"]
+            ["Выберите обработку команд", "OpenAI — универсальный оператор ПК"]
         )
         self.provider_mode.setCurrentIndex(1 if self.preferences.provider == "cloud" else 0)
         self.provider_mode.setAccessibleName("Планировщик команд")
@@ -948,7 +948,7 @@ class MainWindow(QMainWindow):
         if planner.cloud_consent.isChecked() and planner.model.text().strip():
             return True
         dialog = QDialog(self)
-        dialog.setWindowTitle("Отправка команды в DeepSeek и OpenAI")
+        dialog.setWindowTitle("Отправка команды в OpenAI")
         dialog.setWindowModality(Qt.WindowModality.WindowModal)
         # Wide enough that the consent line is never cut off mid-sentence.
         dialog.setMinimumWidth(760)
@@ -962,29 +962,24 @@ class MainWindow(QMainWindow):
         )
         body.addWidget(
             label(
-                "Обычные задачи ведёт DeepSeek — его модель берётся из настроек. "
-                "Ниже укажите модель OpenAI: на неё планировщик переходит, когда задача "
-                "оказывается многослойной, поэтому идентификатор нужен заранее."
+                "Задачу выполняет универсальный планировщик OpenAI. "
+                "Модель по умолчанию — gpt-4o; ниже можно указать другую доступную модель."
             )
         )
         model = QPlainTextEdit(planner.model.text() or self.config.planner_model)
-        model.setPlaceholderText("например, gpt-5.4-mini")
+        model.setPlaceholderText("например, gpt-4o")
         model.setFixedHeight(46)
         body.addWidget(model)
         body.addWidget(
             label(
-                "Ключи вводите сами в терминале, по одному на поставщика: "
-                + setup_command("deepseek")
-                + "  и  "
+                "Ключ OpenAI вводите сами в терминале: "
                 + setup_command("openai")
                 + ". Они хранятся в системном хранилище учётных данных и не попадают "
                 "в команду или журнал."
             )
         )
         # Short enough to be read whole at this width; who takes over when is said above.
-        consent = QCheckBox(
-            "Разрешаю отправлять команду, уточнения и результаты в DeepSeek и OpenAI"
-        )
+        consent = QCheckBox("Разрешаю отправлять команду, уточнения и результаты в OpenAI")
         body.addWidget(consent)
         hint = label("")
         body.addWidget(hint)
@@ -1004,7 +999,7 @@ class MainWindow(QMainWindow):
             ready = valid_model(typed) and consent.isChecked()
             confirm.setEnabled(ready)
             if not typed:
-                hint.setText("Укажите модель OpenAI — например, gpt-5.4-mini.")
+                hint.setText("Укажите модель OpenAI — например, gpt-4o.")
             elif not valid_model(typed):
                 hint.setText("Идентификатор пишется без пробелов: gpt-5.4-mini, не gpt 5.4 mini.")
             elif not consent.isChecked():

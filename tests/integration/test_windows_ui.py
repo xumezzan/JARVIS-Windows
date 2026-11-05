@@ -14,6 +14,7 @@ from jarvis.observability.audit import ErrorCode
 from jarvis.observability.diagnostics import Reason, failure_message
 from jarvis.permissions.engine import Outcome
 from jarvis.permissions.policies import Status
+from jarvis.tools.windows import WindowsResult
 from jarvis.ui.permission_workbench import PermissionWorkbench
 
 
@@ -62,6 +63,25 @@ def test_typing_without_observed_target_does_not_prepare(qtbot: QtBot, tmp_path:
         window.close()
 
 
+def test_physical_paste_receipt_does_not_claim_readback(qtbot: QtBot, tmp_path: Path) -> None:
+    window = PermissionWorkbench(tmp_path, windows_backend=WindowsProbe())
+    qtbot.addWidget(window)
+    try:
+        window._result_tool = "windows.type_text"
+        window._show_outcome(
+            Outcome(
+                uuid4(),
+                Status.SUCCESS,
+                result_json=WindowsResult(performed=True, text_verified=False).model_dump_json(),
+            )
+        )
+        assert "не проверено" in window.status_label.text()
+        assert "прочитан обратно" not in window.status_label.text()
+    finally:
+        window.shutdown()
+        window.close()
+
+
 @pytest.mark.parametrize(
     "platform,supported", [("win32", True), ("darwin", True), ("linux", False)]
 )
@@ -76,8 +96,8 @@ def test_desktop_platform_support_and_existing_tool_names(
         assert ("только симуляция инструментов рабочего стола" in labels) is not supported
         assert window.tool_choice.findData("windows.get_open_windows") >= 0
         assert window.tool_choice.findData("windows.type_text") >= 0
-        if platform == "darwin":
-            assert window.app_choice.itemText(window.app_choice.findData("notepad")) == "TextEdit"
+        assert window.app_choice.isEditable()
+        assert window.app_choice.count() == 0  # No built-in application-name recipes.
     finally:
         window.shutdown()
         window.close()

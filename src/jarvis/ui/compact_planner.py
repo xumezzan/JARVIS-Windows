@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
 from jarvis.browser.host import BrowserHost
 from jarvis.config import AppConfig
 from jarvis.core.planner.contracts import Limits, Provider, Step
-from jarvis.core.planner.offline import OfflineProvider
 from jarvis.core.planner.openai_provider import OpenAIProvider
 from jarvis.mail.session import MailSession
 from jarvis.mcp.bridge import register_workspace_mcp
@@ -79,7 +78,6 @@ class PlannerWindow(QDialog):
         self.limits = limits or Limits()
         self.host = browser_host or BrowserHost.from_config(config)
         self.registry, self.outbox = local_tools if local_tools is not None else local_registry()
-        self.offline_commands_label = "локальные" if local_tools is not None else "учебные"
         register_browser(self.registry, self.host, self.host.policy, workspace=self.host.workspace)
         register_windows(self.registry, windows_backend or ProcessBackend())
         register_filesystem(self.registry, config.filesystem_policy)
@@ -132,7 +130,7 @@ class PlannerWindow(QDialog):
         self.command.setMinimumHeight(96)
         self.command.setMaximumHeight(120)
         self.command.setPlaceholderText(
-            "Например: проверь систему дважды\nИли: открой блокнот и напиши «Привет»"
+            "Опишите задачу своими словами и укажите желаемый результат"
         )
         layout.addWidget(self.command)
         self.voice = voice_panel or VoicePanel()
@@ -161,12 +159,12 @@ class PlannerWindow(QDialog):
         self.provider_choice = QComboBox()
         self.provider_choice.setAccessibleName("Обработка команд")
         self.provider_choice.addItems(
-            [f"Офлайн — {self.offline_commands_label} команды", "OpenAI — облачная модель"]
+            ["Выберите обработку команд", "OpenAI — универсальный оператор ПК"]
         )
+        self.provider_choice.setCurrentIndex(1)
         provider_form.addRow("Провайдер", self.provider_choice)
         settings_layout.addLayout(provider_form)
         provider_note = note(
-            f"Офлайн распознаёт {self.offline_commands_label} команды без облачной модели. "
             "OpenAI получает команду, "
             "уточнения и результаты инструментов после вашего согласия на вкладке «Задача»."
         )
@@ -178,7 +176,7 @@ class PlannerWindow(QDialog):
         model_layout.setSpacing(8)
         model_form = QFormLayout()
         model_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        self.model = QLineEdit(config.planner_model)
+        self.model = QLineEdit(config.planner_model or "gpt-4o")
         self.model.setAccessibleName("Идентификатор модели OpenAI Responses API")
         self.model.setPlaceholderText("Идентификатор доступной вам модели Responses API")
         self.model.setMaxLength(100)
@@ -288,9 +286,7 @@ class PlannerWindow(QDialog):
             model = self.model.text().strip() or "модель не выбрана"
             self.provider_summary.setText("OpenAI · " + model)
         else:
-            self.provider_summary.setText(
-                f"Офлайн · {self.offline_commands_label} команды без облачной модели"
-            )
+            self.provider_summary.setText("Выберите OpenAI для выполнения задачи")
 
     def _mail_busy(self, value: bool) -> None:
         self._mail_active = value
@@ -360,20 +356,17 @@ class PlannerWindow(QDialog):
             return
         provider = self.override_provider
         if provider is None:
-            if self.provider_choice.currentIndex() == 1:
-                if not self.cloud_consent.isChecked():
-                    self.status.setText(
-                        "Для OpenAI нужно разрешить передачу команды, наблюдений "
-                        "и прочитанного текста файлов."
-                    )
-                    return
-                try:
-                    provider = OpenAIProvider(self.model.text())
-                except ValueError:
-                    self.status.setText("Укажите идентификатор модели Responses API.")
-                    return
-            else:
-                provider = OfflineProvider()
+            if not self.cloud_consent.isChecked():
+                self.status.setText(
+                    "Для OpenAI нужно разрешить передачу команды, наблюдений "
+                    "и прочитанного текста файлов."
+                )
+                return
+            try:
+                provider = OpenAIProvider(self.model.text().strip() or "gpt-4o")
+            except ValueError:
+                self.status.setText("Укажите идентификатор модели Responses API.")
+                return
         self.output.clear()
         self.voice.was_cancelled = False
         self._busy(True)

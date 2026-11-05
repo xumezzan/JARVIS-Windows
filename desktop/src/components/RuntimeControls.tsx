@@ -156,7 +156,7 @@ export function VoiceSettingsPanel({
   const busy = !state.can_run || savingSettings;
   async function configure(patch: Partial<VoiceSettings>) {
     // Render acknowledged Python settings. A rejected write must never leave
-    // an optimistic OpenAI selection while the runner still uses offline.
+    // an optimistic selection while the runner still uses previous settings.
     if (savingSettingsRef.current || !state.can_run) return;
     savingSettingsRef.current = true;
     setSavingSettings(true);
@@ -187,7 +187,6 @@ export function VoiceSettingsPanel({
           })
         }
       >
-        <option value="offline">Офлайн</option>
         <option value="openai">OpenAI</option>
       </select>
       {settings.provider === "openai" && (
@@ -550,7 +549,7 @@ export function MemoryPanel({
         onChange={(e) => setLabel(e.target.value)}
       />
       <label htmlFor="memory-value">
-        Значение {kind === "application" && "(notepad, chrome или vscode)"}
+        Значение {kind === "application" && "(название установленного приложения)"}
       </label>
       <input
         id="memory-value"

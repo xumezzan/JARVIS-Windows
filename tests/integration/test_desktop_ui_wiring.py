@@ -63,7 +63,7 @@ async def test_failed_settings_write_does_not_change_acknowledged_snapshot(
         monkeypatch.setattr(service.ui_store, "save", fail)
         await service.handle(request("configure", settings={"provider": "openai"}))
         assert events[-2]["error"] == "workspace_storage"
-        assert service.snapshot()["provider"] == "offline"
+        assert service.snapshot()["provider"] == "openai"
         assert service.ui_store.path.read_bytes() == before
     finally:
         await service.shutdown()
@@ -108,7 +108,7 @@ async def test_openai_without_model_returns_specific_error_without_offline_run(
     events: list[dict[str, object]] = []
     service = DesktopService(AppConfig(tmp_path), events.append)
     try:
-        await service.handle(request("configure", settings={"provider": "openai"}))
+        await service.handle(request("configure", settings={"model": ""}))
         await service.handle(request("run", command="unfamiliar fixture", cloud_consent=True))
         assert events[-2]["error"] == "planner_model_required"
         assert service.worker is None and service.prompt is None and service.started_count == 0

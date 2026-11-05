@@ -21,7 +21,7 @@ def make_window(
 ) -> PlannerWindow | CompactPlannerWindow:
     panel = VoicePanel(recorder=fixture, recognizer=fixture, speaker=fixture)
     window = (CompactPlannerWindow if compact else PlannerWindow)(
-        AppConfig(tmp_path), voice_panel=panel
+        AppConfig(tmp_path), voice_panel=panel, provider=Scripted([call("local.check", {})])
     )
     qtbot.addWidget(window)
     window.show()

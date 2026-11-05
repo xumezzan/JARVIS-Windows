@@ -4,19 +4,25 @@ from pathlib import Path
 
 import pytest
 from pytestqt.qtbot import QtBot
+from tests.unit.test_planner import Scripted
 from tests.windows_support import WindowsProbe
 
 from jarvis.config import AppConfig
+from jarvis.core.planner.offline import call
 from jarvis.ui.planner_window import PlannerWindow
 
 
 @pytest.mark.e2e
-def test_chrome_search_recipe_simulates_without_approval(
+def test_scripted_browser_search_simulates_without_approval(
     qtbot: QtBot,
     tmp_path: Path,
 ) -> None:
     probe = WindowsProbe()
-    window = PlannerWindow(AppConfig(tmp_path), windows_backend=probe)
+    window = PlannerWindow(
+        AppConfig(tmp_path),
+        windows_backend=probe,
+        provider=Scripted([call("browser.search", {"query": "OpenAI"})]),
+    )
     qtbot.addWidget(window)
     window.show()
     try:

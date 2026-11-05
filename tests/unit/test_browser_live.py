@@ -211,15 +211,10 @@ async def test_live_simulation_never_connects_and_js_buttons_need_approval(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_search_recipe_uses_one_configured_browser() -> None:
-    proposal = await OfflineProvider().propose(
-        PlannerInput(
-            command="открой chrome и найди OpenAI",
-            answers=(),
-            steps=(),
-            mode=Mode.EXECUTE,
-            catalog_json="[]",
+async def test_browser_search_command_has_no_offline_recipe() -> None:
+    from jarvis.core.planner.contracts import ProviderError
+
+    with pytest.raises(ProviderError, match="provider_unavailable"):
+        await OfflineProvider().propose(
+            PlannerInput("открой браузер и найди произвольную тему", (), (), Mode.EXECUTE, "[]")
         )
-    )
-    assert proposal.tool == "browser.search"
-    assert json.loads(proposal.arguments) == {"query": "OpenAI"}

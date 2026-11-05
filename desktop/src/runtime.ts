@@ -1,5 +1,5 @@
 export type VoiceSettings = {
-  provider: "offline" | "openai";
+  provider: "openai";
   model: string;
   auto_start: boolean;
   speech_enabled: boolean;
@@ -101,7 +101,7 @@ export type RuntimeState = {
   started_count: number;
   completed_count: number;
   platform: string;
-  provider: "offline" | "openai";
+  provider: "openai";
   model: string;
   task: {
     id: string;
