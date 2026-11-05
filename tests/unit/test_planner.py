@@ -4,14 +4,13 @@ import asyncio
 import json
 from collections.abc import Iterator
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
 from jarvis.core.planner.contracts import (
-    Answer,
     Limits,
     PlannerInput,
     Proposal,
@@ -235,23 +234,11 @@ MESSAGE = {"recipient": "test", "body": "PRIVATE_COMMAND_SENTINEL"}
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", [Mode.SIMULATION, Mode.EXECUTE])
 @pytest.mark.parametrize(
-    "command,tool,arguments",
-    [
-        ("найди файл отчёт.txt", "files.find", {"query": "отчёт.txt"}),
-        ("НАЙДИ ФАЙЛ   план   встречи.md", "files.find", {"query": "план встречи.md"}),
-        ("найди OpenAI", "browser.search", {"query": "OpenAI"}),
-        ("найди форматы файлов", "browser.search", {"query": "форматы файлов"}),
-    ],
+    "command", ["найди файл отчёт.txt", "открой Unknown App", "непредсказуемая задача"]
 )
-async def test_offline_file_search_stays_local_and_web_search_keeps_its_route(
-    mode: Mode, command: str, tool: str, arguments: dict[str, str]
-) -> None:
-    provider = OfflineProvider()
-    proposal = await provider.propose(PlannerInput(command, (), (), mode, "[]"))
-    assert proposal.kind == "call" and proposal.tool == tool
-    assert json.loads(proposal.arguments) == arguments
-    step = Step(tool, Outcome(uuid4(), Status.SUCCESS))
-    assert (await provider.propose(PlannerInput(command, (), (step,), mode, "[]"))).kind == "finish"
+async def test_offline_provider_never_interprets_user_tasks(mode: Mode, command: str) -> None:
+    with pytest.raises(ProviderError, match="provider_unavailable"):
+        await OfflineProvider().propose(PlannerInput(command, (), (), mode, "[]"))
 
 
 @pytest.mark.asyncio
@@ -349,7 +336,10 @@ async def test_step_limit_stops_before_extra_effect(harness: Harness) -> None:
 
 @pytest.mark.asyncio
 async def test_clarification_resumes_same_task(harness: Harness) -> None:
-    result = await harness.runner(OfflineProvider()).run("сделай что-нибудь", Mode.EXECUTE)
+    provider = Scripted(
+        [Proposal(kind="clarify", question="Что проверить?"), call("local.check", {})]
+    )
+    result = await harness.runner(provider).run("сделай что-нибудь", Mode.EXECUTE)
     assert result.status == "finished" and result.steps[0].tool == "local.check"
 
 
@@ -422,28 +412,18 @@ async def test_failed_verifier_stops_plan(
 
 @pytest.mark.asyncio
 async def test_runner_is_single_use(harness: Harness) -> None:
-    runner = harness.runner(OfflineProvider())
+    runner = harness.runner(Scripted([call("local.check", {}), call("local.check", {})]))
     assert (await runner.run("проверь систему дважды")).status == "simulated"
     assert (await runner.run("проверь систему дважды")).status == "error"
 
 
 @pytest.mark.asyncio
-async def test_offline_clarification_reobserves_notepad_without_a_selected_editor() -> None:
-    provider = OfflineProvider()
-    command = "открой блокнот и напиши «text»"
-    initial = PlannerInput(command, (), (), Mode.EXECUTE, "[]")
-    assert (await provider.propose(initial)).tool == "windows.open_app"
-    step = Step(
-        "windows.open_app",
-        Outcome(uuid4(), Status.SUCCESS, result_json=json.dumps({"target": {"empty": False}})),
-    )
-    assert (
-        await provider.propose(PlannerInput(command, (), (step,), Mode.EXECUTE, "[]"))
-    ).kind == "clarify"
-    answer = PlannerInput(
-        command, (Answer("какое приложение?", command),), (step,), Mode.EXECUTE, "[]"
-    )
-    assert (await provider.propose(answer)).tool == "windows.open_app"
+async def test_offline_diagnostic_script_is_explicit_and_independent_of_the_command() -> None:
+    provider = OfflineProvider(demo_actions=(call("local.check", {}),))
+    initial = PlannerInput("unrelated words", (), (), Mode.EXECUTE, "[]")
+    assert (await provider.propose(initial)).tool == "local.check"
+    step = Step("local.check", Outcome(uuid4(), Status.SUCCESS))
+    assert (await provider.propose(replace(initial, steps=(step,)))).kind == "finish"
 
 
 @pytest.mark.asyncio

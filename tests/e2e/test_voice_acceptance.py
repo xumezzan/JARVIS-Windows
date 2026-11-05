@@ -6,8 +6,10 @@ from pathlib import Path
 
 import pytest
 from pytestqt.qtbot import QtBot
+from tests.unit.test_planner import Scripted
 
 from jarvis.config import AppConfig
+from jarvis.core.planner.offline import call
 from jarvis.ui.planner_window import PlannerWindow
 
 
@@ -16,7 +18,9 @@ def test_russian_voice_review_simulation_and_speech(qtbot: QtBot, tmp_path: Path
     assert os.environ.get("QT_QPA_PLATFORM") in {"windows", "cocoa"}, "Use a native Qt desktop."
     model = Path(os.environ.get("JARVIS_VOSK_MODEL", ""))
     assert (model / "am" / "final.mdl").is_file(), "Set JARVIS_VOSK_MODEL to a local Russian model."
-    window = PlannerWindow(AppConfig(tmp_path))
+    window = PlannerWindow(
+        AppConfig(tmp_path), provider=Scripted([call("local.check", {}), call("local.check", {})])
+    )
     qtbot.addWidget(window)
     window.voice.model_path.setText(str(model))
     window.voice.speech_enabled.setChecked(True)

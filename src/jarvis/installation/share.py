@@ -86,8 +86,8 @@ CAPABILITIES = (
 # an unperformed scenario green. The installer never accepts manual pass assertions.
 SCENARIOS = (
     ("Запуск Jarvis из меню Пуск", "start_menu"),
-    ("Windows: открыть Notepad, Chrome и VS Code; список и фокус окон", "windows_tools"),
-    ("Windows: ввод в пустой Notepad после Approve и точное чтение обратно", "windows_tools"),
+    ("Windows: запуск произвольного приложения; список и фокус окон", "windows_tools"),
+    ("Windows: ввод в выбранное окно и проверка результата", "windows_tools"),
     ("Браузер: вкладки, переход, чтение, ввод и GET-формы через PermissionEngine", "public_search"),
     ("Поиск: фактические публичные результаты", "public_search"),
     ("Память: выбор метки на задачу и отдельное согласие на облачный контекст", "live_model"),
@@ -441,7 +441,7 @@ def render_report(root: Path, application_root: Path, run_id: str) -> tuple[str,
     document.paragraph(
         "При ошибке сохраните этот документ и исправьте указанный шаг. Повторная установка "
         "создаёт новый отчёт. Для полной приёмки нужен настоящий Windows-сценарий: "
-        "запуск из Пуск → браузер и поиск → пустой Notepad с Approve → память → речь → "
+        "запуск из Пуск → браузер и поиск → ввод в выбранное приложение → память → речь → "
         "Outlook → выбранная облачная модель. Результаты живых проверок этот автоматический "
         "документ не подменяет."
     )

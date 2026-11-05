@@ -91,9 +91,9 @@ def test_schemas_accept_arbitrary_app_and_bound_nonempty_editor() -> None:
             "editor": observed.editor.model_copy(update={"content_sha256": text_digest("old")}),
         }
     )
-    assert TypeText(target=observed, text="new").target.app == "excel"
-    with pytest.raises(ValidationError):
-        TypeText(target=observed.model_copy(update={"editor": None}), text="new")
+    typed = TypeText(target=observed, text="new")
+    assert typed.target is not None and typed.target.app == "excel"
+    assert TypeText(target=observed.model_copy(update={"editor": None}), text="new").field is None
 
 
 @pytest.mark.parametrize("values", [{}, {"handle": 100, "title": "Excel"}, {"title": " "}])
@@ -102,13 +102,11 @@ def test_focus_rejects_missing_ambiguous_selector(values: dict[str, Any]) -> Non
         FocusApp(**values)
 
 
-def test_paste_requires_content_binding_and_hotkeys_are_not_scripts() -> None:
+def test_active_clipboard_and_coordinates_work_without_old_optional_bindings() -> None:
+    assert SendHotkey(target=target(), hotkey="Ctrl+V").clipboard_sha256 is None
     with pytest.raises(ValidationError):
-        SendHotkey(target=target(), hotkey="Ctrl+V")
-    with pytest.raises(ValidationError):
-        SendHotkey(target=target(), hotkey="^a{ENTER}")  # type: ignore[arg-type]
-    with pytest.raises(ValidationError):
-        ClickElement(target=target(), x=10, y=20)
+        SendHotkey(target=target(), hotkey="^a{ENTER}")
+    assert ClickElement(target=target(), x=10, y=20).window_rectangle is None
 
 
 @pytest.mark.asyncio
@@ -147,8 +145,8 @@ async def test_screenshot_engine_handoff_excludes_image_from_text_result(
         ("inspect_active_window", {}, Risk.SAFE),
         ("clipboard_get", {}, Risk.SAFE),
         ("clipboard_set", {"text": "PRIVATE_CLIPBOARD"}, Risk.SAFE),
-        ("send_hotkey", {"target": target().model_dump(), "hotkey": "Enter"}, Risk.CONFIRM),
-        ("send_hotkey", {"target": target().model_dump(), "hotkey": "Ctrl+Z"}, Risk.CONFIRM),
+        ("send_hotkey", {"target": target().model_dump(), "hotkey": "Enter"}, Risk.SAFE),
+        ("send_hotkey", {"target": target().model_dump(), "hotkey": "Ctrl+Z"}, Risk.SAFE),
         (
             "click_element",
             {"target": target().model_dump(), "element": ELEMENT.model_dump()},
@@ -176,7 +174,7 @@ async def test_new_tools_simulate_without_native_hooks(
         assert "PRIVATE_CLIPBOARD" not in "".join(audit.recent())
 
 
-def test_listing_includes_other_apps_and_omits_shell_and_untitled(
+def test_listing_includes_untitled_custom_apps_and_omits_shell_surfaces(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     desktop = adapter()
@@ -187,7 +185,7 @@ def test_listing_includes_other_apps_and_omits_shell_and_untitled(
     desktop.desktop.windows.return_value = [shell, untitled, excel]
     other = target().model_copy(update={"app": "excel", "title": "Budget — Excel"})
     monkeypatch.setattr(desktop, "snapshot", lambda window, **kwargs: other)
-    assert desktop.windows() == [other]
+    assert desktop.windows() == [other, other]
     assert desktop.windows("chrome") == []
 
 
@@ -442,7 +440,7 @@ async def test_pipe_transports_image_larger_than_old_60kb_limit(
     assert result.image_base64 == "A" * 200000
 
 
-def test_planner_requires_observed_element_and_latest_clipboard(
+def test_planner_keeps_element_provenance_and_leaves_clipboard_binding_to_native(
     tmp_path: Path,
 ) -> None:
     registry = ToolRegistry()
@@ -478,7 +476,7 @@ def test_planner_requires_observed_element_and_latest_clipboard(
             },
             Mode.EXECUTE,
         )
-        assert isinstance(paste, Action) and not runner._observed_target(paste)
+        assert isinstance(paste, Action) and runner._observed_target(paste)
         for text in ("one", "two"):
             result = WindowsResult(text=text, clipboard_sha256=clipboard_digest(text))
             runner.steps.append(
@@ -487,7 +485,8 @@ def test_planner_requires_observed_element_and_latest_clipboard(
                     Outcome(outcome.request_id, Status.SUCCESS, result_json=canonical(result)),
                 )
             )
-            assert runner._observed_target(paste) == (text == "one")
+            # A supplied digest is checked against the actual clipboard by the adapter.
+            assert runner._observed_target(paste)
 
 
 def test_clipboard_ownership_readback_and_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:

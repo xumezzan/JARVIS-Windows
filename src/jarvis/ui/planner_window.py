@@ -25,8 +25,6 @@ from jarvis.core.composition import MCP_FILE, build
 from jarvis.core.context.assembly import assemble
 from jarvis.core.meeting import Briefer
 from jarvis.core.planner.contracts import Limits, PlanResult, Provider, Step
-from jarvis.core.planner.deepseek_provider import DeepSeekProvider
-from jarvis.core.planner.offline import OfflineProvider
 from jarvis.core.planner.openai_provider import OpenAIProvider
 from jarvis.core.planner.resume import restore
 from jarvis.core.planner.routing import EscalatingRouter
@@ -164,8 +162,8 @@ class PlannerWindow(QDialog):
         self.provider_choice = QComboBox()
         self.provider_choice.addItems(
             [
-                "Офлайн: учебные команды, без LLM",
-                "Облако: DeepSeek, сложные задачи — OpenAI",
+                "Выберите обработку команд",
+                "OpenAI — универсальный оператор ПК",
             ]
         )
         self.provider_choice.setCurrentIndex(1 if self.preferences.provider == "cloud" else 0)
@@ -174,15 +172,13 @@ class PlannerWindow(QDialog):
         cloud = QVBoxLayout(self.cloud_box)
         # An answer given once holds; a setting from the environment still outranks it.
         self.cloud_memory = CloudConsent(config.data_dir / "cloud-consent.json")
-        self.model = QLineEdit(config.planner_model or self.cloud_memory.model)
-        self.model.setPlaceholderText("Модель OpenAI для сложных задач, например gpt-5.4-mini")
+        self.model = QLineEdit(config.planner_model or self.cloud_memory.model or "gpt-4o")
+        self.model.setPlaceholderText("Модель OpenAI, например gpt-4o")
         self.model.setMaxLength(100)
         cloud.addWidget(self.model)
         cloud.addWidget(
             note(
-                "Ключи (в терминале, по одному на поставщика): "
-                + setup_command("deepseek")
-                + "  и  "
+                "Ключ OpenAI (в терминале): "
                 + setup_command("openai")
                 + ". Они хранятся в Windows Credential Locker / macOS Keychain. "
                 "Не вставляйте ключ в команду."
@@ -190,8 +186,7 @@ class PlannerWindow(QDialog):
         )
         self.cloud_consent = QCheckBox(
             "Разрешаю отправить команду, уточнения, результаты инструментов и профиль "
-            "рабочего пространства в DeepSeek, "
-            "а для сложных задач — в OpenAI"
+            "рабочего пространства в OpenAI"
         )
         cloud.addWidget(self.cloud_consent)
         cloud.addWidget(
@@ -211,7 +206,7 @@ class PlannerWindow(QDialog):
         self.command = QPlainTextEdit()
         self.command.setMaximumHeight(110)
         self.command.setPlaceholderText(
-            "проверь систему дважды\nоткрой https://example.com/\nоткрой блокнот и напиши «Привет»"
+            "Опишите задачу своими словами: что нужно получить и где сохранить результат."
         )
         self.voice = voice_panel or VoicePanel()
         self.voice.transcript_ready.connect(self.command.setPlainText)
@@ -372,23 +367,14 @@ class PlannerWindow(QDialog):
             return
         provider = self.override_provider
         if provider is None:
-            if self.provider_choice.currentIndex() == 1:
-                if not self.cloud_consent.isChecked():
-                    self.status.setText("Для OpenAI нужно разрешить передачу команды и наблюдений.")
-                    return
-                try:
-                    # Ordinary work runs on the fast model; the strong one takes over only
-                    # when the task proves multi-layered or the fast answer is unusable.
-                    self.router = EscalatingRouter(
-                        DeepSeekProvider(self.config.fast_model),
-                        OpenAIProvider(self.model.text()),
-                    )
-                    provider = self.router
-                except ValueError:
-                    self.status.setText("Укажите идентификатор модели Responses API.")
-                    return
-            else:
-                provider = OfflineProvider()
+            if not self.cloud_consent.isChecked():
+                self.status.setText("Для OpenAI нужно разрешить передачу команды и наблюдений.")
+                return
+            try:
+                provider = OpenAIProvider(self.model.text().strip() or "gpt-4o")
+            except ValueError:
+                self.status.setText("Укажите идентификатор модели Responses API.")
+                return
         self.output.clear()
         if not context.knowledge.empty:
             # Say exactly what the command pulled in, rather than letting it travel unseen.

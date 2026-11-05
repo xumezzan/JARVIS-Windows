@@ -33,12 +33,14 @@ def click_approval(window: PlannerWindow, qtbot: QtBot) -> None:
 
 
 @pytest.mark.parametrize("simulation", [False, True])
-def test_offline_multistep(qtbot: QtBot, tmp_path: Path, simulation: bool) -> None:
-    window = PlannerWindow(AppConfig(tmp_path))
+def test_explicit_scripted_multistep(qtbot: QtBot, tmp_path: Path, simulation: bool) -> None:
+    window = PlannerWindow(
+        AppConfig(tmp_path), provider=Scripted([call("local.check", {}), call("local.check", {})])
+    )
     qtbot.addWidget(window)
     window.show()
     try:
-        assert window.simulation.isChecked() and window.provider_choice.currentIndex() == 0
+        assert window.simulation.isChecked() and window.provider_choice.currentIndex() == 1
         window.simulation.setChecked(simulation)
         window.command.setPlainText("проверь систему дважды")
         with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
@@ -64,7 +66,7 @@ def test_standalone_provider_selection_is_restored_but_still_needs_consent(
     def refused_provider(*args: object) -> None:
         pytest.fail("Restoring a selection must not construct a cloud provider without consent.")
 
-    monkeypatch.setattr("jarvis.ui.planner_window.DeepSeekProvider", refused_provider)
+    monkeypatch.setattr("jarvis.ui.planner_window.OpenAIProvider", refused_provider)
     restored = PlannerWindow(AppConfig(tmp_path))
     qtbot.addWidget(restored)
     try:
@@ -144,7 +146,16 @@ def test_autonomous_mode_replaces_only_the_human_review(
 
 
 def test_clarification_resumes(qtbot: QtBot, tmp_path: Path) -> None:
-    window = PlannerWindow(AppConfig(tmp_path))
+    window = PlannerWindow(
+        AppConfig(tmp_path),
+        provider=Scripted(
+            [
+                Proposal(kind="clarify", question="Что проверить?"),
+                call("local.check", {}),
+                call("local.check", {}),
+            ]
+        ),
+    )
     qtbot.addWidget(window)
     window.show()
     try:
@@ -219,6 +230,7 @@ def test_cloud_requires_disclosure_and_model(qtbot: QtBot, tmp_path: Path) -> No
         window.start()
         assert window.worker is None and "разрешить" in window.status.text()
         window.cloud_consent.setChecked(True)
+        window.model.setText("invalid model")
         window.start()
         assert window.worker is None and "идентификатор" in window.status.text()
     finally:
@@ -238,7 +250,7 @@ def test_known_people_do_not_leave_the_machine_without_consent(
             external=(reference("asana", "user_456", "asana.search_tasks", "a" * 32),),
         )
     )
-    window = PlannerWindow(AppConfig(tmp_path))
+    window = PlannerWindow(AppConfig(tmp_path), provider=Scripted([]))
     qtbot.addWidget(window)
     try:
         window.command.setPlainText("создай задачу для John Smith")
@@ -260,12 +272,23 @@ def test_known_people_do_not_leave_the_machine_without_consent(
 @pytest.mark.parametrize("text", ["«Точный текст»", "Jarvis test successful"])
 def test_observed_notepad_then_literal_typing(qtbot: QtBot, tmp_path: Path, text: str) -> None:
     probe = WindowsProbe()
-    window = PlannerWindow(AppConfig(tmp_path), windows_backend=probe)
+    window = PlannerWindow(
+        AppConfig(tmp_path),
+        windows_backend=probe,
+        provider=Scripted(
+            [
+                call("windows.open_app", {"app": "Arbitrary Editor"}),
+                call(
+                    "windows.type_text", {"target": target().model_dump(), "text": text.strip("«»")}
+                ),
+            ]
+        ),
+    )
     qtbot.addWidget(window)
     window.show()
     try:
         window.simulation.setChecked(False)
-        window.command.setPlainText("открой блокнот и напиши " + text)
+        window.command.setPlainText("Передай текст в редактор: " + text)
         # Typing is ROUTINE: it runs without pausing, into the field just observed.
         with qtbot.waitSignal(window.task_finished, timeout=15000) as result:
             window.start()
@@ -278,7 +301,7 @@ def test_observed_notepad_then_literal_typing(qtbot: QtBot, tmp_path: Path, text
 
 
 @pytest.mark.parametrize("simulation", [False, True])
-def test_invented_target_is_rejected_without_backend_hooks(
+def test_direct_desktop_target_is_validated_by_native_adapter(
     qtbot: QtBot, tmp_path: Path, simulation: bool
 ) -> None:
     probe = WindowsProbe()
@@ -295,8 +318,9 @@ def test_invented_target_is_rejected_without_backend_hooks(
         window.command.setPlainText("test")
         with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
             window.start()
-        assert result.args == ["error"] and "unobserved_target" in window.status.text()
-        assert not probe.calls and window.approval_dialog is None
+        assert result.args == ["simulated" if simulation else "finished"]
+        assert bool(probe.calls) is not simulation
+        assert window.approval_dialog is None
     finally:
         window.shutdown()
 
@@ -333,8 +357,8 @@ def test_real_browser_observation_drives_next_registered_step(qtbot: QtBot, tmp_
     assert host._thread is not None and not host._thread.is_alive()
 
 
-def test_a_field_the_planner_never_observed_is_rejected(qtbot: QtBot, tmp_path: Path) -> None:
-    """Listing one window's fields does not authorise typing into a different field."""
+def test_rebuilt_editor_handle_keeps_the_same_semantic_field(qtbot: QtBot, tmp_path: Path) -> None:
+    """A rebuilt native handle does not change the observed semantic field identity."""
     probe = WindowsProbe()
     observed = target()
     invented = observed.editor
@@ -362,8 +386,8 @@ def test_a_field_the_planner_never_observed_is_rejected(qtbot: QtBot, tmp_path: 
         window.command.setPlainText("test")
         with qtbot.waitSignal(window.task_finished, timeout=PATIENCE) as result:
             window.start()
-        assert result.args == ["error"] and "unobserved_target" in window.status.text()
-        assert [item.operation for item in probe.calls] == ["list"]
+        assert result.args == ["finished"]
+        assert any(item.operation == "type" for item in probe.calls)
         assert window.approval_dialog is None
     finally:
         window.shutdown()
@@ -412,7 +436,7 @@ def test_learned_words_are_named_before_they_leave_and_are_written_only_when_ask
 
     learnt = DerivedStore(tmp_path / "derived.sqlite3")
     learnt.record("tool", "систему", "local.check")
-    window = PlannerWindow(AppConfig(tmp_path))
+    window = PlannerWindow(AppConfig(tmp_path), provider=Scripted([]))
     qtbot.addWidget(window)
     try:
         window.command.setPlainText("проверь систему")
@@ -434,7 +458,7 @@ def test_a_finished_run_teaches_the_words_it_was_given(qtbot: QtBot, tmp_path: P
 
     learnt = DerivedStore(tmp_path / "derived.sqlite3")
     learnt.set_learning(True)
-    window = PlannerWindow(AppConfig(tmp_path))
+    window = PlannerWindow(AppConfig(tmp_path), provider=Scripted([call("local.check", {})]))
     qtbot.addWidget(window)
     try:
         window.simulation.setChecked(False)
@@ -471,7 +495,9 @@ def test_a_run_started_while_the_profile_is_read_says_what_is_happening(
         return original(self, cancelled)
 
     monkeypatch.setattr(MemoryStore, "read", slow)
-    window = PlannerWindow(AppConfig(tmp_path))
+    window = PlannerWindow(
+        AppConfig(tmp_path), provider=Scripted([call("local.check", {}), call("local.check", {})])
+    )
     qtbot.addWidget(window)
     window.show()
     try:

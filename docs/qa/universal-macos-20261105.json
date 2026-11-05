@@ -1,0 +1,11 @@
+{
+  "fixture": "native NSView custom canvas without AXValue text setter",
+  "focus_verified": true,
+  "observed_elements": 1,
+  "coordinate_click_issued": true,
+  "screenshot_returned": true,
+  "paste_event_issued": true,
+  "adapter_text_verified": false,
+  "independent_fixture_readback": true,
+  "all_clipboard_formats_restored": true
+}

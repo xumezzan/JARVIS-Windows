@@ -1,5 +1,6 @@
-"""Opt-in real Chrome/UIA test on a local synthetic shop; no retailer or payments."""
+"""Opt-in Chrome/UIA controls on a pre-opened synthetic shop; no retailer or payments."""
 
+import subprocess
 from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -11,12 +12,12 @@ import pytest
 
 from jarvis.core.planner.contracts import Limits, PlannerInput, Proposal
 from jarvis.core.planner.offline import call
-from jarvis.core.planner.openai_provider import chrome_handoff_observation
 from jarvis.core.planner.runner import Runner
 from jarvis.observability.audit import AuditLog
 from jarvis.permissions.approvals import ApprovalStore
 from jarvis.permissions.engine import PermissionEngine
 from jarvis.permissions.policies import Mode, Status
+from jarvis.platforms.windows.native import NativeDesktop
 from jarvis.platforms.windows.transport import ProcessBackend
 from jarvis.tools.registry import ToolRegistry
 from jarvis.tools.windows import WindowsResult, register_windows
@@ -82,11 +83,8 @@ document.title='TOKEN CART VERIFIED';};</script></html>"""
 
         async def propose(self, data: PlannerInput) -> Proposal:
             if not data.steps:
-                return call("windows.open_chrome_url", {"url": url})
+                return call("windows.get_open_windows", {"app": None})
             assert data.steps[-1].outcome.status is Status.SUCCESS
-            observation = chrome_handoff_observation(data)
-            if observation is not None:
-                return observation
             last = data.steps[-1]
             result = WindowsResult.model_validate_json(last.outcome.result_json or "null")
             if last.tool == "windows.get_open_windows":
@@ -124,6 +122,9 @@ document.title='TOKEN CART VERIFIED';};</script></html>"""
         pytest.fail("Fixture selections must not need a model, privacy grant or effect approval")
 
     try:
+        # Trusted fixture setup owns this local page. Production URL tools deliberately
+        # refuse loopback; the agent is tested only against the already-open window.
+        subprocess.Popen([str(NativeDesktop().chrome_executable()), "--new-tab", url], shell=False)
         registry = ToolRegistry()
         register_windows(registry, ProcessBackend(timeout_seconds=10))
         with closing(AuditLog(tmp_path / "audit.sqlite3")) as audit:
@@ -135,7 +136,7 @@ document.title='TOKEN CART VERIFIED';};</script></html>"""
                 no_prompt,
                 no_prompt,
                 limits=Limits(max_steps=25, total_seconds=120),
-            ).run("Open the local fixture and prepare the 256 GB burgundy cart", Mode.EXECUTE)
+            ).run("In the open fixture, prepare the 256 GB burgundy cart", Mode.EXECUTE)
         assert result.status == "finished", (result.status, result.error)
         assert cart == [{"storage": ["256"], "colour": ["burgundy"]}]
         assert sum(step.tool == "windows.click_element" for step in result.steps) == 4

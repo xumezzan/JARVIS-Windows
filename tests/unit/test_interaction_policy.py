@@ -31,7 +31,6 @@ from jarvis.tools.windows import clipboard_digest, register_windows
         "ОТПРАВИТЬ",
         "От\u200bправить",
         "Подтвердить заказ",
-        "Закрыть",
         "Закрыть без сохранения",
         "Pay now",
         "Delete permanently",
@@ -44,20 +43,31 @@ from jarvis.tools.windows import clipboard_digest, register_windows
         "sendButton",
         "delete_file",
         "Ｐａｙ",
-        "Close",
-        "Exit",
-        "Quit",
         "Не сохранять",
         "Don't save",
-        "×",
-        "X",
     ],
 )
 def test_external_and_destructive_labels_require_confirmation(label: str) -> None:
     assert requires_confirmation(label)
 
 
-@pytest.mark.parametrize("label", ["Search", "Next", "Поиск", "Открыть", "Select tab", "Copy"])
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Search",
+        "Next",
+        "Поиск",
+        "Открыть",
+        "Select tab",
+        "Copy",
+        "Close",
+        "Закрыть",
+        "×",
+        "X",
+        "Exit",
+        "Quit",
+    ],
+)
 def test_navigation_labels_are_safe(label: str) -> None:
     assert not requires_confirmation(label)
 
@@ -80,7 +90,7 @@ CASES: list[tuple[str, object, Risk]] = [
     (
         "windows.click_element",
         {"target": target().model_dump(), "x": 20, "y": 30, "window_rectangle": RECT.model_dump()},
-        Risk.CONFIRM,
+        Risk.SAFE,
     ),
 ]
 for label, risk in (
@@ -91,7 +101,7 @@ for label, risk in (
     ("Удалить", Risk.CONFIRM),
     ("Отправить", Risk.CONFIRM),
     ("Купить", Risk.CONFIRM),
-    ("Close", Risk.CONFIRM),
+    ("Close", Risk.SAFE),
 ):
     CASES.extend(
         [
@@ -119,7 +129,7 @@ for key in ("Ctrl+C", "Ctrl+V", "Ctrl+A", "Tab", "Enter", "Alt+F4"):
                 "hotkey": key,
                 "clipboard_sha256": clipboard_digest("x"),
             },
-            Risk.CONFIRM if key in ("Enter", "Alt+F4") else Risk.SAFE,
+            Risk.SAFE,
         )
     )
 

@@ -151,10 +151,8 @@ async def test_missing_window_can_be_observed_and_selected_by_partial_process(
             notify=lambda kind, value: events.append((kind, value)),
         ).run("focus", Mode.EXECUTE)
         assert result.status == "finished" and len(result.steps) == 3
-        assert result.steps[0].outcome.error is ErrorCode.UNOBSERVED_TARGET
-        assert result.steps[0].outcome.stage is Stage.OBSERVED_TARGET
-        assert not result.steps[0].outcome.may_have_effects
-        assert any(json.loads(row)["error"] == "unobserved_target" for row in audit.recent())
+        assert result.steps[0].outcome.status is Status.SUCCESS
+        assert any(request.operation == "check_target" for request in probe.calls)
         focus = next(request for request in probe.calls if request.operation == "focus")
         assert focus.target == target() and focus.process is None
         assert len([event for event in events if event[0] == "tool"]) == 3
@@ -277,7 +275,8 @@ async def test_stale_mark_is_audited_then_refreshed_before_the_click(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_offline_notepad_recipe_accepts_an_observed_nonempty_editor() -> None:
+async def test_observed_editor_does_not_activate_an_offline_recipe() -> None:
+    from jarvis.core.planner.contracts import ProviderError
     from jarvis.core.planner.offline import OfflineProvider
 
     observed = target().model_copy(update={"empty": False})
@@ -287,6 +286,6 @@ async def test_offline_notepad_recipe_accepts_an_observed_nonempty_editor() -> N
             uuid4(), Status.SUCCESS, result_json=WindowsResult(target=observed).model_dump_json()
         ),
     )
-    data = PlannerInput("открой блокнот и напиши «more»", (), (step,), Mode.EXECUTE, "[]")
-    proposal = await OfflineProvider().propose(data)
-    assert proposal.tool == "windows.type_text" and json.loads(proposal.arguments)["text"] == "more"
+    data = PlannerInput("выполни новую задачу в редакторе", (), (step,), Mode.EXECUTE, "[]")
+    with pytest.raises(ProviderError, match="provider_unavailable"):
+        await OfflineProvider().propose(data)

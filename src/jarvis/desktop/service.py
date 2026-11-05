@@ -21,7 +21,7 @@ from jarvis.config import AppConfig, load_config
 from jarvis.core.planner.contracts import Limits, Provider, Step
 from jarvis.core.planner.openai_provider import OpenAIProvider
 from jarvis.core.planner.runner import Runner
-from jarvis.core.report import attempted_action, written
+from jarvis.core.report import attempted_action
 from jarvis.desktop.cloud_consent import (
     CloudPolicyStore,
     CloudReview,
@@ -30,13 +30,7 @@ from jarvis.desktop.cloud_consent import (
 )
 from jarvis.desktop.protocol import MAX_REQUEST, MAX_RESPONSE, Request, Settings
 from jarvis.desktop.settings import UiSettings, UiSettingsStore
-from jarvis.desktop.system_tools import (
-    ChromeCommandProvider,
-    DesktopOfflineProvider,
-    chrome_command,
-    chrome_destination,
-    desktop_registry,
-)
+from jarvis.desktop.system_tools import desktop_registry
 from jarvis.desktop.voice import DesktopVoice
 from jarvis.desktop.watchers import EventWatcher, fingerprint
 from jarvis.desktop.workspace import configure as configure_workspace
@@ -64,6 +58,7 @@ from jarvis.platforms.windows.ghost import CursorTarget
 from jarvis.platforms.windows.transport import ProcessBackend
 from jarvis.platforms.workspace_browser import BrowserLaunchError, WorkspaceBrowser
 from jarvis.security.browser_policy import BrowserMode
+from jarvis.security.credentials import setup_command
 from jarvis.tools.base import ExecutionContext, ToolError
 from jarvis.tools.browser import register_browser
 from jarvis.tools.calendar import register_calendar
@@ -517,8 +512,7 @@ class DesktopService:
 
     def _prepare_cloud_request(self, raw: Request) -> tuple[Request, bool] | None:
         self._clear_cloud_review()
-        local = self.override_provider is None and chrome_destination(raw.command) is not None
-        if self.settings.provider != "openai" or local:
+        if self.override_provider is not None:
             return raw, False
         reasons = review_reasons(raw.command)
         if raw.cloud_consent and not reasons:
@@ -654,20 +648,15 @@ class DesktopService:
             cloud_consent = request.cloud_consent
             conversation_consent = request.conversation_consent
         provider = self.override_provider
-        direct_target = chrome_destination(command) if provider is None else None
-        if direct_target is not None:
-            provider = ChromeCommandProvider(chrome_command(command))
-        if self.settings.provider == "openai" and direct_target is None:
+        if provider is None:
             if not self.settings.model:
                 raise ValueError("planner_model_required")
-            provider = provider or OpenAIProvider(self.settings.model)
             provider = ReviewedCloudProvider(
-                provider,
+                OpenAIProvider(self.settings.model),
                 lambda: self._review_more_cloud_context(request),
                 reviewed=_reviewed,
                 history_allowed=conversation_consent,
             )
-        provider = provider or DesktopOfflineProvider()
         self.voice.wake_review = False
         self.voice.pause_wake()
         self.notice = ""
@@ -722,8 +711,12 @@ class DesktopService:
             outcome = await runner.run(command, mode)
             self.task.state, self.task.phase = outcome.status, "idle"
             self.task.summary = outcome.summary[:3000]
-            if any(step.tool == "windows.open_chrome_url" for step in outcome.steps):
-                self.task.summary = ("\n".join(written(outcome)) + "\n" + outcome.summary)[:3000]
+            if outcome.error == "credentials":
+                self.notice = (
+                    "Ключ OpenAI недоступен в системном хранилище. Введите его локально: "
+                    + setup_command("openai")
+                    + ". Затем повторите задачу."
+                )
             self.task.spoken_summary = outcome.spoken_summary
             self.last_speech = spoken_result(outcome)
             if outcome.status == "finished":

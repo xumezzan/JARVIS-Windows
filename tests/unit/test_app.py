@@ -12,7 +12,7 @@ def test_help_explains_scope(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as error:
         main(["--help"])
     assert error.value.code == 0
-    assert "simulated offline command" in capsys.readouterr().out
+    assert "explicit simulated diagnostic" in capsys.readouterr().out
 
 
 def test_invalid_configuration_fails_before_gui(

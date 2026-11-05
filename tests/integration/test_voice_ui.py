@@ -41,7 +41,11 @@ def make_window(
     panel = VoicePanel(
         recorder=fixture, recognizer=fixture, speaker=fixture, wake=wake or WakeFixture()
     )
-    window = PlannerWindow(AppConfig(tmp_path), voice_panel=panel)
+    window = PlannerWindow(
+        AppConfig(tmp_path),
+        voice_panel=panel,
+        provider=Scripted([call("local.check", {}), call("local.check", {})]),
+    )
     qtbot.addWidget(window)
     window.show()
     # The memory panel reads its store on the next turn and holds the run button until it

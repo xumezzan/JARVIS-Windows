@@ -15,8 +15,11 @@ from PySide6.QtWidgets import (
     QPushButton,
 )
 from pytestqt.qtbot import QtBot
+from tests.unit.test_planner import Scripted
 
 from jarvis.config import AppConfig
+from jarvis.core.planner.contracts import Proposal
+from jarvis.core.planner.offline import call
 from jarvis.core.report import HEADLINE, LOOKED
 from jarvis.observability.logging import ShellLog
 from jarvis.ui.main_window import MainWindow
@@ -33,6 +36,11 @@ EXECUTE = 0
 def window(qtbot: QtBot, tmp_path: Path) -> Iterator[MainWindow]:
     log = ShellLog(tmp_path / "logs")
     shell = MainWindow(AppConfig(tmp_path), log)
+    assert shell.planner_window is not None
+    shell.planner_window.override_provider = Scripted(
+        [call("local.check", {"delay_ms": 100}), call("local.check", {"delay_ms": 100})]
+    )
+    shell.provider_mode.setCurrentIndex(0)  # Explicitly local injected fixture, no cloud.
     qtbot.addWidget(shell)
     shell.show()
     yield shell
@@ -164,6 +172,10 @@ def test_spoken_command_runs_without_a_second_step(qtbot: QtBot, window: MainWin
 
 
 def test_unknown_command_asks_in_the_main_window(qtbot: QtBot, window: MainWindow) -> None:
+    assert window.planner_window is not None
+    window.planner_window.override_provider = Scripted(
+        [Proposal(kind="clarify", question="Что проверить?"), call("local.check", {})]
+    )
     window.run_mode.setCurrentIndex(SIMULATION)
     start(qtbot, window, "сделай что-нибудь")
     planner = window.planner_window
@@ -228,6 +240,10 @@ def test_busy_submission_cannot_replace_task(qtbot: QtBot, window: MainWindow) -
 
 def test_arbitrary_command_is_plain_text_and_not_logged(qtbot: QtBot, window: MainWindow) -> None:
     text = '<img src="https://invalid.example/pixel">\nPRIVATE_INPUT_SENTINEL'
+    assert window.planner_window is not None
+    window.planner_window.override_provider = Scripted(
+        [Proposal(kind="clarify", question="Что проверить?"), call("local.check", {})]
+    )
     window.run_mode.setCurrentIndex(SIMULATION)
     start(qtbot, window, text)
     planner = window.planner_window
@@ -332,7 +348,7 @@ def test_cloud_consent_is_asked_once_and_survives_a_restart(qtbot: QtBot, tmp_pa
         # Nothing may be confirmed without the tick, and what was typed is not thrown away.
         forgot = cloud_answer("gpt-5.4-mini", False)
         assert not window._cloud_ready(planner)
-        assert forgot == {"opened_with": "", "opened_ticked": False, "can_confirm": False}
+        assert forgot == {"opened_with": "gpt-4o", "opened_ticked": False, "can_confirm": False}
         assert planner.model.text() == "gpt-5.4-mini"
 
         # An identifier the provider would refuse is refused here, while it can still be fixed.
@@ -345,7 +361,7 @@ def test_cloud_consent_is_asked_once_and_survives_a_restart(qtbot: QtBot, tmp_pa
         assert window._cloud_ready(planner)
         assert given["opened_with"] == "gpt-5.4-mini" and given["can_confirm"] is True
         # Agreeing to transmission does not choose the cloud planner for the owner.
-        assert window.provider_mode.currentIndex() == planner.provider_choice.currentIndex() == 0
+        assert window.provider_mode.currentIndex() == planner.provider_choice.currentIndex() == 1
         # Asked once: a second command never sees the dialog again.
         assert window._cloud_ready(planner)
     finally:
@@ -358,7 +374,7 @@ def test_cloud_consent_is_asked_once_and_survives_a_restart(qtbot: QtBot, tmp_pa
     assert revived is not None
     try:
         assert revived.cloud_consent.isChecked() and revived.model.text() == "gpt-5.4-mini"
-        assert restarted.provider_mode.currentIndex() == revived.provider_choice.currentIndex() == 0
+        assert restarted.provider_mode.currentIndex() == revived.provider_choice.currentIndex() == 1
         assert restarted._cloud_ready(revived)
         # Unticking in the planner takes the permission back for good.
         revived.cloud_consent.setChecked(False)
@@ -398,7 +414,7 @@ def test_explicit_provider_selection_is_shared_and_restored_without_granting_con
     def refused_provider(*args: object) -> None:
         pytest.fail("A remembered selection must not bypass transmission consent.")
 
-    monkeypatch.setattr("jarvis.ui.planner_window.DeepSeekProvider", refused_provider)
+    monkeypatch.setattr("jarvis.ui.planner_window.OpenAIProvider", refused_provider)
     config = AppConfig(tmp_path)
     log = ShellLog(tmp_path / "logs")
     first = MainWindow(config, log, probe_connections=False)
@@ -444,8 +460,8 @@ def test_explicit_provider_selection_is_shared_and_restored_without_granting_con
     qtbot.addWidget(offline)
     try:
         assert offline.planner_window is not None
-        assert offline.provider_mode.currentIndex() == 0
-        assert offline.planner_window.provider_choice.currentIndex() == 0
+        assert offline.provider_mode.currentIndex() == 1
+        assert offline.planner_window.provider_choice.currentIndex() == 1
     finally:
         offline.shutdown()
         offline.close()

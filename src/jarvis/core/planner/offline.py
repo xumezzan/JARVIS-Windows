@@ -1,16 +1,10 @@
-"""Explicit teaching recipes, not an LLM. Only user text selects a recipe."""
+"""Explicit scripted diagnostic provider; never interprets user commands."""
 
 import asyncio
 import json
-import re
+from collections.abc import Sequence
 
-from jarvis.core.planner.contracts import PlannerInput, Proposal
-from jarvis.permissions.policies import Mode
-
-# A spoken application name, never a path, argument or URL; the adapter resolves it.
-APP_NAME = re.compile(r"[0-9A-Za-z\u0400-\u04FF][0-9A-Za-z\u0400-\u04FF ._+\-]{0,99}")
-FIND = re.compile(r"найди файл\s+([\s\S]+)", re.IGNORECASE)
-LAUNCH = re.compile(r"(?:открой|открыть|запусти|запустить|включи)\s+([\s\S]+)", re.IGNORECASE)
+from jarvis.core.planner.contracts import PlannerInput, Proposal, ProviderError
 
 
 def call(tool: str, arguments: object) -> Proposal:
@@ -18,155 +12,19 @@ def call(tool: str, arguments: object) -> Proposal:
 
 
 class OfflineProvider:
-    def __init__(self) -> None:
-        self._answer_count = 0
-        self._start_step = 0
+    """Run a trusted diagnostic script only when the caller explicitly supplies it.
+
+    There is deliberately no natural-language parser or default task recipe. Production
+    user requests belong to OpenAIProvider; an absent API key never selects this provider.
+    """
+
+    def __init__(self, *, demo_actions: Sequence[Proposal] = ()) -> None:
+        self.demo_actions = tuple(demo_actions)
 
     async def propose(self, data: PlannerInput) -> Proposal:
         await asyncio.sleep(0)
-        if not data.steps and not data.answers:
-            self._answer_count, self._start_step = 0, 0
-        if len(data.answers) != self._answer_count:
-            self._answer_count, self._start_step = len(data.answers), len(data.steps)
-        command = (data.answers[-1].answer if data.answers else data.command).strip()
-        count = len(data.steps) - self._start_step
-        typed = re.fullmatch(
-            r"открой блокнот и напиши (?:«([\s\S]+)»|([\s\S]+))", command, re.IGNORECASE
-        )
-        calculator = re.fullmatch(
-            r"(?:открой|открыть|запусти|запустить)\s+(?:калькулятор|calculator|calc)"
-            r"\s+и\s+(?:набери|введи|напиши|напечатай|нажми)\s+"
-            r"(?:(?:число|цифру)\s+)?([0-9]{1,15})[.!?]?",
-            command,
-            re.IGNORECASE,
-        )
-        if calculator:
-            if count == 0:
-                return call("windows.open_app", {"app": "калькулятор"})
-            if data.mode is Mode.SIMULATION:
-                return Proposal(kind="finish")
-            result = json.loads(data.steps[-1].outcome.result_json or "{}")
-            target = result.get("target")
-            if count == 1 and target:
-                return call(
-                    "windows.get_calculator_number",
-                    {"target": target, "number": calculator.group(1)},
-                )
-            if count == 2 and target and result.get("calculator"):
-                return call(
-                    "windows.calculator_number",
-                    {"target": target, "calculator": result["calculator"]},
-                )
-            return Proposal(kind="finish")
-        if re.match(
-            r"(?:открой|открыть|запусти|запустить)\s+(?:калькулятор|calculator|calc)\s+и\s+",
-            command,
-            re.IGNORECASE,
-        ):
-            return Proposal(
-                kind="clarify",
-                question=(
-                    "Какое целое число ввести? Например: «открой калькулятор и набери 26». "
-                    "Поддерживается до 15 цифр без знака и дробной части при исходном нуле. "
-                    "Существующее вычисление не очищается."
-                ),
-            )
-        if command.casefold() in ("открой выбранное приложение", "открой моё приложение"):
-            apps = {
-                hint.value
-                for hint in (*data.memory.profile, *data.memory.session)
-                if hint.kind == "application"
-            }
-            if len(apps) != 1:
-                return Proposal(
-                    kind="clarify",
-                    question=(
-                        "Какое приложение открыть? Укажите: открой блокнот, открой chrome "
-                        "или открой vs code. Память не выбирает за вас."
-                    ),
-                )
-            return (
-                call("windows.open_app", {"app": next(iter(apps))})
-                if count == 0
-                else Proposal(kind="finish")
-            )
-        if re.search(r"(?:напиши|отправь|письмо|свяжись)", command, re.IGNORECASE) and not typed:
-            return Proposal(
-                kind="clarify",
-                question=(
-                    "Уточните полное имя, адресата и желаемое действие. Сохранённая роль или имя "
-                    "не определяют получателя. Для почты используйте вкладку Outlook "
-                    "с отдельным подтверждением точного письма."
-                ),
-            )
-        if command.casefold() in ("проверь систему", "проверь систему дважды"):
-            total = 2 if command.casefold().endswith("дважды") else 1
-            return call("local.check", {}) if count < total else Proposal(kind="finish")
-        if typed or command.casefold() == "открой блокнот":
-            if count == 0:
-                return call("windows.open_app", {"app": "notepad"})
-            if typed and count == 1 and data.mode is Mode.EXECUTE:
-                result = json.loads(data.steps[-1].outcome.result_json or "{}")
-                target = result.get("target")
-                if not target or not target.get("editor"):
-                    return Proposal(
-                        kind="clarify",
-                        question="Выберите редактируемое поле Блокнота и укажите новую команду.",
-                    )
-                return call(
-                    "windows.type_text",
-                    {"target": target, "text": typed.group(1) or typed.group(2)},
-                )
-            return Proposal(kind="finish")
-        found = FIND.fullmatch(command)
-        if found:
-            query = " ".join(found.group(1).split())[:200]
-            if count == 0 and query:
-                return call("files.find", {"query": query})
-            return Proposal(kind="finish")
-        opened = re.fullmatch(r"открой (https://\S+)", command, re.IGNORECASE)
-        search = re.fullmatch(r"найди ([\s\S]+)", command, re.IGNORECASE)
-        combined = re.fullmatch(r"открой chrome и найди ([\s\S]+)", command, re.IGNORECASE)
-        if combined:
-            # The configured browser backend owns both visibility and search, including CDP.
-            search = combined
-        if opened or search:
-            if count == 0:
-                if opened:
-                    return call("browser.open", {"url": opened.group(1)})
-                assert search is not None
-                return call("browser.search", {"query": search.group(1)})
-            if count == 1 and data.mode is Mode.EXECUTE:
-                result = json.loads(data.steps[-1].outcome.result_json or "{}")
-                if result.get("page"):
-                    return call("browser.read", {"target": result["page"]["target"]})
-            return Proposal(kind="finish")
-        launch = LAUNCH.fullmatch(command)
-        if launch:
-            name = " ".join(launch.group(1).split())
-            if re.search(
-                r"\s+и\s+(?:набери|введи|напечатай|нажми|выбери|закрой|открой|запусти)\b",
-                name,
-                re.IGNORECASE,
-            ):
-                return Proposal(
-                    kind="clarify",
-                    question=(
-                        "Эта составная команда пока не поддерживается в офлайн-режиме. "
-                        "Можно открыть приложение отдельной командой или ввести число: "
-                        "«открой калькулятор и набери 26»."
-                    ),
-                )
-            if APP_NAME.fullmatch(name):
-                if count == 0:
-                    return call("windows.open_app", {"app": name})
-                return Proposal(kind="finish")
-        return Proposal(
-            kind="clarify",
-            question=(
-                "Без модели понимаю простые команды: «открой <название приложения>», "
-                "«найди файл <имя>», «проверь систему», «открой https://example.com/», "
-                "«найди OpenAI». "
-                "Для произвольных формулировок включите провайдер OpenAI."
-            ),
-        )
+        if not self.demo_actions:
+            raise ProviderError("provider_unavailable")
+        if len(data.steps) < len(self.demo_actions):
+            return self.demo_actions[len(data.steps)]
+        return Proposal(kind="finish")

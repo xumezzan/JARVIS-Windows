@@ -9,6 +9,7 @@ from pytestqt.qtbot import QtBot
 from tests.unit.test_planner import Scripted
 
 from jarvis.config import AppConfig
+from jarvis.core.planner.offline import call
 from jarvis.memory.derived import DerivedStore
 from jarvis.memory.models import Hint
 from jarvis.ui.memory_panel import MemoryPanel
@@ -77,6 +78,8 @@ def test_selected_context_cloud_gate_one_task_only(
         panel.profile_list.item(0).setCheckState(Qt.CheckState.Checked)
         assert "Альфа" in panel.preview.toPlainText()
         window.command.setPlainText("проверь систему")
+        if not cloud:
+            window.provider_choice.setCurrentIndex(0)
         if cloud:
             window.provider_choice.setCurrentIndex(1)
             window.cloud_consent.setChecked(True)
@@ -98,7 +101,9 @@ def test_selected_context_cloud_gate_one_task_only(
 
 
 def test_no_automatic_ingestion_and_session_shutdown(qtbot: QtBot, tmp_path: Path) -> None:
-    window = PlannerWindow(AppConfig(tmp_path))
+    window = PlannerWindow(
+        AppConfig(tmp_path), provider=Scripted([call("local.check", {}), call("local.check", {})])
+    )
     qtbot.addWidget(window)
     window.show()
     panel = window.memory
@@ -179,7 +184,7 @@ def test_learned_memory_is_shown_switched_on_and_removed(qtbot: QtBot, tmp_path:
 
 
 def test_learning_stays_off_until_the_owner_turns_it_on(qtbot: QtBot, tmp_path: Path) -> None:
-    window = PlannerWindow(AppConfig(tmp_path))
+    window = PlannerWindow(AppConfig(tmp_path), provider=Scripted([call("local.check", {})]))
     qtbot.addWidget(window)
     window.show()
     panel = window.memory

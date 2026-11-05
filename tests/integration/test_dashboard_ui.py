@@ -7,8 +7,10 @@ import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from pytestqt.qtbot import QtBot
+from tests.unit.test_planner import Scripted
 
 from jarvis.config import AppConfig
+from jarvis.core.planner.offline import call
 from jarvis.observability.logging import ShellLog
 from jarvis.ui.home import ACTIONS, APPS, ConnectedApps, SummaryCard
 from jarvis.ui.main_window import MainWindow
@@ -36,7 +38,7 @@ def test_the_command_is_the_screen_and_the_rest_waits_its_turn(window: MainWindo
     assert not window.stop_button.isVisible()
     # The four controls are one line of words until the owner asks for them.
     assert not window.mode_box.isVisible()
-    assert window.mode_label.text() == "делаю сам · офлайн-модель"
+    assert window.mode_label.text() == "делаю сам · облачная модель"
     assert window.command_input.placeholderText() == "Скажите, что сделать"
     # The greeting is by the name the owner gave, and no name was given here.
     assert window.greeting_title.text() == "Привет"
@@ -50,7 +52,9 @@ def test_the_mode_line_says_how_it_will_work_and_opens_on_request(
     window.autonomy.setChecked(False)
     window.run_mode.setCurrentIndex(1)
     # Autonomy stays a visible, explicit setting: the line says what it is now.
-    assert window.mode_label.text() == "спрашиваю на каждом шаге · офлайн-модель · только симуляция"
+    assert (
+        window.mode_label.text() == "спрашиваю на каждом шаге · облачная модель · только симуляция"
+    )
     QTest.mouseClick(window.mode_button, Qt.MouseButton.LeftButton)
     assert not window.mode_box.isVisible() and window.mode_button.text() == "изменить"
 
@@ -82,6 +86,10 @@ def test_the_owner_is_greeted_by_the_name_they_typed(window: MainWindow) -> None
 def test_a_running_task_replaces_the_actions_with_its_own_steps(
     qtbot: QtBot, window: MainWindow
 ) -> None:
+    planner = window.planner_window
+    assert planner is not None
+    planner.override_provider = Scripted([call("local.check", {}), call("local.check", {})])
+    window.provider_mode.setCurrentIndex(0)  # The injected test script is local.
     window.run_mode.setCurrentIndex(1)
     window.command_input.setPlainText("проверь систему дважды")
     with qtbot.waitSignal(window.task_finished, timeout=PATIENCE):

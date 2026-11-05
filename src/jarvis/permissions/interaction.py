@@ -3,12 +3,12 @@
 import re
 import unicodedata
 
-# Closing is conservative: desktop adapters cannot prove that a window is saved.
+# Generic destructive/external semantics, independent of application or user phrasing.
 _SENSITIVE_ACTION = re.compile(
     r"\b(?:оплат\w*|плат[еиё]\w*|удал\w*|отправ\w*|послать|купить|покуп\w*|"
-    r"заказ\w*|оформ\w*|закры\w*|сброс\w*|стереть|очист\w*|подтверд\w*|"
+    r"заказ\w*|сброс\w*|стереть|очист\w*|"
     r"pay\w*|delet\w*|remov\w*|send\w*|submit\w*|buy\w*|purchas\w*|"
-    r"checkout|order\w*|close|exit|quit|discard\w*|erase\w*|confirm\w*|publish\w*|"
+    r"checkout|order\w*|discard\w*|erase\w*|publish\w*|"
     r"post|comment|опубликов\w*|публиков\w*)\b"
     r"|\b(?:не\s+сохранять|без\s+сохранения|do\s+not\s+save|don['’]t\s+save)\b"
 )
@@ -23,4 +23,4 @@ def requires_confirmation(label: str) -> bool:
     label = re.sub(r"([a-z])([A-Z])", r"\1 \2", label)
     label = unicodedata.normalize("NFKC", label).casefold().replace("&", "").replace("_", " ")
     label = "".join(char for char in label if unicodedata.category(char) != "Cf")
-    return label.strip() in {"x", "×", "✕", "✖"} or bool(_SENSITIVE_ACTION.search(label))
+    return bool(_SENSITIVE_ACTION.search(label))

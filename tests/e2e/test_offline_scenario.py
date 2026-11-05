@@ -4,22 +4,28 @@ from pathlib import Path
 
 import pytest
 from pytestqt.qtbot import QtBot
+from tests.unit.test_planner import Scripted
 from tests.windows_support import WindowsProbe
 
 from jarvis.config import AppConfig
+from jarvis.core.planner.offline import call
 from jarvis.ui.planner_window import PlannerWindow
 
 
 @pytest.mark.e2e
 @pytest.mark.parametrize("cancel", [False, True])
-def test_chrome_search_recipe_reaches_no_adapter_in_simulation(
+def test_scripted_browser_search_reaches_no_adapter_in_simulation(
     qtbot: QtBot,
     tmp_path: Path,
     cancel: bool,
 ) -> None:
-    """The configured browser owns search; simulation never launches another Chrome."""
+    """An explicit synthetic planner chooses search; simulation never launches another Chrome."""
     probe = WindowsProbe()
-    window = PlannerWindow(AppConfig(tmp_path), windows_backend=probe)
+    window = PlannerWindow(
+        AppConfig(tmp_path),
+        windows_backend=probe,
+        provider=Scripted([call("browser.search", {"query": "OpenAI"})]),
+    )
     qtbot.addWidget(window)
     window.show()
     try:

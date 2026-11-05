@@ -1,5 +1,30 @@
 # Jarvis engineering instructions
 
+## Main architecture rule — owner decision, 2026-11-05
+
+КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО хардкодить рецепты, регулярные выражения под конкретные
+фразы пользователя, списки `Literal[...]` для названий приложений или специальные
+тулы под частные сценарии (вроде калькулятора/блокнота). Любая задача пользователя
+должна решаться универсальным планировщиком LLM (`OpenAIProvider`) через
+универсальные атомарные примитивы управления ОС, экраном, вводом, браузером и файлами.
+
+This owner decision supersedes earlier conflicting recipe, application-name, input,
+coordinate and desktop risk rules in this file. Production Electron and the normal
+launcher use OpenAI with `gpt-4o`; absent credentials produce an actionable error,
+never an OfflineProvider recipe. OfflineProvider is a diagnostic/test surface only.
+Applications are resolved by OS catalogs and explicit application paths, not curated
+name tables. Focus accepts a handle or a title/process substring. Input may address
+the active window; native adapters prefer UIA/AX and automatically fall back to
+physical clicks and clipboard paste where semantic controls are unavailable.
+Ordinary launch/focus/click/type/hotkey/clipboard operations are SAFE. Identified
+send/publish/payment/destructive actions still require exact CONFIRM approval.
+Native target validation binds process/start/handle/executable, not a mutable title
+or rebuilt accessibility runtime ID. Marks remain scoped to a fresh observation.
+Normal-browser URL handoff rejects localhost and literal private/local IP addresses.
+No arbitrary shell execution is introduced. Keep PermissionEngine, audit, cancellation,
+simulation, OS permissions, cloud disclosure and credential boundaries. A paste
+receipt is not proof that an application accepted the text: re-observe the result.
+
 ## PR #59 integration
 
 Owner policy, 2026-10-26: the Electron home screen has no permanent OpenAI consent

@@ -193,9 +193,9 @@ def test_unsuccessful_tasks_never_become_memory(status: Any) -> None:
 
 
 @pytest.mark.asyncio
-async def test_old_window_handle_does_not_count_as_current_observation(tmp_path: Path) -> None:
+async def test_old_window_handle_is_revalidated_by_native_adapter(tmp_path: Path) -> None:
     registry, _ = local_registry()
-    probe = WindowsProbe()
+    probe = WindowsProbe(changed=True)
     register_windows(registry, probe)
     audit = AuditLog(tmp_path / "audit.sqlite3")
 
@@ -220,7 +220,8 @@ async def test_old_window_handle_does_not_count_as_current_observation(tmp_path:
     )
     try:
         result = await runner.run("same window", Mode.EXECUTE)
-        assert result.error == "unobserved_target" and probe.calls == []
+        assert result.error == "target_changed"
+        assert [request.operation for request in probe.calls] == ["check_target"]
         assert provider.inputs[0].task_memory.recent
         assert runner.task_memory.recent == ()
     finally:

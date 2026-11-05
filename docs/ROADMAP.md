@@ -3,6 +3,14 @@
 Цель продукта и её разбор по компонентам — [PRD.md](PRD.md) и [AGENT_PLAN.md](AGENT_PLAN.md).
 Здесь только состояние: что сделано, что открыто и что идёт следующим.
 
+05.11.2026: по решению владельца выполнен переход к
+[универсальному LLM-оператору](UNIVERSAL_DESKTOP_AGENT.md). Удалены рецепты
+OfflineProvider, сценарные Calculator-тулы, списки имен приложений и regex-обход
+планировщика для Chrome. Electron/launcher используют OpenAI (`gpt-4o` по умолчанию).
+Добавлены универсальные имена/пути, active-window input и UIA/AX → physical/clipboard
+fallback. Реальный синтетический custom canvas на Mac проверен с восстановлением
+буфера; installed app достигает READY. Это не live OpenAI/микрофон/Windows acceptance.
+
 04.11.2026: выполнен [аудит Electron → Python](ELECTRON_UI_BACKEND_AUDIT.md),
 исправлены сохранение оформления, рассинхронизация настроек, закрытие notice,
 микрофон отмены в Outlook, execute wake-resume и вложения загруженного RAM-черновика.

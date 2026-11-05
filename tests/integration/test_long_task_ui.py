@@ -59,7 +59,9 @@ def crash(window: PlannerWindow, request: str = "длинная задача") -
 def test_the_checklist_shows_one_row_per_step_with_its_outcome(
     qtbot: QtBot, tmp_path: Path
 ) -> None:
-    window = PlannerWindow(AppConfig(tmp_path))
+    window = PlannerWindow(
+        AppConfig(tmp_path), provider=Scripted([call("local.check", {}), call("local.check", {})])
+    )
     qtbot.addWidget(window)
     window.show()
     try:
@@ -150,7 +152,7 @@ def test_resuming_keeps_the_mode_the_run_started_in(qtbot: QtBot, tmp_path: Path
 
 
 def test_the_window_runs_long_tasks_and_says_what_it_spends(qtbot: QtBot, tmp_path: Path) -> None:
-    window = PlannerWindow(AppConfig(tmp_path))
+    window = PlannerWindow(AppConfig(tmp_path), provider=Scripted([call("local.check", {})]))
     qtbot.addWidget(window)
     window.show()
     try:

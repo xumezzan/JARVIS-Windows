@@ -28,7 +28,6 @@ from jarvis.tools.windows import (
     MAX_UIA_DEPTH,
     MAX_UIA_ELEMENTS,
     MAX_UIA_OBSERVATION_BYTES,
-    AppId,
     ClickElement,
     ClipboardSet,
     EditorTarget,
@@ -50,7 +49,6 @@ from jarvis.tools.windows import (
 )
 
 EDIT_CLASSES = {"edit", "richedit20w", "richedit50w", "richeditd2dpt"}
-APP_NAMES: tuple[AppId, ...] = ("notepad", "chrome", "vscode")
 SYSTEM_WINDOW_CLASSES = {
     "Progman",
     "WorkerW",
@@ -58,16 +56,6 @@ SYSTEM_WINDOW_CLASSES = {
     "Shell_SecondaryTrayWnd",
     "tooltips_class32",
 }
-HOTKEYS = {
-    "Ctrl+C": "^c",
-    "Ctrl+V": "^v",
-    "Ctrl+A": "^a",
-    "Ctrl+Z": "^z",
-    "Enter": "{ENTER}",
-    "Tab": "{TAB}",
-    "Alt+F4": "%{F4}",
-}
-KEY_CHARACTERS = set(string.ascii_lowercase + string.digits + " ._+-")
 
 
 class _MouseInput(ctypes.Structure):
@@ -89,48 +77,7 @@ class _Input(ctypes.Structure):
     _fields_ = [("type", wintypes.DWORD), ("value", _InputValue)]
 
 
-# Script hosts and interpreters remain excluded. The owner's 2026-10-27 exception permits
-# cmd.exe itself from the installed catalog, with no arguments or command string.
-SCRIPT_HOSTS = {
-    "cscript",
-    "developer command prompt",
-    "developer powershell",
-    "mshta",
-    "powershell",
-    "pwsh",
-    "python",
-    "pythonw",
-    "regedit",
-    "regsvr32",
-    "rundll32",
-    "windows powershell",
-    "windows terminal",
-    "wscript",
-    "wt",
-    "терминал",
-}
-
-# Spoken shorthands that do not appear as Start menu names on every installation.
-ALIASES = {
-    "калькулятор": "calc",
-    "calculator": "calc",
-    "блокнот": "notepad",
-    "браузер": "chrome",
-    "хром": "chrome",
-    "гугл хром": "chrome",
-    "вс код": "code",
-    "vs code": "code",
-    "vscode": "code",
-    "код": "code",
-    "проводник": "explorer",
-    "paint": "mspaint",
-    "пейнт": "mspaint",
-    "командная строка": "cmd",
-    "command prompt": "cmd",
-}
-
-# Always-present Windows applications, so a bare installation still answers common requests.
-SYSTEM_APPS = ("notepad", "mspaint", "calc", "explorer", "charmap", "magnify", "cmd")
+LAUNCH_EXTENSIONS = {".exe", ".com", ".lnk"}
 
 
 def normalize(name: str) -> str:
@@ -142,21 +89,67 @@ def normalize(name: str) -> str:
     return " ".join(folded.split())
 
 
-def blocked(name: str) -> bool:
-    """Match a script host as a whole word, so "Windows PowerShell (x86)" is caught too."""
-    words = normalize(name)
-    return any(
-        words == host or words.startswith(f"{host} ") or f" {host} " in f" {words} "
-        for host in SCRIPT_HOSTS
-    )
+def hotkey_sequence(value: str) -> str:
+    """Compile one key chord, never accept pywinauto's executable key language."""
+    parts = value.casefold().split("+")
+    modifiers = {
+        "ctrl": "^",
+        "control": "^",
+        "cmd": "^",
+        "command": "^",
+        "alt": "%",
+        "option": "%",
+        "shift": "+",
+        "win": "win",
+        "super": "win",
+        "meta": "win",
+    }
+    named = {
+        "enter": "ENTER",
+        "return": "ENTER",
+        "tab": "TAB",
+        "escape": "ESC",
+        "esc": "ESC",
+        "backspace": "BACKSPACE",
+        "delete": "DELETE",
+        "insert": "INSERT",
+        "home": "HOME",
+        "end": "END",
+        "pageup": "PGUP",
+        "pagedown": "PGDN",
+        "up": "UP",
+        "down": "DOWN",
+        "left": "LEFT",
+        "right": "RIGHT",
+        "arrowup": "UP",
+        "arrowdown": "DOWN",
+        "arrowleft": "LEFT",
+        "arrowright": "RIGHT",
+        "space": "SPACE",
+    }
+    if not 1 <= len(parts) <= 5 or any(part not in modifiers for part in parts[:-1]):
+        raise ToolError("control_unsupported")
+    prefix = [modifiers[part] for part in parts[:-1]]
+    if len(prefix) != len(set(prefix)):
+        raise ToolError("control_unsupported")
+    key = parts[-1]
+    if len(key) == 1 and key in string.ascii_lowercase + string.digits:
+        encoded = key
+    elif key in named:
+        encoded = "{" + named[key] + "}"
+    elif key.startswith("f") and key[1:].isdigit() and 1 <= int(key[1:]) <= 24:
+        encoded = "{" + key.upper() + "}"
+    else:
+        raise ToolError("control_unsupported")
+    chord = "".join(part for part in prefix if part != "win") + encoded
+    return "{VK_LWIN down}" + chord + "{VK_LWIN up}" if "win" in prefix else chord
 
 
 def app_key(executable: str) -> str:
     """The stable identity of an observed window: its own executable stem."""
     stem = PureWindowsPath(executable).stem.lower()
     cleaned = "".join(
-        character if character in KEY_CHARACTERS or "\u0400" <= character <= "\u04ff" else "-"
-        for character in stem
+        character if character.isalnum() or character in " ._+-" else "-" for character in stem
     ).strip(" ._+-")
     return cleaned[:100] or "unknown"
 
@@ -207,8 +200,7 @@ class NativeDesktop:
         self.user32.SendMessageTimeoutW.restype = ctypes.c_ssize_t
 
     def catalog(self) -> list[LaunchEntry]:
-        """Applications this user can actually start: the Windows apps folder first, then
-        the Start menu, registered App Paths and the always-present system tools."""
+        """Discover user applications from OS metadata and bounded install-directory scans."""
         cached = getattr(self, "_catalog", None)
         if cached is not None:
             return cast("list[LaunchEntry]", cached)
@@ -218,7 +210,7 @@ class NativeDesktop:
 
         def add(name: str, path: Path, key: str, aumid: str = "") -> None:
             token = aumid.casefold() or os.path.normcase(str(path))
-            if token in seen or blocked(name) or (not aumid and blocked(path.stem)):
+            if token in seen or (not aumid and path.suffix.casefold() not in LAUNCH_EXTENSIONS):
                 return
             seen.add(token)
             entries.append(LaunchEntry(name, path, key, aumid))
@@ -256,11 +248,36 @@ class NativeDesktop:
             except OSError:
                 continue
 
-        system32 = Path(os.environ.get("SYSTEMROOT", "C:/Windows")) / "System32"
-        for name in SYSTEM_APPS:
-            executable = system32 / f"{name}.exe"
-            if executable.is_file():
-                add(name, executable, name)
+        roots = [(Path(part), 0) for part in os.environ.get("PATH", "").split(os.pathsep) if part]
+        roots.append((Path(os.environ.get("SYSTEMROOT", "C:/Windows")) / "System32", 0))
+        for variable in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA", "APPDATA"):
+            base = os.environ.get(variable)
+            if base:
+                roots.append((Path(base), 4))
+        visited: set[str] = set()
+        examined = 0
+        for root, depth_limit in roots:
+            pending = deque([(root, 0)])
+            while pending and examined < 30_000 and len(visited) < 3000:
+                directory, depth = pending.popleft()
+                token = os.path.normcase(str(directory))
+                if token in visited:
+                    continue
+                visited.add(token)
+                try:
+                    with os.scandir(directory) as children:
+                        for child in children:
+                            examined += 1
+                            if examined > 30_000:
+                                break
+                            if child.is_file(follow_symlinks=False):
+                                executable = Path(child.path)
+                                if executable.suffix.casefold() in LAUNCH_EXTENSIONS:
+                                    add(executable.stem, executable, app_key(str(executable)))
+                            elif depth < depth_limit and child.is_dir(follow_symlinks=False):
+                                pending.append((Path(child.path), depth + 1))
+                except OSError:
+                    continue
         self._catalog = entries
         return entries
 
@@ -294,14 +311,18 @@ class NativeDesktop:
                 found.append((name, identifier))
         return found
 
-    def resolve_app(self, app: AppId) -> LaunchEntry:
+    def resolve_app(self, app: str) -> LaunchEntry:
         """One spoken name to one launchable item, or an explicit finite failure."""
+        direct = Path(app).expanduser()
+        if direct.is_absolute():
+            if direct.suffix.casefold() not in LAUNCH_EXTENSIONS or not direct.is_file():
+                raise ToolError("application_missing")
+            executable = direct.resolve()
+            return LaunchEntry(executable.stem, executable, app_key(str(executable)))
         entries = self.catalog()
-        for wanted in [normalize(app), normalize(ALIASES.get(normalize(app), ""))]:
+        for wanted in [normalize(app)]:
             if not wanted:
                 continue
-            if wanted in SCRIPT_HOSTS:
-                raise ToolError("application_missing", reason=Reason.APPLICATION_BLOCKED)
             for select in (
                 lambda entry, want=wanted: normalize(entry.name) == want or entry.key == want,
                 lambda entry, want=wanted: normalize(entry.name).startswith(want),
@@ -315,15 +336,14 @@ class NativeDesktop:
                 return matches[0]
         raise ToolError("application_missing")
 
-    def candidates(self, app: AppId, entry: LaunchEntry, titles: bool) -> list[WindowTarget]:
+    def candidates(self, app: str, entry: LaunchEntry, titles: bool) -> list[WindowTarget]:
         wanted = normalize(app)
-        alias = normalize(ALIASES.get(wanted, ""))
         found = self.windows(include_editor=False)
         if entry.aumid:
             return [item for item in found if entry.aumid in self.window_aumids(item)]
         for select in (
             lambda item: bool(entry.key) and item.app == entry.key,
-            lambda item: normalize(item.app) in {wanted, alias} - {""},
+            lambda item: normalize(item.app) == wanted,
             lambda item: titles and wanted in normalize(item.title),
         ):
             matches = [item for item in found if select(item)]
@@ -592,13 +612,18 @@ class NativeDesktop:
                 # A window with no single obvious field still focuses; its fields are listed
                 # explicitly instead of guessed at.
                 editor_target = None
+        try:
+            runtime_id = self.runtime(window)
+        except Exception:
+            # Native process/HWND identity remains available for custom UI surfaces.
+            runtime_id = [int(window.handle)]
         return WindowTarget(
             app=app,
             handle=int(window.handle),
             pid=int(process.pid),
             process_started=float(process.create_time()),
             executable=executable,
-            runtime_id=self.runtime(window),
+            runtime_id=runtime_id,
             title=str(window.window_text()),
             editor=editor_target,
             empty=empty,
@@ -608,16 +633,11 @@ class NativeDesktop:
         """Inspect only the selected window, after rechecking its observed identity."""
         return self.snapshot(self.resolve(target))
 
-    def windows(
-        self, app: AppId | None = None, *, include_editor: bool = True
-    ) -> list[WindowTarget]:
+    def windows(self, app: str | None = None, *, include_editor: bool = True) -> list[WindowTarget]:
         result = []
         for window in self.desktop.windows(visible_only=True):
             try:
-                if (
-                    not str(window.window_text()).strip()
-                    or window.element_info.class_name in SYSTEM_WINDOW_CLASSES
-                ):
+                if window.element_info.class_name in SYSTEM_WINDOW_CLASSES:
                     continue
                 # Recursive editor inspection can block in an unrelated application.
                 # Select by top-level identity first; opening uses these shallow scans.
@@ -635,7 +655,7 @@ class NativeDesktop:
         try:
             window = self.desktop.window(handle=target.handle).wrapper_object()
             current = self.snapshot(window, include_editor=False)
-            fields = ("app", "handle", "pid", "process_started", "executable", "runtime_id")
+            fields = ("app", "handle", "pid", "process_started", "executable")
             if any(getattr(current, name) != getattr(target, name) for name in fields):
                 raise ToolError("target_changed")
             if check_title and current.title != target.title:
@@ -657,7 +677,7 @@ class NativeDesktop:
         self, window: Any, editor: Any, value: str, overwrite: bool, *, existing: str = ""
     ) -> None:
         """One directed write. Never global keys, clipboard, coordinates or a submit key."""
-        handle = self.native_handle(window, editor)
+        handle = self.text_handle(window, editor)
         if handle:
             # Explicit replace selects all; append selects the end, preserving existing text
             # even if the application had a selection or caret in the middle.
@@ -675,13 +695,18 @@ class NativeDesktop:
 
     def resolve_editor(self, args: TypeText) -> tuple[Any, Any]:
         """Re-observe the exact window and field, and refuse to destroy unseen content."""
-        window = self.resolve(args.target, check_title=False)
-        editor = self.chosen_editor(window, args.field)
+        if args.target is None:
+            window, _ = self.active()
+        else:
+            window = self.resolve(args.target, check_title=False)
+        wanted = args.field
+        editor = self.chosen_editor(window, wanted) if wanted is not None else self.editor(window)
         if not self.writable(editor):
             raise ToolError("control_unsupported", reason=Reason.EDITOR_NOT_WRITABLE)
         if (
-            args.field.content_sha256 is not None
-            and text_digest(self.read(editor)) != args.field.content_sha256
+            wanted is not None
+            and wanted.content_sha256 is not None
+            and text_digest(self.read(editor)) != wanted.content_sha256
         ):
             raise ToolError("target_changed", reason=Reason.EDITOR_CHANGED)
         return window, editor
@@ -701,6 +726,122 @@ class NativeDesktop:
         except Exception:
             raise ToolError("native_failure") from None
 
+    def with_active_target(self, request: NativeRequest) -> NativeRequest:
+        if request.target is not None:
+            return request
+        _, target = self.active()
+        return request.model_copy(update={"target": target})
+
+    def focused_control(self) -> Any | None:
+        """Best-effort UIA focus; a custom canvas need not expose an editable node."""
+        try:
+            raw = importlib.import_module("pywinauto.uia_defines").IUIA().iuia.GetFocusedElement()
+            info = importlib.import_module("pywinauto.uia_element_info").UIAElementInfo(raw)
+            return importlib.import_module("pywinauto.controls.uiawrapper").UIAWrapper(info)
+        except Exception:
+            return None
+
+    def fallback_destination(self, target: WindowTarget | None) -> Any:
+        if target is None:
+            raise ToolError("target_changed")
+        window = self.activate(target)
+        focused = self.focused_control()
+        if focused is not None:
+            try:
+                if int(focused.process_id()) != target.pid:
+                    raise ToolError("target_changed")
+                if bool(focused.element_info.element.CurrentIsPassword):
+                    raise ToolError("control_unsupported", reason=Reason.EDITOR_NOT_WRITABLE)
+            except ToolError:
+                raise
+            except Exception:
+                pass  # No UIA focus metadata on a custom surface.
+            try:
+                read_only = bool(focused.iface_value.CurrentIsReadOnly)
+            except Exception:
+                read_only = False  # Absence of ValuePattern is the reason for this fallback.
+            if read_only:
+                raise ToolError("control_unsupported", reason=Reason.EDITOR_NOT_WRITABLE)
+        self.require_foreground(target)
+        return window
+
+    def semantic_write_available(self, window: Any, editor: Any) -> bool:
+        if self.text_handle(window, editor):
+            return True
+        try:
+            return editor.iface_value is not None
+        except Exception:
+            return False
+
+    def text_handle(self, window: Any, editor: Any) -> int:
+        """Edit messages are an OS control contract, not a contract of every HWND."""
+        if str(editor.element_info.class_name).casefold() not in EDIT_CLASSES:
+            return 0
+        return self.native_handle(window, editor)
+
+    def wait_input_idle(self, target: WindowTarget) -> None:
+        """Bound the native input handoff before restoring the temporary clipboard."""
+        kernel = cast(Any, ctypes).WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel.OpenProcess(0x00100400, False, target.pid)
+        if not handle:
+            raise ToolError("native_failure")
+        try:
+            self.user32.WaitForInputIdle.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            self.user32.WaitForInputIdle.restype = wintypes.DWORD
+            if self.user32.WaitForInputIdle(handle, 2000) not in (0,):
+                raise ToolError("native_timeout")
+        finally:
+            kernel.CloseHandle(handle)
+
+    def paste_text(self, args: TypeText, *, editor: Any | None = None) -> WindowsResult:
+        """Fallback for custom controls, with original clipboard formats restored.
+
+        A key dispatch alone is not a document readback. The result deliberately keeps
+        text_verified false so the planner must inspect the application afterwards.
+        """
+        target = args.target
+        window = self.fallback_destination(target)
+        assert target is not None
+        if editor is not None:
+            editor.set_focus()
+        if self.before_action is not None:
+            self.before_action(
+                CursorTarget(
+                    rectangle=self.rectangle(editor if editor is not None else window),
+                    action="type",
+                    label="Ввод текста...",
+                    window_handle=target.handle,
+                )
+            )
+        self.fallback_destination(target)
+        ole = importlib.import_module("pythoncom")
+        saved = ole.OleGetClipboard()
+        keyboard = importlib.import_module("pywinauto.keyboard")
+        sequence: int | None = None
+        try:
+            self.clipboard(args.text)
+            sequence = int(self.user32.GetClipboardSequenceNumber())
+            self.require_foreground(target)
+            if args.overwrite:
+                keyboard.send_keys(hotkey_sequence("Ctrl+A"), pause=0)
+                self.require_foreground(target)
+            keyboard.send_keys(hotkey_sequence("Ctrl+V"), pause=0)
+            self.wait_input_idle(target)
+        finally:
+            # An intervening user/application copy owns the new clipboard contents.
+            if sequence is None or int(self.user32.GetClipboardSequenceNumber()) == sequence:
+                ole.OleSetClipboard(saved)
+                ole.OleFlushClipboard()
+        return WindowsResult(
+            target=target,
+            performed=True,
+            inserted_text_sha256=text_digest(args.text),
+            text_verified=False,
+        )
+
     def dispatch(self, request: NativeRequest) -> WindowsResult:
         if request.operation in {
             "inspect",
@@ -711,10 +852,6 @@ class NativeDesktop:
             "screenshot",
         }:
             return self.cross_app(request)
-        if request.operation.startswith("calculator_"):
-            from jarvis.platforms.windows.calculator import dispatch
-
-            return dispatch(self, request)
         match request.operation:
             case "check_chrome":
                 self.chrome_executable()
@@ -767,10 +904,15 @@ class NativeDesktop:
                     return WindowsResult(target=self.with_editor(existing[0]))
                 raise ToolError("native_timeout")
             case "check_target":
-                if request.target is None:
-                    raise ToolError("native_failure")
                 if request.text is not None:
-                    self.resolve_editor(self.typing(request))
+                    request = self.with_active_target(request)
+                    args = self.typing(request)
+                    if args.field is not None:
+                        self.resolve_editor(args)
+                    else:
+                        self.fallback_destination(request.target)
+                elif request.target is None:
+                    raise ToolError("native_failure")
                 else:
                     self.resolve(request.target)
                 return WindowsResult(target=request.target)
@@ -796,10 +938,16 @@ class NativeDesktop:
                 self.activate(target)
                 return WindowsResult(target=target, focused=True)
             case "type":
-                if request.target is None or request.text is None:
+                if request.text is None:
                     raise ToolError("native_failure")
+                request = self.with_active_target(request)
                 args = self.typing(request)
+                if args.field is None:
+                    return self.paste_text(args)
+                assert args.target is not None
                 window, editor = self.resolve_editor(args)
+                if not self.semantic_write_available(window, editor):
+                    return self.paste_text(args, editor=editor)
                 if self.before_action is not None:
                     bounds = self.rectangle(editor)
                     self.before_action(
@@ -816,14 +964,16 @@ class NativeDesktop:
                 existing_text = self.read(editor) if not args.overwrite else ""
                 expected = existing_text + args.text
                 self.write(window, editor, args.text, args.overwrite, existing=existing_text)
-                editor = self.chosen_editor(
-                    self.resolve(args.target, check_title=False), args.field
-                )
+                field = args.field
+                assert field is not None
+                editor = self.chosen_editor(self.resolve(args.target, check_title=False), field)
                 actual = text_digest(self.read(editor))
                 if actual != text_digest(expected):
                     raise ToolError("target_changed", reason=Reason.EDITOR_CHANGED)
                 return WindowsResult(
                     target=args.target,
+                    performed=True,
+                    text_verified=True,
                     text_sha256=actual,
                     inserted_text_sha256=text_digest(args.text),
                 )
@@ -850,11 +1000,7 @@ class NativeDesktop:
     def select_window(self, selector: FocusApp) -> WindowTarget:
         if selector.handle is not None:
             window = self.desktop.window(handle=selector.handle).wrapper_object()
-            if (
-                not window.is_visible()
-                or not str(window.window_text()).strip()
-                or window.element_info.class_name in SYSTEM_WINDOW_CLASSES
-            ):
+            if not window.is_visible() or window.element_info.class_name in SYSTEM_WINDOW_CLASSES:
                 raise ToolError("target_changed")
             return self.snapshot(window)
         matches = [
@@ -1092,22 +1238,25 @@ class NativeDesktop:
             return WindowsResult(text=text, clipboard_sha256=clipboard_digest(text))
         if request.operation == "screenshot":
             return self.capture(request.scope)
-        if request.target is None:
-            raise ToolError("native_failure")
+        request = self.with_active_target(request)
+        assert request.target is not None
         if request.operation == "hotkey":
             args = SendHotkey(
                 target=request.target,
                 hotkey=cast("Any", request.hotkey),
                 clipboard_sha256=request.clipboard_sha256,
             )
+            assert args.target is not None
+            sequence = hotkey_sequence(args.hotkey)
             self.activate(args.target)
             if (
-                args.hotkey == "Ctrl+V"
+                args.hotkey.casefold() in {"ctrl+v", "control+v", "cmd+v", "command+v"}
+                and args.clipboard_sha256 is not None
                 and clipboard_digest(self.clipboard(plain_only=True)) != args.clipboard_sha256
             ):
                 raise ToolError("target_changed")
             self.require_foreground(args.target)
-            importlib.import_module("pywinauto.keyboard").send_keys(HOTKEYS[args.hotkey], pause=0)
+            importlib.import_module("pywinauto.keyboard").send_keys(sequence, pause=0)
             # Dispatch is observable; arbitrary application effects need a fresh observation.
             return WindowsResult(target=args.target, performed=True)
         click_args = ClickElement(
@@ -1117,6 +1266,7 @@ class NativeDesktop:
             y=request.y,
             window_rectangle=request.window_rectangle,
         )
+        assert click_args.target is not None
         window = self.activate(click_args.target)
         if click_args.element is not None:
             controls, _ = self.walk(window)
@@ -1155,7 +1305,7 @@ class NativeDesktop:
         else:
             rect = self.rectangle(window)
             if (
-                rect != click_args.window_rectangle
+                (click_args.window_rectangle is not None and rect != click_args.window_rectangle)
                 or click_args.x is None
                 or click_args.y is None
                 or not rect.left <= click_args.x < rect.right
@@ -1204,23 +1354,15 @@ class NativeDesktop:
         if handle and str(control.element_info.class_name).casefold() == "button":
             self.message(handle, 0x00F5, 0, ctypes.c_void_p())  # BM_CLICK
             return
-        if handle:
-            point = wintypes.POINT(
-                (self.rectangle(control).left + self.rectangle(control).right) // 2,
-                (self.rectangle(control).top + self.rectangle(control).bottom) // 2,
-            )
-            self.user32.ScreenToClient.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
-            if not self.user32.ScreenToClient(handle, ctypes.byref(point)):
-                raise ToolError("target_changed")
-            packed = (point.x & 0xFFFF) | ((point.y & 0xFFFF) << 16)
-            self.message(handle, 0x0201, 1, ctypes.c_void_p(packed))
-            self.message(handle, 0x0202, 0, ctypes.c_void_p(packed))
-            return
-        # A coordinate click keeps its existing explicit flag, observation and approval.
-        raise ToolError("control_unsupported")
+        rect = self.rectangle(control)
+        x, y = (rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2
+        target = self.snapshot(window, include_editor=False)
+        self.require_foreground(target)
+        self.check_point(target, x, y)
+        self.save_click_restore(x, y)
 
     def save_click_restore(self, x: int, y: int) -> None:
-        """Immediate, delay-free fallback, only for an explicitly approved coordinate click.
+        """Immediate physical fallback inside the selected window.
 
         Windows scheduling cannot promise a hard <2ms deadline. Never use pywinauto's
         click_input, which moves the mouse and adds configurable sleeps.

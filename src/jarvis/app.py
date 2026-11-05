@@ -44,7 +44,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--smoke-test",
         action="store_true",
-        help="Run one simulated offline command, close, and report its result.",
+        help="Run one explicit simulated diagnostic, close, and report its result.",
     )
     parser.add_argument(
         "--startup-report", type=Path, help="Write a PID-bound visible-window receipt for setup."
@@ -126,10 +126,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         window.task_finished.connect(finish_smoke)
         if window.voice is not None:
             window.voice.speech_enabled.setChecked(False)
-        # Simulation and the offline provider: the smoke run never touches a real adapter.
+        from jarvis.core.planner.offline import OfflineProvider, call
+
+        # The diagnostic is explicit trusted code, independent of the displayed command.
+        # It never constructs a cloud provider or invokes a real execution adapter.
+        planner = window.planner_window
+        assert planner is not None
+        planner.override_provider = OfflineProvider(demo_actions=(call("local.check", {}),))
         window.run_mode.setCurrentIndex(1)
         window.provider_mode.setCurrentIndex(0)
-        window.command_input.setPlainText("проверь систему")
+        window.command_input.setPlainText("GUI smoke diagnostic")
         QTimer.singleShot(0, window.submit)
         QTimer.singleShot(config.task_timeout_ms + 2000, window.close)
     window.show()

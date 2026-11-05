@@ -62,7 +62,7 @@ def test_rich_edit_multiline_input_and_independent_readback(
     """RichEdit exposes CR paragraphs after accepting ordinary LF replacement text."""
     text = "# Сводка\n\nПервая строка.\n- Вторая строка.\n"
     stored = [""]
-    editor, window = Mock(), Mock()
+    editor, window = Mock(handle=0), Mock()
     editor.iface_text.DocumentRange.GetText.side_effect = lambda size: stored[0]
     monkeypatch.setattr(desktop, "resolve", lambda *args, **kwargs: window)
     monkeypatch.setattr(desktop, "controls", lambda *args: [editor])
@@ -97,7 +97,6 @@ def test_rich_edit_multiline_input_and_independent_readback(
     [
         ("pid", 999),
         ("process_started", 4567.0),
-        ("runtime_id", [8]),
         ("executable", "C:\\wrong.exe"),
     ],
 )
@@ -203,7 +202,7 @@ def test_two_identical_fields_are_refused_instead_of_guessed(
 def test_literal_directed_message_and_readback(
     desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    editor = Mock(handle=101)
+    editor = Mock(handle=101, element_info=Mock(class_name="Edit"))
     text = "Жарвис {ENTER}\nsecond line"
     prepared(desktop, monkeypatch, editor=editor, reads=(text,))
     monkeypatch.setattr(desktop, "native_handle", lambda *args: 101)
@@ -223,7 +222,7 @@ def test_literal_directed_message_and_readback(
 def test_an_empty_field_is_filled_after_directed_end_selection(
     desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    editor = Mock(handle=101)
+    editor = Mock(handle=101, element_info=Mock(class_name="RichEditD2DPT"))
     text = "привет"
     prepared(desktop, monkeypatch, editor=editor, reads=("", text))
     monkeypatch.setattr(desktop, "native_handle", lambda *args: 101)
@@ -274,12 +273,16 @@ def test_listing_fields_reports_only_identity(
 
 
 def installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *names: str) -> Path:
-    """A throwaway Start menu plus System32, with the real registry kept out of the catalog."""
+    """A synthetic app catalog isolated from every host discovery source."""
     programs = tmp_path / "APPDATA/Microsoft/Windows/Start Menu/Programs"
     programs.mkdir(parents=True, exist_ok=True)
     for variable in ("APPDATA", "PROGRAMDATA"):
         root = tmp_path / variable
         (root / "Microsoft/Windows/Start Menu/Programs").mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv(variable, str(root))
+    for variable in ("PATH", "PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        root = tmp_path / variable
+        root.mkdir(parents=True, exist_ok=True)
         monkeypatch.setenv(variable, str(root))
     system32 = tmp_path / "SYSTEMROOT/System32"
     system32.mkdir(parents=True, exist_ok=True)
@@ -296,6 +299,7 @@ def installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *names: str) -> P
         "winreg",
         SimpleNamespace(HKEY_CURRENT_USER=0, HKEY_LOCAL_MACHINE=1, OpenKey=unavailable),
     )
+    monkeypatch.setattr(NativeDesktop, "installed_apps", lambda self: [])
     return programs
 
 
@@ -305,31 +309,80 @@ def test_any_installed_application_resolves_by_its_own_name(
     programs = installed(tmp_path, monkeypatch, "Калькулятор", "Telegram Desktop")
     assert desktop.resolve_app("калькулятор").path == programs / "Калькулятор.lnk"
     assert desktop.resolve_app("telegram").name == "Telegram Desktop"
-    # A spoken shorthand still reaches the system application when no shortcut matches.
-    assert desktop.resolve_app("блокнот").path.name == "notepad.exe"
+    assert desktop.resolve_app("notepad").path.name == "notepad.exe"
+    # Translation belongs to the LLM, not a hand-maintained native alias table.
+    with pytest.raises(ToolError, match="application_missing"):
+        desktop.resolve_app("блокнот")
     with pytest.raises(ToolError, match="application_missing"):
         desktop.resolve_app("такого приложения нет")
 
 
-def test_script_hosts_are_never_launchable_by_name(
+def test_installed_terminal_apps_launch_without_command_arguments(
     desktop: NativeDesktop, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     installed(tmp_path, monkeypatch, "Windows PowerShell", "Командная строка", "cmd")
     for name in ("powershell", "windows powershell"):
-        with pytest.raises(ToolError, match="application_missing"):
-            desktop.resolve_app(name)
+        assert desktop.resolve_app(name).path.suffix == ".lnk"
+    with pytest.raises(ToolError, match="application_missing"):
+        desktop.resolve_app("powershell -Command unsafe")
 
 
-def test_cmd_and_exe_suffixes_resolve_from_fixed_catalog(
+def test_any_executable_suffix_resolves_from_discovered_system_directory(
     desktop: NativeDesktop, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     installed(tmp_path, monkeypatch)
     system32 = tmp_path / "SYSTEMROOT/System32"
-    for name in ("cmd", "calc", "mspaint", "explorer"):
+    for name in ("cmd", "calc", "mspaint", "explorer", "Unanticipated App"):
         (system32 / (name + ".exe")).touch()
-    for name in ("cmd", "calc", "mspaint", "explorer", "notepad"):
+    for name in ("cmd", "calc", "mspaint", "explorer", "notepad", "Unanticipated App"):
         assert desktop.resolve_app(name + ".exe").path == system32 / (name + ".exe")
-    assert desktop.resolve_app("командная строка").key == "cmd"
+
+
+def test_installed_fixture_ignores_contaminated_host_application_sources(
+    desktop: NativeDesktop, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    host = tmp_path / "host"
+    host.mkdir()
+    for name in ("powershell.exe", "cmd.exe", "host-only.exe"):
+        (host / name).touch()
+    for variable in (
+        "PATH",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "LOCALAPPDATA",
+        "APPDATA",
+        "PROGRAMDATA",
+        "SYSTEMROOT",
+    ):
+        monkeypatch.setenv(variable, str(host))
+    monkeypatch.setattr(
+        NativeDesktop,
+        "installed_apps",
+        lambda self: [("Host Metadata App", "host!metadata")],
+    )
+    fixture_root = tmp_path / "isolated"
+    programs = installed(fixture_root, monkeypatch, "Windows PowerShell")
+    system32 = fixture_root / "SYSTEMROOT/System32"
+    (system32 / "cmd.exe").touch()
+
+    assert desktop.resolve_app("powershell").path == programs / "Windows PowerShell.lnk"
+    assert desktop.resolve_app("cmd.exe").path == system32 / "cmd.exe"
+    assert all(
+        entry.path.is_relative_to(fixture_root) and not entry.aumid for entry in desktop.catalog()
+    )
+    with pytest.raises(ToolError, match="application_missing"):
+        desktop.resolve_app("host-only")
+
+
+def test_rebuilt_window_uia_runtime_does_not_change_native_identity(
+    desktop: NativeDesktop, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        desktop,
+        "snapshot",
+        lambda *args, **kwargs: target().model_copy(update={"runtime_id": [8, 999]}),
+    )
+    assert desktop.resolve(target()) is not None
 
 
 def test_title_change_preserves_identity_but_explicit_title_check_can_refuse(

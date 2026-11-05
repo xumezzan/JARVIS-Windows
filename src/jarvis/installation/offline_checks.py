@@ -14,7 +14,7 @@ from typing import Literal, NoReturn
 from keyring.backend import KeyringBackend
 
 from jarvis.core.planner.contracts import Limits
-from jarvis.core.planner.offline import OfflineProvider
+from jarvis.core.planner.offline import OfflineProvider, call
 from jarvis.core.planner.runner import Runner
 from jarvis.mail.models import Account, MailResult, Message
 from jarvis.mail.session import MailSession
@@ -200,12 +200,12 @@ async def _planner(path: Path) -> None:
         runner = Runner(
             registry,
             engine,
-            OfflineProvider(),
+            OfflineProvider(demo_actions=(call("local.check", {}), call("local.check", {}))),
             approve,
             clarify,
             limits=Limits(max_steps=2, max_questions=0, provider_seconds=1, total_seconds=5),
         )
-        result = await runner.run("проверь систему дважды", Mode.EXECUTE)
+        result = await runner.run("installer planner diagnostic", Mode.EXECUTE)
         _require(result.status == "finished" and len(result.steps) == 2)
         _require(
             all(step.tool == "local.check" and _verified(step.outcome) for step in result.steps)

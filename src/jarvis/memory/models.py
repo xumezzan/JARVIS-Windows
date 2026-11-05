@@ -17,7 +17,6 @@ KINDS: dict[str, str] = {
     "contact": "Контакт / роль",
     "preference": "Предпочтение",
 }
-APPS = {"notepad": "Блокнот", "chrome": "Chrome", "vscode": "VS Code"}
 PROFILE_TTL = 30 * 86400
 SESSION_TTL = 30 * 60
 MAX_ENTRIES = 32

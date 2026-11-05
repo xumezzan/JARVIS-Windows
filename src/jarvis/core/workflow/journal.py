@@ -6,7 +6,7 @@ Kept as a narrow protocol so the planner depends on three verbs rather than on a
 from threading import Event
 from typing import Protocol
 
-from jarvis.core.workflow.models import Phase, StepRecord, step_key
+from jarvis.core.workflow.models import MAX_STEPS, Phase, StepRecord, step_key
 from jarvis.core.workflow.store import WorkflowFailure, WorkflowStore
 from jarvis.permissions.engine import Outcome
 
@@ -15,6 +15,8 @@ class Journal(Protocol):
     run_id: str
 
     def issued(self, key: str) -> bool: ...
+
+    def input_key(self, key: str) -> str: ...
 
     def issue(self, index: int, tool: str, key: str) -> None: ...
 
@@ -53,6 +55,22 @@ class RunJournal:
             ),
             self.cancelled,
         )
+
+    def input_key(self, key: str) -> str:
+        """Allocate a new occurrence only after earlier identical input succeeded.
+
+        Tab twice is two intentional actions. An interrupted first Tab is still the
+        same unresolved occurrence after a restart and must never be replayed.
+        """
+        record = self.store.get(self.run_id, self.cancelled)
+        if record is None:
+            raise WorkflowFailure("unknown")
+        for occurrence in range(MAX_STEPS):
+            candidate = key if occurrence == 0 else step_key(key, str(occurrence))
+            previous = record.issued(candidate)
+            if previous is None or not previous.succeeded:
+                return candidate
+        raise WorkflowFailure("limit")
 
     def complete(self, key: str, outcome: Outcome) -> None:
         self.store.complete(

@@ -127,11 +127,8 @@ async def test_readback_failure_or_stale_target_never_succeeds(
 @pytest.mark.parametrize(
     "name,args",
     [
-        # A path, argument or shell fragment is not an application name.
-        ("open_app", {"app": "C:/Windows/System32/cmd.exe"}),
+        # Launches accept a name/path, never separate command arguments.
         ("open_app", {"app": "notepad", "args": ["secret.txt"]}),
-        # A field the caller never observed cannot be typed into.
-        ("type_text", {"target": target().model_dump() | {"editor": None}, "text": "test"}),
         ("type_text", {"target": target().model_dump(), "text": ""}),
         ("type_text", {"target": target().model_dump(), "text": "bad\x00"}),
         ("type_text", {"target": target().model_dump(), "text": "test", "press_enter": True}),
@@ -143,6 +140,23 @@ def test_invalid_inputs(name: str, args: object, audit: AuditLog) -> None:
     engine, _ = engine_for(probe, audit)
     result = engine.prepare("windows." + name, args)
     assert isinstance(result, Outcome) and result.status is Status.INVALID
+    assert not probe.calls
+
+
+@pytest.mark.parametrize(
+    "name,args",
+    [
+        ("open_app", {"query": "C:/Program Files/Unanticipated App/editor.exe"}),
+        ("type_text", {"target": target().model_dump() | {"editor": None}, "text": "test"}),
+        ("type_text", {"text": "test"}),
+    ],
+)
+def test_universal_schema_accepts_paths_and_active_custom_windows(
+    name: str, args: object, audit: AuditLog
+) -> None:
+    probe = WindowsProbe()
+    engine, _ = engine_for(probe, audit)
+    assert isinstance(engine.prepare("windows." + name, args), Action)
     assert not probe.calls
 
 

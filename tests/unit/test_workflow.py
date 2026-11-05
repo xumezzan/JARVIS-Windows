@@ -356,3 +356,62 @@ def test_outcome_values_reach_the_journal_unchanged(tmp_path: Path) -> None:
     )
     step = runs.get(run.id).steps[0]  # type: ignore[union-attr]
     assert step.status == Status.TIMEOUT.value and step.may_have_effects
+
+
+def test_identical_ordinary_input_gets_an_occurrence_only_after_success(tmp_path: Path) -> None:
+    runs = store(tmp_path)
+    run = runs.start("two tab keys", Mode.EXECUTE)
+    journal = RunJournal(runs, run.id)
+    key = step_key("windows.send_hotkey", '{"hotkey":"Tab"}')
+    assert journal.input_key(key) == key
+    runs.append(run.id, issued(key=key, tool="windows.send_hotkey"))
+    assert journal.input_key(key) == key
+    assert journal.issued(key)
+    runs.complete(run.id, key, Status.SUCCESS, ErrorCode.NONE, True)
+    next_key = journal.input_key(key)
+    assert next_key != key and not journal.issued(next_key)
+    runs.append(run.id, issued(index=1, key=next_key, tool="windows.send_hotkey"))
+    restarted = RunJournal(runs, run.id)
+    assert restarted.input_key(key) == next_key
+    assert restarted.issued(next_key)
+
+
+@pytest.mark.asyncio
+async def test_successful_browser_primitives_can_repeat_with_a_durable_journal(
+    tmp_path: Path,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from tests.unit.test_browser import TARGET
+
+    from jarvis.security.browser_policy import NetworkPolicy
+    from jarvis.tools.browser import BrowserResult, PageView, register_browser
+    from jarvis.tools.registry import ToolRegistry
+
+    backend = AsyncMock()
+    backend.call.return_value = BrowserResult(
+        page=PageView(target=TARGET, title="Synthetic page", text="Synthetic content"),
+        response_status=200,
+    )
+    registry = ToolRegistry()
+    register_browser(registry, backend, NetworkPolicy(allowed_origins=(TARGET.origin,)))
+    runs = store(tmp_path)
+    run = runs.start("Open the same page in two tabs", Mode.EXECUTE)
+    with closing(AuditLog(tmp_path / "browser-audit.sqlite3")) as audit:
+        approvals = ApprovalStore()
+        engine = PermissionEngine(registry, approvals, audit)
+        runner = Runner(
+            registry,
+            engine,
+            Scripted([call("browser.open", {"url": TARGET.url})] * 2),
+            AsyncMock(),
+            AsyncMock(),
+            journal=RunJournal(runs, run.id),
+        )
+        result = await runner.run("Open the same page in two tabs", Mode.EXECUTE)
+        assert result.status == "finished"
+        saved = runs.get(run.id)
+        assert saved is not None and len(saved.steps) == 2
+        assert saved.steps[0].key != saved.steps[1].key
+        assert all(step.succeeded for step in saved.steps)
+        assert sum(args.args[0].phase == "run" for args in backend.call.await_args_list) == 2
