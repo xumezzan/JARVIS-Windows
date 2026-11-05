@@ -273,12 +273,16 @@ def test_listing_fields_reports_only_identity(
 
 
 def installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *names: str) -> Path:
-    """A throwaway Start menu plus System32, with the real registry kept out of the catalog."""
+    """A synthetic app catalog isolated from every host discovery source."""
     programs = tmp_path / "APPDATA/Microsoft/Windows/Start Menu/Programs"
     programs.mkdir(parents=True, exist_ok=True)
     for variable in ("APPDATA", "PROGRAMDATA"):
         root = tmp_path / variable
         (root / "Microsoft/Windows/Start Menu/Programs").mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv(variable, str(root))
+    for variable in ("PATH", "PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        root = tmp_path / variable
+        root.mkdir(parents=True, exist_ok=True)
         monkeypatch.setenv(variable, str(root))
     system32 = tmp_path / "SYSTEMROOT/System32"
     system32.mkdir(parents=True, exist_ok=True)
@@ -295,6 +299,7 @@ def installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *names: str) -> P
         "winreg",
         SimpleNamespace(HKEY_CURRENT_USER=0, HKEY_LOCAL_MACHINE=1, OpenKey=unavailable),
     )
+    monkeypatch.setattr(NativeDesktop, "installed_apps", lambda self: [])
     return programs
 
 
@@ -331,6 +336,42 @@ def test_any_executable_suffix_resolves_from_discovered_system_directory(
         (system32 / (name + ".exe")).touch()
     for name in ("cmd", "calc", "mspaint", "explorer", "notepad", "Unanticipated App"):
         assert desktop.resolve_app(name + ".exe").path == system32 / (name + ".exe")
+
+
+def test_installed_fixture_ignores_contaminated_host_application_sources(
+    desktop: NativeDesktop, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    host = tmp_path / "host"
+    host.mkdir()
+    for name in ("powershell.exe", "cmd.exe", "host-only.exe"):
+        (host / name).touch()
+    for variable in (
+        "PATH",
+        "PROGRAMFILES",
+        "PROGRAMFILES(X86)",
+        "LOCALAPPDATA",
+        "APPDATA",
+        "PROGRAMDATA",
+        "SYSTEMROOT",
+    ):
+        monkeypatch.setenv(variable, str(host))
+    monkeypatch.setattr(
+        NativeDesktop,
+        "installed_apps",
+        lambda self: [("Host Metadata App", "host!metadata")],
+    )
+    fixture_root = tmp_path / "isolated"
+    programs = installed(fixture_root, monkeypatch, "Windows PowerShell")
+    system32 = fixture_root / "SYSTEMROOT/System32"
+    (system32 / "cmd.exe").touch()
+
+    assert desktop.resolve_app("powershell").path == programs / "Windows PowerShell.lnk"
+    assert desktop.resolve_app("cmd.exe").path == system32 / "cmd.exe"
+    assert all(
+        entry.path.is_relative_to(fixture_root) and not entry.aumid for entry in desktop.catalog()
+    )
+    with pytest.raises(ToolError, match="application_missing"):
+        desktop.resolve_app("host-only")
 
 
 def test_rebuilt_window_uia_runtime_does_not_change_native_identity(

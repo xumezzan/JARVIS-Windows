@@ -1,7 +1,7 @@
 {
   "date": "2026-11-05",
   "target": "/Applications/Jarvis.app",
-  "manifest_sha256": "ea503605bb5e1d416998f4577737dbfd2ace8ffe6e419c4b67764506d39ad0af",
+  "manifest_sha256": "71f2530de42da080a4f05df7a0b989cf63f39f1cfa629f8f63697250d308c07b",
   "verified_assets": 22,
   "codesign_verified": true,
   "observed_ui_state": "READY",

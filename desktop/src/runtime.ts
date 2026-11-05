@@ -264,8 +264,6 @@ export const toolLabel = (name: string) =>
     "windows.open_app": "Запуск приложения",
     "windows.open_chrome_url": "Открытие адреса в вашем Chrome",
     "windows.get_text_fields": "Поля ввода окна",
-    "windows.get_calculator_number": "Результат калькулятора",
-    "windows.calculator_number": "Число в калькуляторе",
     "windows.focus_app": "Выбор окна",
     "windows.type_text": "Ввод текста в окно",
     "windows.inspect_active_window": "Анализ активного окна",
