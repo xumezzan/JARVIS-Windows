@@ -374,3 +374,44 @@ def test_identical_ordinary_input_gets_an_occurrence_only_after_success(tmp_path
     restarted = RunJournal(runs, run.id)
     assert restarted.input_key(key) == next_key
     assert restarted.issued(next_key)
+
+
+@pytest.mark.asyncio
+async def test_successful_browser_primitives_can_repeat_with_a_durable_journal(
+    tmp_path: Path,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from tests.unit.test_browser import TARGET
+
+    from jarvis.security.browser_policy import NetworkPolicy
+    from jarvis.tools.browser import BrowserResult, PageView, register_browser
+    from jarvis.tools.registry import ToolRegistry
+
+    backend = AsyncMock()
+    backend.call.return_value = BrowserResult(
+        page=PageView(target=TARGET, title="Synthetic page", text="Synthetic content"),
+        response_status=200,
+    )
+    registry = ToolRegistry()
+    register_browser(registry, backend, NetworkPolicy(allowed_origins=(TARGET.origin,)))
+    runs = store(tmp_path)
+    run = runs.start("Open the same page in two tabs", Mode.EXECUTE)
+    with closing(AuditLog(tmp_path / "browser-audit.sqlite3")) as audit:
+        approvals = ApprovalStore()
+        engine = PermissionEngine(registry, approvals, audit)
+        runner = Runner(
+            registry,
+            engine,
+            Scripted([call("browser.open", {"url": TARGET.url})] * 2),
+            AsyncMock(),
+            AsyncMock(),
+            journal=RunJournal(runs, run.id),
+        )
+        result = await runner.run("Open the same page in two tabs", Mode.EXECUTE)
+        assert result.status == "finished"
+        saved = runs.get(run.id)
+        assert saved is not None and len(saved.steps) == 2
+        assert saved.steps[0].key != saved.steps[1].key
+        assert all(step.succeeded for step in saved.steps)
+        assert sum(args.args[0].phase == "execute" for args in backend.call.await_args_list) == 2

@@ -653,11 +653,7 @@ class Runner:
             # Reads leave nothing behind, so only effects are journalled and guarded.
             journal = self.journal if self._is_effect(action) else None
             key = step_key(action.tool, action.payload)
-            if (
-                journal is not None
-                and action.risk is Risk.SAFE
-                and action.tool.startswith("windows.")
-            ):
+            if journal is not None and action.risk is Risk.SAFE:
                 try:
                     key = journal.input_key(key)
                 except WorkflowFailure:
