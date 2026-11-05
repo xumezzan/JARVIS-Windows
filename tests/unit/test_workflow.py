@@ -414,4 +414,4 @@ async def test_successful_browser_primitives_can_repeat_with_a_durable_journal(
         assert saved is not None and len(saved.steps) == 2
         assert saved.steps[0].key != saved.steps[1].key
         assert all(step.succeeded for step in saved.steps)
-        assert sum(args.args[0].phase == "execute" for args in backend.call.await_args_list) == 2
+        assert sum(args.args[0].phase == "run" for args in backend.call.await_args_list) == 2
