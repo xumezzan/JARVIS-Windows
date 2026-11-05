@@ -194,6 +194,42 @@ class Runner:
         self.steps.append(step)
         self.notify("tool", step)
 
+    async def _refresh_browser(self, action: Action) -> None:
+        """Recover observations, never replay an action or reuse its approval."""
+        if not action.tool.startswith("browser.") or action.mode is not Mode.EXECUTE:
+            return
+        target = json.loads(action.payload).get("target", {})
+        tab_id = target.get("tab_id")
+        if not tab_id or not any(
+            step.outcome.status is Status.SUCCESS
+            and step.tool.startswith("browser.")
+            and (
+                (json.loads(step.outcome.result_json or "{}").get("page") or {})
+                .get("target", {})
+                .get("tab_id")
+                == tab_id
+                or any(
+                    tab.get("tab_id") == tab_id
+                    for tab in json.loads(step.outcome.result_json or "{}").get("tabs", [])
+                )
+            )
+            for step in self.steps
+        ):
+            return
+        arguments: dict[str, object] = {}
+        for tool in ("browser.get_tabs", "browser.read"):
+            if self.cancelled.is_set() or len(self.steps) >= self.limits.max_steps:
+                return
+            outcome = await self._fresh_read(tool, arguments)
+            if outcome is None or outcome.status is not Status.SUCCESS:
+                return
+            tabs = BrowserResult.model_validate_json(outcome.result_json or "{}").tabs
+            current = next((tab for tab in tabs if tab.tab_id == tab_id), None)
+            if tool == "browser.get_tabs":
+                if current is None:
+                    return
+                arguments = {"target": current.model_dump()}
+
     def _recoverable(self, outcome: Outcome) -> bool:
         # Replanning is bounded by both the ordinary budget and three consecutive failures.
         # Cancellation, approval/policy denial, audit failures and timeouts always stop.
@@ -648,6 +684,7 @@ class Runner:
                 self.active = None
                 self._record(Step(action.tool, outcome, action.payload))
                 if self._recoverable(outcome):
+                    await self._refresh_browser(action)
                     continue
                 return PlanResult("error", tuple(self.steps), outcome.error.value)
             # Reads leave nothing behind, so only effects are journalled and guarded.
@@ -723,6 +760,8 @@ class Runner:
                 if outcome.may_have_effects and self._is_effect(action):
                     self._uncertain_effects.add(key)
                 if self._recoverable(outcome):
+                    if outcome.error in (ErrorCode.PAGE_CHANGED, ErrorCode.PRECONDITION):
+                        await self._refresh_browser(action)
                     continue
                 return PlanResult(
                     "cancelled"

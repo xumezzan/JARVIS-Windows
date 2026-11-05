@@ -99,8 +99,8 @@ async def test_external_cdp_preserves_default_context_and_disconnects_without_cl
     session = BrowserSession(NetworkPolicy(mode=mode), cdp_endpoint="http://localhost:9222")
     await session.start()
     assert session.context is context
-    context.set_default_timeout.assert_not_called()
-    context.set_default_navigation_timeout.assert_not_called()
+    context.set_default_timeout.assert_called_once_with(5000)
+    context.set_default_navigation_timeout.assert_called_once_with(10000)
     playwright.chromium.launch.assert_not_called()
     await session.close()
     browser.close.assert_not_called()
