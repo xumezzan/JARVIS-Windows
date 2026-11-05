@@ -47,6 +47,22 @@ document.addEventListener('keydown', e => {
 </script></body></html>"""
 
 
+SHOP = """<!doctype html><html><head><title>Shop fixture</title></head><body>
+<h1>Test phone</h1>
+<label><input type="radio" name="colour" value="blue" checked>Blue</label>
+<label><input type="radio" name="colour" value="burgundy">Burgundy</label>
+<label><input type="radio" name="capacity" value="128" checked>128 GB</label>
+<label><input type="radio" name="capacity" value="256">256 GB</label>
+<label><input type="checkbox" name="accessory">Include case</label>
+<select aria-label="Delivery"><option>Pickup</option><option>Delivery</option></select>
+<button onclick="window.cartClicks = (window.cartClicks || 0) + 1;
+setTimeout(() => {document.querySelector('#cart').textContent = 'Cart: Test phone ' +
+document.querySelector('[name=colour]:checked').value + ' ' +
+document.querySelector('[name=capacity]:checked').value + ' GB';}, 150)">Add to cart</button>
+<p id="cart">Cart empty</p>
+</body></html>"""
+
+
 class FixtureSite:
     def __init__(self) -> None:
         self.seen: list[tuple[str, str, str, str | None]] = []
@@ -94,7 +110,9 @@ class FixtureSite:
                     self.end_headers()
                     return
                 content = (
-                    SPA
+                    SHOP
+                    if self.path == "/shop"
+                    else SPA
                     if self.path == "/workspace-spa"
                     else HOME
                     if self.path == "/"
